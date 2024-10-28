@@ -1,0 +1,76 @@
+[tool.poetry]
+name = "langchain-gigachat"
+version = "0.3.0b2"
+description = "An integration package connecting GigaChat and LangChain"
+authors = []
+readme = "README.md"
+repository = "https://github.com/ai-forever/langchain-gigachat"
+license = "MIT"
+
+[tool.poetry.urls]
+"Source Code" = "https://github.com/ai-forever/langchain-gigachat/tree/master/libs/gigachat"
+
+[tool.poetry.dependencies]
+python = ">=3.9,<4.0"
+langchain-core = "^0.3"
+gigachat = "^0.1.35"
+
+[tool.poetry.group.dev]
+optional = true
+
+[tool.poetry.group.dev.dependencies]
+pre-commit = "^4.0.1"
+
+[tool.poetry.group.lint]
+optional = true
+
+[tool.poetry.group.lint.dependencies]
+ruff = "^0.7.0"
+
+[tool.poetry.group.typing]
+optional = true
+
+[tool.poetry.group.typing.dependencies]
+mypy = "^1.13.0"
+
+[tool.poetry.group.test]
+optional = true
+
+[tool.poetry.group.test.dependencies]
+pytest = "^8.3.3"
+pytest-cov = "^5.0.0"
+pytest-asyncio = "^0.24.0"
+pytest-mock = "^3.14.0"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.ruff.lint]
+select = [
+  "E",    # pycodestyle
+  "F",    # pyflakes
+  "I",    # isort
+  "T201", # print
+]
+
+[tool.ruff.format]
+
+[tool.mypy]
+ignore_missing_imports = "True"
+disallow_untyped_defs = "True"
+
+[tool.pytest.ini_options]
+addopts = "--strict-markers --strict-config --durations=5 --cov=langchain_gigachat -vv"
+markers = [
+    "requires: mark tests as requiring a specific library",
+    "compile: mark placeholder test used to compile integration tests without running them",
+    "scheduled: mark tests to run in scheduled testing",
+]
+asyncio_mode = "auto"
+filterwarnings = [
+    "ignore::langchain_core._api.beta_decorator.LangChainBetaWarning",
+]
+
+[tool.coverage.run]
+omit = ["tests/*"]

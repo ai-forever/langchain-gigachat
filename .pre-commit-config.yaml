@@ -1,0 +1,32 @@
+default_install_hook_types:
+  - pre-commit
+  - commit-msg
+  - pre-push
+repos:
+  - repo: local
+    hooks:
+      - id: format
+        name: format
+        language: system
+        entry: make -C libs/gigachat format
+        pass_filenames: false
+        stages: [pre-commit]
+      - id: lint
+        name: lint
+        language: system
+        entry: make -C libs/gigachat lint
+        pass_filenames: false
+        stages: [pre-commit]
+      - id: test
+        name: test
+        language: system
+        entry: make -C libs/gigachat test
+        pass_filenames: false
+        stages: [pre-commit]
+  - repo: https://github.com/commitizen-tools/commitizen
+    rev: v3.30.0
+    hooks:
+      - id: commitizen
+        stages: [commit-msg]
+      - id: commitizen-branch
+        stages: [pre-push]
