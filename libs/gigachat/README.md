@@ -14,3 +14,34 @@ This is a library integration with [GigaChat](https://giga.chat/).
 ```bash
 pip install -U langchain-gigachat
 ```
+
+# LangChain GigaChat Integration - Quickstart Guide
+
+Welcome to the Quickstart guide for integrating GigaChat with LangChain! Follow these simple steps to get up and running quickly.
+
+## Quickstart Steps
+
+1. **Get an Authorization Key**
+
+   Visit [developers.sber.ru](https://developers.sber.ru) and create an account to obtain your authorization key. This key is required to authenticate with GigaChat.
+
+2. **Initialize the GigaChat Object**
+
+   In your Python code, initialize the GigaChat object using your authorization key:
+
+   ```python
+   from langchain_gigachat.chat_models import GigaChat
+
+   giga = GigaChat(credentials="YOUR_AUTHORIZATION_KEY", verify_ssl_certs=False)
+   ```
+   Note: The `verify_ssl_certs=False` flag is needed if the required certificate from the Russian Ministry of Digital Development is not installed on your computer.
+
+3. **Invoke GigaChat**
+
+   Use the GigaChat object to generate responses:
+
+   ```python
+   print(giga.invoke("Hello, world!"))
+   ```
+
+Now you can use the GigaChat object with LangChain's standard primitives to create interactive conversational applications.
