@@ -10,38 +10,45 @@ This is a library integration with [GigaChat](https://giga.chat/).
 [![GitHub Open Issues](https://img.shields.io/github/issues-raw/ai-forever/langchain-gigachat)](https://github.com/ai-forever/langchain-gigachat/issues)
 
 ## Installation
-
 ```bash
 pip install -U langchain-gigachat
 ```
 
-# LangChain GigaChat Integration - Quickstart Guide
+## Quickstart
+Follow these simple steps to get up and running quickly.
 
-Welcome to the Quickstart guide for integrating GigaChat with LangChain! Follow these simple steps to get up and running quickly.
+### Installation
+To install the package use following command:
+```shell
+pip install -U langchain-gigachat
+```
 
-## Quickstart Steps
+### Initialization
 
-1. **Get an Authorization Key**
+To initialize chat model:
+```python
+from langchain_gigachat.chat_models import GigaChat
 
-   Visit [developers.sber.ru](https://developers.sber.ru) and create an account to obtain your authorization key. This key is required to authenticate with GigaChat.
+giga = GigaChat(credentials="YOUR_AUTHORIZATION_KEY", verify_ssl_certs=False)
+```
 
-2. **Initialize the GigaChat Object**
+To initialize embeddings:
 
-   In your Python code, initialize the GigaChat object using your authorization key:
+```python
+from langchain_gigachat.embeddings import GigaChatEmbeddings
 
-   ```python
-   from langchain_gigachat.chat_models import GigaChat
+embedding = GigaChatEmbeddings(
+    credentials="YOUR_AUTHORIZATION_KEY",
+    verify_ssl_certs=False
+)
+```
 
-   giga = GigaChat(credentials="YOUR_AUTHORIZATION_KEY", verify_ssl_certs=False)
-   ```
-   Note: The `verify_ssl_certs=False` flag is needed if the required certificate from the Russian Ministry of Digital Development is not installed on your computer.
+### Usage
 
-3. **Invoke GigaChat**
+Use the GigaChat object to generate responses:
 
-   Use the GigaChat object to generate responses:
+```python
+print(giga.invoke("Hello, world!"))
+```
 
-   ```python
-   print(giga.invoke("Hello, world!"))
-   ```
-
-Now you can use the GigaChat object with LangChain's standard primitives to create interactive conversational applications.
+Now you can use the GigaChat object with LangChain's standard primitives to create LLM-applications.
