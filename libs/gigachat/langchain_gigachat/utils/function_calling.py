@@ -365,6 +365,11 @@ def convert_pydantic_to_gigachat_function(
             "Incorrect function or tool description. Description is required."
         )
 
+    if few_shot_examples is None and hasattr(model, 'few_shot_examples'):
+        few_shot_examples_attr = getattr(model, 'few_shot_examples')
+        if inspect.isfunction(few_shot_examples_attr):
+            few_shot_examples = few_shot_examples_attr()
+
     return GigaFunctionDescription(
         name=name or title,
         description=description,
