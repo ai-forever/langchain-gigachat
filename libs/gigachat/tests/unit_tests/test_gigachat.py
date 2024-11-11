@@ -31,7 +31,7 @@ from langchain_gigachat.chat_models.gigachat import (
     _convert_dict_to_message,
     _convert_message_to_dict,
 )
-from langchain_gigachat.tools.giga_tool import giga_tool
+from langchain_gigachat.tools.giga_tool import FewShotExamples, giga_tool
 from tests.unit_tests.stubs import FakeAsyncCallbackHandler, FakeCallbackHandler
 
 
@@ -333,4 +333,45 @@ def test_gigachat_bind_gigatool() -> None:
         },
         "required": ["status", "message"],
         "type": "object",
+    }
+
+
+class SomeResult(BaseModel):
+    """My desc"""
+
+    @staticmethod
+    def few_shot_examples() -> FewShotExamples:
+        return [
+            {
+                "request": "request example",
+                "params": {"is_valid": 1, "description": "correct message"},
+            }
+        ]
+
+    value: int = Field(description="some value")
+    description: str = Field(description="some descriptin")
+
+
+def test_structured_output() -> None:
+    llm = GigaChat().with_structured_output(SomeResult)
+    assert llm.steps[0].kwargs["function_call"] == {"name": "SomeResult"}  # type: ignore[attr-defined]
+    assert llm.steps[0].kwargs["tools"][0]["function"] == {  # type: ignore[attr-defined]
+        "name": "SomeResult",
+        "description": "My desc",
+        "parameters": {
+            "description": "My desc",
+            "properties": {
+                "value": {"description": "some value", "type": "integer"},
+                "description": {"description": "some descriptin", "type": "string"},
+            },
+            "required": ["value", "description"],
+            "type": "object",
+        },
+        "return_parameters": None,
+        "few_shot_examples": [
+            {
+                "request": "request example",
+                "params": {"is_valid": 1, "description": "correct message"},
+            }
+        ],
     }
