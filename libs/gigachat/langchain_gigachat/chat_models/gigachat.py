@@ -314,14 +314,43 @@ def trim_content_to_stop_sequence(
 class GigaChat(_BaseGigaChat, BaseChatModel):
     """`GigaChat` large language models API.
 
-    To use, you should pass login and password to access GigaChat API or use token.
+    To use, provide credentials via token, login and password,
+    or mTLS for secure access to the GigaChat API.
 
-    Example:
+    Example Usage:
         .. code-block:: python
 
             from langchain_community.chat_models import GigaChat
 
-            giga = GigaChat(credentials=..., scope=..., verify_ssl_certs=False)
+            # Authorization with Token
+            # (obtainable in the personal cabinet under Authorization Data):
+            giga = GigaChat(credentials="YOUR_TOKEN")
+
+            # Personal Space:
+            giga = GigaChat(credentials="YOUR_TOKEN", scope="GIGACHAT_API_PERS")
+
+            # Corporate Space:
+            giga = GigaChat(credentials="YOUR_TOKEN", scope="GIGACHAT_API_CORP")
+
+            # Authorization with Login and Password:
+            giga = GigaChat(
+                base_url="https://gigachat.devices.sberbank.ru/api/v1",
+                user="YOUR_USERNAME",
+                password="YOUR_PASSWORD",
+            )
+
+            # Mutual Authentication via TLS (mTLS):
+            giga = GigaChat(
+                base_url="https://gigachat.devices.sberbank.ru/api/v1",
+                ca_bundle_file="certs/ca.pem",  # chain_pem.txt
+                cert_file="certs/tls.pem",       # published_pem.txt
+                key_file="certs/tls.key",
+                key_file_password="YOUR_KEY_PASSWORD",
+            )
+
+            # Authorization with Temporary Token:
+            giga = GigaChat(access_token="YOUR_TEMPORARY_TOKEN")
+
     """
 
     def _build_payload(self, messages: List[BaseMessage], **kwargs: Any) -> gm.Chat:

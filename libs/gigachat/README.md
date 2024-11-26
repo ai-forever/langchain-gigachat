@@ -10,7 +10,45 @@ This is a library integration with [GigaChat](https://giga.chat/).
 [![GitHub Open Issues](https://img.shields.io/github/issues-raw/ai-forever/langchain-gigachat)](https://github.com/ai-forever/langchain-gigachat/issues)
 
 ## Installation
-
 ```bash
 pip install -U langchain-gigachat
 ```
+
+## Quickstart
+Follow these simple steps to get up and running quickly.
+
+### Installation
+To install the package use following command:
+```shell
+pip install -U langchain-gigachat
+```
+
+### Initialization
+
+To initialize chat model:
+```python
+from langchain_gigachat.chat_models import GigaChat
+
+giga = GigaChat(credentials="YOUR_AUTHORIZATION_KEY", verify_ssl_certs=False)
+```
+
+To initialize embeddings:
+
+```python
+from langchain_gigachat.embeddings import GigaChatEmbeddings
+
+embedding = GigaChatEmbeddings(
+    credentials="YOUR_AUTHORIZATION_KEY",
+    verify_ssl_certs=False
+)
+```
+
+### Usage
+
+Use the GigaChat object to generate responses:
+
+```python
+print(giga.invoke("Hello, world!"))
+```
+
+Now you can use the GigaChat object with LangChain's standard primitives to create LLM-applications.

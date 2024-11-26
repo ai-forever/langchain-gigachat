@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "langchain-gigachat"
-version = "0.3.0"
+version = "0.3.1"
 description = "An integration package connecting GigaChat and LangChain"
 authors = []
 readme = "README.md"
@@ -13,7 +13,8 @@ license = "MIT"
 [tool.poetry.dependencies]
 python = ">=3.9,<4.0"
 langchain-core = "^0.3"
-gigachat = "^0.1.35"
+gigachat = "^0.1.36"
+types-requests = "^2.32"
 
 [tool.poetry.group.dev]
 optional = true
@@ -41,6 +42,7 @@ pytest = "^8.3.3"
 pytest-cov = "^5.0.0"
 pytest-asyncio = "^0.24.0"
 pytest-mock = "^3.14.0"
+requests_mock = "^1.12.1"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]
