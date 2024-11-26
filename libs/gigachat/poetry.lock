@@ -300,13 +300,13 @@ typing = ["typing-extensions (>=4.12.2)"]
 
 [[package]]
 name = "gigachat"
-version = "0.1.35"
+version = "0.1.36"
 description = "GigaChat. Python-library for GigaChain and LangChain"
 optional = false
 python-versions = "<4.0,>=3.8"
 files = [
-    {file = "gigachat-0.1.35-py3-none-any.whl", hash = "sha256:4e142b1f10807a3655d7c54740103571aca073f2fc91aad2eefbff378121f5a1"},
-    {file = "gigachat-0.1.35.tar.gz", hash = "sha256:508de76d99659c96bb5345d33242095c7b358c453eaa645c5379b06691cfb454"},
+    {file = "gigachat-0.1.36-py3-none-any.whl", hash = "sha256:7e9e3192e8d33e9c63beac533a31290d1a2e7b1b3c57ea0b5dc26da47551db5d"},
+    {file = "gigachat-0.1.36.tar.gz", hash = "sha256:6c10ae23647946854ef98d67899e2ef239a6f675e4e1406ff08f8d56fc2160d6"},
 ]
 
 [package.dependencies]
@@ -1122,4 +1122,4 @@ test = ["covdefaults (>=2.3)", "coverage (>=7.2.7)", "coverage-enable-subprocess
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.9,<4.0"
-content-hash = "eab8b379b8bd19bbfad40ea67261012b89dc38a5bc58d37e5a14acb106be48aa"
+content-hash = "ae025205756012ce341fd3aecad1a22024336eb23af3e39c5c4ba8cb34d17476"
