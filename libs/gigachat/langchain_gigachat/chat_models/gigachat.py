@@ -407,7 +407,10 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             generations.append(gen)
             if self.verbose:
                 logger.warning("Giga response: %s", message.content)
-        llm_output = {"token_usage": response.usage, "model_name": response.model}
+        llm_output = {
+            "token_usage": response.usage.dict(),
+            "model_name": response.model,
+        }
         return ChatResult(generations=generations, llm_output=llm_output)
 
     def _generate(
