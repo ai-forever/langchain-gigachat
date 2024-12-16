@@ -375,3 +375,9 @@ def test_structured_output() -> None:
             }
         ],
     }
+
+
+def test_ai_message_json_serialization(patch_gigachat: None) -> None:
+    llm = GigaChat()
+    response = llm.invoke("hello")
+    response.model_dump_json()
