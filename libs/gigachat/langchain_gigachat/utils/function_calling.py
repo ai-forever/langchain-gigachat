@@ -323,13 +323,13 @@ def format_tool_to_gigachat_function(tool: BaseTool) -> GigaFunctionDescription:
         else:
             return_schema = None
 
-        return {
-            "name": tool.name,
-            "description": tool.description,
-            "parameters": {"properties": {}, "type": "object"},
-            "few_shot_examples": few_shot_examples,
-            "return_parameters": return_schema,
-        }
+        return GigaFunctionDescription(
+            name=tool.name,
+            description=tool.description,
+            parameters={"properties": {}, "type": "object"},
+            few_shot_examples=few_shot_examples,
+            return_parameters=return_schema,
+        )
 
 
 def convert_pydantic_to_gigachat_function(

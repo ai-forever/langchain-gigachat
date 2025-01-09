@@ -84,7 +84,7 @@ class GigaStructuredTool(GigaBaseTool, StructuredTool):
         args_schema: Optional[type[BaseModel]] = None,
         infer_schema: bool = True,
         return_schema: Optional[Type[BaseModel]] = None,
-        few_shot_examples: Optional[List[Dict[str, Any]]] = None,
+        few_shot_examples: FewShotExamples = None,
         *,
         response_format: Literal["content", "content_and_artifact"] = "content",
         parse_docstring: bool = False,

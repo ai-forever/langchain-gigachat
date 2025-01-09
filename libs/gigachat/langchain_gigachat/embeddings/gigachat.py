@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import ssl
 from functools import cached_property
 from typing import Any, Dict, List, Optional
 
@@ -55,6 +56,11 @@ class GigaChatEmbeddings(BaseModel, Embeddings):
     verify_ssl_certs: Optional[bool] = None
     """ Check certificates for all requests """
 
+    ssl_context: Optional[ssl.SSLContext] = None
+
+    class Config:
+        arbitrary_types_allowed = True
+
     ca_bundle_file: Optional[str] = None
     cert_file: Optional[str] = None
     key_file: Optional[str] = None
@@ -82,6 +88,7 @@ class GigaChatEmbeddings(BaseModel, Embeddings):
             user=self.user,
             password=self.password,
             timeout=self.timeout,
+            ssl_context=self.ssl_context,
             verify_ssl_certs=self.verify_ssl_certs,
             ca_bundle_file=self.ca_bundle_file,
             cert_file=self.cert_file,
