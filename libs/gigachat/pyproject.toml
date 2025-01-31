@@ -13,7 +13,7 @@ license = "MIT"
 [tool.poetry.dependencies]
 python = ">=3.9,<4.0"
 langchain-core = "^0.3"
-gigachat = "^0.1.37"
+gigachat = "^0.1.38"
 types-requests = "^2.32"
 
 [tool.poetry.group.dev]

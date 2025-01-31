@@ -227,7 +227,7 @@ async def test_gigachat_apredict_stream(patch_gigachat_astream: None) -> None:
 
 def test_gigachat_stream(patch_gigachat: None) -> None:
     expected = [
-        AIMessageChunk(content="Bar Baz", id=""),
+        AIMessageChunk(content="Bar Baz", response_metadata={"x_headers": {}}, id=""),
         AIMessageChunk(
             content=" Stream", response_metadata={"finish_reason": "stop"}, id=""
         ),
@@ -243,7 +243,7 @@ def test_gigachat_stream(patch_gigachat: None) -> None:
 @pytest.mark.asyncio()
 async def test_gigachat_astream(patch_gigachat_astream: None) -> None:
     expected = [
-        AIMessageChunk(content="Bar Baz", id=""),
+        AIMessageChunk(content="Bar Baz", response_metadata={"x_headers": {}}, id=""),
         AIMessageChunk(
             content=" Stream", response_metadata={"finish_reason": "stop"}, id=""
         ),

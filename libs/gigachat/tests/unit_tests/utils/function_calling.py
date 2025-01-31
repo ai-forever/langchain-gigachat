@@ -78,7 +78,7 @@ def dummy_tool() -> BaseTool:
         arg1: Optional[int] = Field(..., description="foo")
         arg2: Literal["bar", "baz"] = Field(..., description="one of 'bar', 'baz'")
 
-    class DummyFunction(BaseTool):
+    class DummyFunction(BaseTool):  # type: ignore[override]
         args_schema: type[BaseModel] = Schema
         name: str = "dummy_function"
         description: str = "dummy function"
@@ -511,7 +511,7 @@ def dummy_return_parameters_with_fews_tool() -> GigaBaseTool:
         arg1: int = Field(..., description="foo")
         arg2: Literal["bar", "baz"] = Field(..., description="one of 'bar', 'baz'")
 
-    class DummyFunction(GigaBaseTool):
+    class DummyFunction(GigaBaseTool):  # type: ignore[override]
         args_schema: type[BaseModel] = Schema
         name: str = "dummy_function"
         description: str = "dummy function"
