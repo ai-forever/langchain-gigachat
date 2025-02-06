@@ -399,6 +399,9 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         generations = []
         for res in response.choices:
             message = _convert_dict_to_message(res.message)
+            x_headers = response.x_headers if response.x_headers else {}
+            if "x-request-id" in x_headers:
+                message.id = response.x_headers["x-request-id"]
             finish_reason = res.finish_reason
             self._check_finish_reason(finish_reason)
             gen = ChatGeneration(
@@ -410,6 +413,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         llm_output = {
             "token_usage": response.usage.dict(),
             "model_name": response.model,
+            "x_headers": x_headers,
         }
         return ChatResult(generations=generations, llm_output=llm_output)
 
@@ -477,6 +481,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         payload = self._build_payload(messages, **kwargs)
         message_content = ""
 
+        first_chunk = True
         for chunk_d in self._client.stream(payload):
             chunk = {}
             if not isinstance(chunk_d, dict):
@@ -492,14 +497,20 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             if trim_content_to_stop_sequence(message_content, stop):
                 return
             chunk_m = _convert_delta_to_message_chunk(choice["delta"], AIMessageChunk)
+            x_headers = chunk.get("x_headers")
+            x_headers = x_headers if isinstance(x_headers, dict) else {}
+            if "x-request-id" in x_headers:
+                chunk_m.id = x_headers["x-request-id"]
 
             finish_reason = choice.get("finish_reason")
             self._check_finish_reason(finish_reason)
 
-            generation_info = (
-                dict(finish_reason=finish_reason) if finish_reason is not None else None
-            )
-
+            generation_info = {}
+            if finish_reason:
+                generation_info["finish_reason"] = finish_reason
+            if first_chunk:
+                generation_info["x_headers"] = x_headers
+                first_chunk = False
             if run_manager:
                 run_manager.on_llm_new_token(content)
 
@@ -514,6 +525,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
     ) -> AsyncIterator[ChatGenerationChunk]:
         payload = self._build_payload(messages, **kwargs)
         message_content = ""
+        first_chunk = True
 
         async for chunk_d in self._client.astream(payload):
             chunk = {}
@@ -530,13 +542,20 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             if trim_content_to_stop_sequence(message_content, stop):
                 return
             chunk_m = _convert_delta_to_message_chunk(choice["delta"], AIMessageChunk)
+            x_headers = chunk.get("x_headers")
+            x_headers = x_headers if isinstance(x_headers, dict) else {}
+            if isinstance(x_headers, dict) and "x-request-id" in x_headers:
+                chunk_m.id = x_headers["x-request-id"]
 
             finish_reason = choice.get("finish_reason")
             self._check_finish_reason(finish_reason)
 
-            generation_info = (
-                dict(finish_reason=finish_reason) if finish_reason is not None else None
-            )
+            generation_info = {}
+            if finish_reason:
+                generation_info["finish_reason"] = finish_reason
+            if first_chunk:
+                generation_info["x_headers"] = x_headers
+                first_chunk = False
             if run_manager:
                 await run_manager.on_llm_new_token(content)
 

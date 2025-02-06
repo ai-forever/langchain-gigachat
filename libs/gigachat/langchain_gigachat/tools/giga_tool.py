@@ -33,7 +33,7 @@ from langchain_gigachat.utils.function_calling import create_return_schema_from_
 FewShotExamples = Optional[List[Dict[str, Any]]]
 
 
-class GigaBaseTool(BaseTool):
+class GigaBaseTool(BaseTool):  # type: ignore[override]
     """Interface of GigaChat tools with additional properties, that GigaChat supports"""
 
     return_schema: Annotated[Optional[TypeBaseModel], SkipValidation()] = None
@@ -42,7 +42,7 @@ class GigaBaseTool(BaseTool):
     """Few-shot examples to help the model understand how to use the tool."""
 
 
-class GigaTool(GigaBaseTool, Tool):
+class GigaTool(GigaBaseTool, Tool):  # type: ignore[override]
     pass
 
 
@@ -72,7 +72,7 @@ def _filter_schema_args(func: Callable) -> list[str]:
     return filter_args
 
 
-class GigaStructuredTool(GigaBaseTool, StructuredTool):
+class GigaStructuredTool(GigaBaseTool, StructuredTool):  # type: ignore[override]
     @classmethod
     def from_function(
         cls,
