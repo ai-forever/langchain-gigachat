@@ -168,8 +168,8 @@ UploadDialog = Tuple[List[HumanMessage], str, str]
 
 @pytest.fixture
 def upload_images_dialog() -> UploadDialog:
-    image_1 = f"data:image/jpeg;base64,{base64.b64encode("123".encode()).decode()}"
-    image_2 = f"data:image/jpeg;base64,{base64.b64encode("124".encode()).decode()}"
+    image_1 = f"data:image/jpeg;base64,{base64.b64encode('123'.encode()).decode()}"
+    image_2 = f"data:image/jpeg;base64,{base64.b64encode('124'.encode()).decode()}"
     hashed_1 = hashlib.sha256(image_1.encode()).hexdigest()
     hashed_2 = hashlib.sha256(image_2.encode()).hexdigest()
     return (
