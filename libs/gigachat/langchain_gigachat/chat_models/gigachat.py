@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import base64
 import copy
+import hashlib
 import json
 import logging
 import re
+from mimetypes import guess_extension
 from operator import itemgetter
 from typing import (
     TYPE_CHECKING,
@@ -17,6 +20,7 @@ from typing import (
     Mapping,
     Optional,
     Sequence,
+    Tuple,
     Type,
     TypedDict,
     TypeVar,
@@ -62,7 +66,7 @@ from langchain_core.output_parsers.base import OutputParserLike
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 from langchain_core.runnables import Runnable, RunnableMap, RunnablePassthrough
 from langchain_core.tools import BaseTool
-from langchain_core.utils.pydantic import is_basemodel_subclass
+from langchain_core.utils.pydantic import is_basemodel_subclass, pre_init
 from pydantic import BaseModel
 
 from langchain_gigachat.chat_models.base_gigachat import _BaseGigaChat
@@ -141,24 +145,59 @@ def _convert_dict_to_message(message: gm.Messages) -> BaseMessage:
         raise TypeError(f"Got unknown role {message.role} {message}")
 
 
-def _convert_message_to_dict(message: BaseMessage) -> gm.Messages:
+def get_text_and_images_from_content(
+    content: list[Union[str, dict]], cached_images: Dict[str, str]
+) -> Tuple[str, List[str]]:
+    text_parts = []
+    attachments = []
+    for content_part in content:
+        if isinstance(content_part, str):
+            text_parts.append(content_part)
+        elif isinstance(content_part, dict):
+            if content_part.get("type") == "text":
+                text_parts.append(content_part["text"])
+            elif content_part.get("type") == "image_url":
+                image_data = content_part["image_url"]
+                if not isinstance(image_data, dict):
+                    continue
+                if "giga_id" in content_part["image_url"]:
+                    attachments.append(content_part["image_url"].get("giga_id"))
+                image_url = content_part["image_url"].get("url")
+                hashed = hashlib.sha256(image_url.encode()).hexdigest()
+                if hashed in cached_images:
+                    attachments.append(cached_images[hashed])
+    return " ".join(text_parts), attachments
+
+
+def _convert_message_to_dict(
+    message: BaseMessage, cached_images: Optional[Dict[str, str]] = None
+) -> gm.Messages:
     from gigachat.models import Messages, MessagesRole
 
     kwargs = {}
+    if cached_images is None:
+        cached_images = {}
 
-    attachments = message.additional_kwargs.get("attachments", None)
-    if attachments:
-        kwargs["attachments"] = attachments
+    if isinstance(message.content, list):
+        content, attachments = get_text_and_images_from_content(
+            message.content, cached_images
+        )
+    else:
+        content, attachments = message.content, []
+
+    attachments += message.additional_kwargs.get("attachments", [])
     functions_state_id = message.additional_kwargs.get("functions_state_id", None)
     if functions_state_id:
         kwargs["functions_state_id"] = functions_state_id
 
     if isinstance(message, SystemMessage):
         kwargs["role"] = MessagesRole.SYSTEM
-        kwargs["content"] = message.content
+        kwargs["content"] = content
     elif isinstance(message, HumanMessage):
         kwargs["role"] = MessagesRole.USER
-        kwargs["content"] = message.content
+        if attachments:
+            kwargs["attachments"] = attachments
+        kwargs["content"] = content
     elif isinstance(message, AIMessage):
         if tool_calls := getattr(message, "tool_calls", None):
             function_call = copy.deepcopy(tool_calls[0])
@@ -168,18 +207,18 @@ def _convert_message_to_dict(message: BaseMessage) -> gm.Messages:
         else:
             function_call = message.additional_kwargs.get("function_call", None)
         kwargs["role"] = MessagesRole.ASSISTANT
-        kwargs["content"] = message.content
+        kwargs["content"] = content
         kwargs["function_call"] = function_call
     elif isinstance(message, ChatMessage):
         kwargs["role"] = message.role
-        kwargs["content"] = message.content
+        kwargs["content"] = content
     elif isinstance(message, FunctionMessage):
         kwargs["role"] = MessagesRole.FUNCTION
         # TODO Switch to using 'result' field in future GigaChat models
-        kwargs["content"] = _validate_content(message.content)
+        kwargs["content"] = _validate_content(content)
     elif isinstance(message, ToolMessage):
         kwargs["role"] = MessagesRole.FUNCTION
-        kwargs["content"] = _validate_content(message.content)
+        kwargs["content"] = _validate_content(content)
     else:
         raise TypeError(f"Got unknown type {message}")
     return Messages(**kwargs)
@@ -353,10 +392,92 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
 
     """
 
+    """ Auto-upload Base-64 images. Not for production usage! """
+    auto_upload_images: bool = False
+    """ 
+    Dict with cached images, with key as hashed 
+    base-64 image to File ID on GigaChat API 
+    """
+    _cached_images: Dict[str, str] = {}
+
+    @pre_init
+    def validate_environment(cls, values: Dict) -> Dict:
+        values = super(GigaChat, cls).validate_environment(values)
+        if values["auto_upload_images"]:
+            logger.warning(
+                "`auto_upload_images` is experiment option. "
+                "Please, don't use it on production. "
+                "Use instead GigaChat.upload_file method for uploading images"
+            )
+        return values
+
+    async def _aupload_images(self, messages: List[BaseMessage]) -> None:
+        for message in messages:
+            if isinstance(message.content, list):
+                for content_part in message.content:
+                    if not isinstance(content_part, dict):
+                        continue
+                    if content_part.get("type") == "image_url":
+                        image_url = content_part["image_url"]["url"]
+                        matches = re.search(r"data:(.+);(.+),(.+)", image_url)
+                        if matches and not self.auto_upload_images:
+                            logger.warning(
+                                "You trying to send base-64 images, "
+                                "but parameter `auto_upload_images` is not True. "
+                                "Set it to True. "
+                            )
+                        if not matches or not self.auto_upload_images:
+                            continue
+                        hashed = hashlib.sha256(image_url.encode()).hexdigest()
+                        if hashed not in self._cached_images:
+                            extension, type_, image_str = matches.groups()
+                            if type_ != "base64":
+                                continue
+                            file = await self.aupload_file(
+                                (
+                                    f"{uuid4()}{guess_extension(extension)}",
+                                    base64.b64decode(image_str),
+                                )
+                            )
+                            self._cached_images[hashed] = file.id_
+
+    def _upload_images(self, messages: List[BaseMessage]) -> None:
+        for message in messages:
+            if isinstance(message.content, list):
+                for content_part in message.content:
+                    if not isinstance(content_part, dict):
+                        continue
+                    if content_part.get("type") == "image_url":
+                        image_url = content_part["image_url"]["url"]
+                        matches = re.search(r"data:(.+);(.+),(.+)", image_url)
+                        if matches and not self.auto_upload_images:
+                            logger.warning(
+                                "You trying to send base-64 images, "
+                                "but parameter `auto_upload_images` is not True. "
+                                "Set it to True. "
+                            )
+                        if not matches or not self.auto_upload_images:
+                            continue
+                        hashed = hashlib.sha256(image_url.encode()).hexdigest()
+                        if hashed not in self._cached_images:
+                            extension, type_, image_str = matches.groups()
+                            if type_ != "base64":
+                                continue
+                            file = self.upload_file(
+                                (
+                                    f"{uuid4()}{guess_extension(extension)}",
+                                    base64.b64decode(image_str),
+                                )
+                            )
+
+                            self._cached_images[hashed] = file.id_
+
     def _build_payload(self, messages: List[BaseMessage], **kwargs: Any) -> gm.Chat:
         from gigachat.models import Chat
 
-        messages_dicts = [_convert_message_to_dict(m) for m in messages]
+        messages_dicts = [
+            _convert_message_to_dict(m, self._cached_images) for m in messages
+        ]
         kwargs.pop("messages", None)
 
         functions = kwargs.pop("functions", [])
@@ -432,6 +553,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             )
             return generate_from_stream(stream_iter)
 
+        self._upload_images(messages)
         payload = self._build_payload(messages, **kwargs)
         response = self._client.chat(payload)
         for choice in response.choices:
@@ -459,6 +581,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             )
             return await agenerate_from_stream(stream_iter)
 
+        await self._aupload_images(messages)
         payload = self._build_payload(messages, **kwargs)
         response = await self._client.achat(payload)
         for choice in response.choices:
@@ -478,6 +601,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         run_manager: Optional[CallbackManagerForLLMRun] = None,
         **kwargs: Any,
     ) -> Iterator[ChatGenerationChunk]:
+        self._upload_images(messages)
         payload = self._build_payload(messages, **kwargs)
         message_content = ""
 
@@ -523,6 +647,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         run_manager: Optional[AsyncCallbackManagerForLLMRun] = None,
         **kwargs: Any,
     ) -> AsyncIterator[ChatGenerationChunk]:
+        await self._aupload_images(messages)
         payload = self._build_payload(messages, **kwargs)
         message_content = ""
         first_chunk = True
