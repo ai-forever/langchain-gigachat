@@ -310,6 +310,14 @@ def format_tool_to_gigachat_function(tool: BaseTool) -> GigaFunctionDescription:
     is_simple_tool = isinstance(tool, Tool) and not tool.args_schema
 
     if tool_schema and not is_simple_tool:
+        if isinstance(tool_schema, dict) and "properties" in tool_schema:
+            return GigaFunctionDescription(
+                name=tool.name,
+                description=tool.description,
+                parameters=tool_schema,
+                few_shot_examples=few_shot_examples,
+                return_parameters=return_schema,
+            )
         return convert_pydantic_to_gigachat_function(
             tool_schema,
             name=tool.name,
