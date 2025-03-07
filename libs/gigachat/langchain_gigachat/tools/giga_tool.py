@@ -81,7 +81,7 @@ class GigaStructuredTool(GigaBaseTool, StructuredTool):  # type: ignore[override
         name: Optional[str] = None,
         description: Optional[str] = None,
         return_direct: bool = False,
-        args_schema: Optional[type[BaseModel]] = None,
+        args_schema: Union[type[BaseModel], dict[str, Any], None] = None,
         infer_schema: bool = True,
         return_schema: Optional[Type[BaseModel]] = None,
         few_shot_examples: FewShotExamples = None,
@@ -174,7 +174,7 @@ class GigaStructuredTool(GigaBaseTool, StructuredTool):  # type: ignore[override
 def giga_tool(
     *args: Union[str, Callable, Runnable],
     return_direct: bool = False,
-    args_schema: Optional[type] = None,
+    args_schema: Union[type[BaseModel], dict[str, Any], None] = None,
     infer_schema: bool = True,
     response_format: Literal["content", "content_and_artifact"] = "content",
     parse_docstring: bool = False,
@@ -230,7 +230,9 @@ def giga_tool(
 
                 coroutine = ainvoke_wrapper
                 func = invoke_wrapper
-                schema: Optional[type[BaseModel]] = runnable.input_schema
+                schema: Optional[Union[type[BaseModel], dict[str, Any]],] = (
+                    runnable.input_schema
+                )
                 description = repr(runnable)
             elif inspect.iscoroutinefunction(dec_func):
                 coroutine = dec_func

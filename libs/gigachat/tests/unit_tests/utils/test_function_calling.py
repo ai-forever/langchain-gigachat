@@ -104,6 +104,29 @@ def dummy_structured_tool() -> StructuredTool:
 
 
 @pytest.fixture()
+def dummy_structured_tool_with_dict_args_schema() -> StructuredTool:
+    schema = {
+        "properties": {
+            "arg1": {"description": "foo", "type": "integer"},
+            "arg2": {
+                "description": "one of 'bar', 'baz'",
+                "enum": ["bar", "baz"],
+                "type": "string",
+            },
+        },
+        "required": ["arg2"],
+        "title": "dummy_function",
+        "type": "object",
+    }
+
+    return StructuredTool(
+        name="dummy_function",
+        description="dummy function",
+        args_schema=schema,
+    )
+
+
+@pytest.fixture()
 def dummy_pydantic() -> type[BaseModel]:
     class dummy_function(BaseModel):  # noqa: N801
         """dummy function"""
@@ -252,6 +275,7 @@ def function_with_title_parameters() -> type[BaseModel]:
         "pydantic",
         "function",
         "dummy_structured_tool",
+        "dummy_structured_tool_with_dict_args_schema",
         "dummy_tool",
         "dummy_typing_typed_dict",
         "dummy_typing_typed_dict_docstring",
