@@ -366,13 +366,14 @@ typing = ["typing-extensions (>=4.12.2)"]
 
 [[package]]
 name = "gigachat"
-version = "0.1.38"
+version = "0.1.39"
 description = "GigaChat. Python-library for GigaChain and LangChain"
 optional = false
 python-versions = "<4.0,>=3.8"
+groups = ["main"]
 files = [
-    {file = "gigachat-0.1.38-py3-none-any.whl", hash = "sha256:ba2e1aedee063ff3ac05301fcaa83ed0175e5076aa504d3d265da05bed905e43"},
-    {file = "gigachat-0.1.38.tar.gz", hash = "sha256:8b1315ac080c4c0f99f65e09566e46c2364579ad8300cfdbe248f00558bc1d56"},
+    {file = "gigachat-0.1.39-py3-none-any.whl", hash = "sha256:ae9aa89953ac0bca01eb84a5883f9b3bd7035bde41d683b96f246f2b45a79cdb"},
+    {file = "gigachat-0.1.39.tar.gz", hash = "sha256:6deca321cd9654291c0f2636db5758db2883eb152f88c95aaa3988b5c23b8be4"},
 ]
 
 [package.dependencies]
