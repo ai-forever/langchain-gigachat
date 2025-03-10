@@ -122,7 +122,7 @@ def dummy_structured_tool_with_dict_args_schema() -> StructuredTool:
     return StructuredTool(
         name="dummy_function",
         description="dummy function",
-        args_schema=schema,
+        args_schema=schema,  # type: ignore[arg-type]
     )
 
 
