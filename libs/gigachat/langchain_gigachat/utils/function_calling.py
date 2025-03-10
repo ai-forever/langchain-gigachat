@@ -246,7 +246,7 @@ def _get_python_function_name(function: Callable) -> str:
     return function.__name__
 
 
-def _model_to_schema(model: Type[BaseModel]) -> dict:
+def _model_to_schema(model: Union[type[BaseModel], dict[str, Any]]) -> dict:
     if hasattr(model, "model_json_schema"):
         # Pydantic 2
         from langchain_gigachat.utils.pydantic_generator import GigaChatJsonSchema
@@ -310,6 +310,14 @@ def format_tool_to_gigachat_function(tool: BaseTool) -> GigaFunctionDescription:
     is_simple_tool = isinstance(tool, Tool) and not tool.args_schema
 
     if tool_schema and not is_simple_tool:
+        if isinstance(tool_schema, dict) and "properties" in tool_schema:
+            return GigaFunctionDescription(
+                name=tool.name,
+                description=tool.description,
+                parameters=tool_schema,
+                few_shot_examples=few_shot_examples,
+                return_parameters=return_schema,
+            )
         return convert_pydantic_to_gigachat_function(
             tool_schema,
             name=tool.name,
@@ -333,7 +341,7 @@ def format_tool_to_gigachat_function(tool: BaseTool) -> GigaFunctionDescription:
 
 
 def convert_pydantic_to_gigachat_function(
-    model: Type[BaseModel],
+    model: Union[type[BaseModel], dict[str, Any]],
     *,
     name: Optional[str] = None,
     description: Optional[str] = None,
