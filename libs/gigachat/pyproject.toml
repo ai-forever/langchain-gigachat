@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "langchain-gigachat"
-version = "0.3.4"
+version = "0.3.5"
 description = "An integration package connecting GigaChat and LangChain"
 authors = []
 readme = "README.md"
