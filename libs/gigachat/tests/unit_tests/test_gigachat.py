@@ -53,7 +53,12 @@ def chat_completion() -> ChatCompletion:
         ],
         created=1678878333,
         model="GigaChat:v1.2.19.2",
-        usage=Usage(prompt_tokens=18, completion_tokens=68, total_tokens=86),
+        usage=Usage(
+            prompt_tokens=18,
+            completion_tokens=68,
+            total_tokens=86,
+            precached_prompt_tokens=0,
+        ),
         object="chat.completion",
     )
 
