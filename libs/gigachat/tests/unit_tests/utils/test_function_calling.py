@@ -213,7 +213,6 @@ def json_schema() -> dict:
         "few_shot_examples": None,
         "parameters": {
             "type": "object",
-            "description": "dummy function",
             "properties": {
                 "arg1": {"description": "foo", "type": "integer"},
                 "arg2": {
@@ -298,7 +297,6 @@ def test_convert_to_gigachat_function(
         "few_shot_examples": None,
         "parameters": {
             "type": "object",
-            "description": "dummy function",
             "properties": {
                 "arg1": {"description": "foo", "type": "integer"},
                 "arg2": {
@@ -325,7 +323,6 @@ def test_runnable(runnable: Runnable) -> None:
         "few_shot_examples": None,
         "parameters": {
             "type": "object",
-            "description": "dummy function",
             "properties": {
                 "arg1": {"type": "integer", "description": ""},
                 "arg2": {"enum": ["bar", "baz"], "type": "string", "description": ""},
@@ -384,7 +381,6 @@ def test_convert_to_gigachat_function_nested() -> None:
         "description": "dummy function",
         "parameters": {
             "type": "object",
-            "description": "dummy function",
             "properties": {
                 "arg1": {
                     "type": "object",
@@ -448,7 +444,6 @@ def test_function_with_title_parameters(
         "name": "ExtractResources",
         "description": "Extract the 3-5 most relevant resources from a search result.",
         "parameters": {
-            "description": "Extract the 3-5 most relevant resources from a search result.",  # noqa
             # noqa
             "properties": {
                 "resources": {
@@ -489,7 +484,7 @@ def test_convert_to_function_no_args() -> None:
         "description": "No args",
         "few_shot_examples": None,
         "return_parameters": None,
-        "parameters": {"description": "No args", "properties": {}, "type": "object"},
+        "parameters": {"properties": {}, "type": "object"},
     }
 
 

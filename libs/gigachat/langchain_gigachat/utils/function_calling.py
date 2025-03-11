@@ -311,9 +311,10 @@ def format_tool_to_gigachat_function(tool: BaseTool) -> GigaFunctionDescription:
 
     if tool_schema and not is_simple_tool:
         if isinstance(tool_schema, dict) and "properties" in tool_schema:
+            default_description = tool_schema.pop("description")
             return GigaFunctionDescription(
                 name=tool.name,
-                description=tool.description,
+                description=tool.description or default_description,
                 parameters=tool_schema,
                 few_shot_examples=few_shot_examples,
                 return_parameters=return_schema,
@@ -366,9 +367,10 @@ def convert_pydantic_to_gigachat_function(
         return_schema = _convert_return_schema(return_model)
     else:
         return_schema = None
-
-    description = description or schema.get("description", None)
-    if not description or description == "":
+    default_description = schema.pop("description", "")
+    if (not description or description == "") and (
+        not default_description or default_description == ""
+    ):
         raise ValueError(
             "Incorrect function or tool description. Description is required."
         )
@@ -380,7 +382,7 @@ def convert_pydantic_to_gigachat_function(
 
     return GigaFunctionDescription(
         name=name or title,
-        description=description,
+        description=description or default_description,
         parameters=schema,
         return_parameters=return_schema,
         few_shot_examples=few_shot_examples,
