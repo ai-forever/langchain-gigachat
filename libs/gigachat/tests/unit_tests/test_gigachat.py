@@ -453,7 +453,6 @@ def test_structured_output() -> None:
         "name": "SomeResult",
         "description": "My desc",
         "parameters": {
-            "description": "My desc",
             "properties": {
                 "value": {"description": "some value", "type": "integer"},
                 "description": {"description": "some descriptin", "type": "string"},
