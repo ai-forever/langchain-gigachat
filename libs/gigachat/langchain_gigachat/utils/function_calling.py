@@ -311,6 +311,11 @@ def format_tool_to_gigachat_function(tool: BaseTool) -> GigaFunctionDescription:
 
     if tool_schema and not is_simple_tool:
         if isinstance(tool_schema, dict) and "properties" in tool_schema:
+            tool_schema = dereference_refs(tool_schema)
+            if "definitions" in tool_schema:  # pydantic 1
+                tool_schema.pop("definitions", None)
+            if "$defs" in tool_schema:  # pydantic 2
+                tool_schema.pop("$defs", None)
             default_description = tool_schema.pop("description")
             return GigaFunctionDescription(
                 name=tool.name,
