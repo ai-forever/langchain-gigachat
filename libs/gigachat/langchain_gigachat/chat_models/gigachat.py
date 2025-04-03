@@ -56,6 +56,7 @@ from langchain_core.messages import (
     ToolCallChunk,
     ToolMessage,
 )
+from langchain_core.messages.ai import UsageMetadata
 from langchain_core.output_parsers import (
     JsonOutputKeyToolsParser,
     JsonOutputParser,
@@ -512,21 +513,35 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
 
         return payload
 
-    def _check_finish_reason(self, finish_reason: str) -> None:
+    def _check_finish_reason(self, finish_reason: str | None) -> None:
         if finish_reason and finish_reason not in {"stop", "function_call"}:
             logger.warning("Giga generation stopped with reason: %s", finish_reason)
 
-    def _create_chat_result(self, response: Any) -> ChatResult:
+    def _create_chat_result(self, response: gm.ChatCompletion) -> ChatResult:
         generations = []
+        x_headers = None
         for res in response.choices:
             message = _convert_dict_to_message(res.message)
             x_headers = response.x_headers if response.x_headers else {}
-            if "x-request-id" in x_headers:
-                message.id = response.x_headers["x-request-id"]
+            if x_headers.get("x-request-id") is not None:
+                message.id = x_headers["x-request-id"]
+            if isinstance(message, AIMessage):
+                message.usage_metadata = UsageMetadata(
+                    output_tokens=response.usage.completion_tokens,
+                    input_tokens=response.usage.prompt_tokens,
+                    total_tokens=response.usage.total_tokens,
+                    input_token_details={
+                        "cache_read": response.usage.precached_prompt_tokens or 0
+                    },
+                )
             finish_reason = res.finish_reason
             self._check_finish_reason(finish_reason)
             gen = ChatGeneration(
-                message=message, generation_info={"finish_reason": finish_reason}
+                message=message,
+                generation_info={
+                    "finish_reason": finish_reason,
+                    "model_name": response.model,
+                },
             )
             generations.append(gen)
             if self.verbose:
@@ -621,16 +636,27 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             if trim_content_to_stop_sequence(message_content, stop):
                 return
             chunk_m = _convert_delta_to_message_chunk(choice["delta"], AIMessageChunk)
+            usage_metadata = None
+            if chunk.get("usage"):
+                usage_metadata = UsageMetadata(
+                    output_tokens=chunk["usage"]["completion_tokens"],
+                    input_tokens=chunk["usage"]["prompt_tokens"],
+                    total_tokens=chunk["usage"]["total_tokens"],
+                    input_token_details={
+                        "cache_read": chunk["usage"].get("precached_prompt_tokens", 0)
+                    },
+                )
+            if isinstance(chunk_m, AIMessageChunk):
+                chunk_m.usage_metadata = usage_metadata
             x_headers = chunk.get("x_headers")
             x_headers = x_headers if isinstance(x_headers, dict) else {}
             if "x-request-id" in x_headers:
                 chunk_m.id = x_headers["x-request-id"]
 
-            finish_reason = choice.get("finish_reason")
-            self._check_finish_reason(finish_reason)
-
             generation_info = {}
-            if finish_reason:
+            if finish_reason := choice.get("finish_reason"):
+                self._check_finish_reason(finish_reason)
+                generation_info["model_name"] = chunk.get("model")
                 generation_info["finish_reason"] = finish_reason
             if first_chunk:
                 generation_info["x_headers"] = x_headers
@@ -667,16 +693,27 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             if trim_content_to_stop_sequence(message_content, stop):
                 return
             chunk_m = _convert_delta_to_message_chunk(choice["delta"], AIMessageChunk)
+            usage_metadata = None
+            if chunk.get("usage"):
+                usage_metadata = UsageMetadata(
+                    output_tokens=chunk["usage"]["completion_tokens"],
+                    input_tokens=chunk["usage"]["prompt_tokens"],
+                    total_tokens=chunk["usage"]["total_tokens"],
+                    input_token_details={
+                        "cache_read": chunk["usage"].get("precached_prompt_tokens", 0)
+                    },
+                )
+            if isinstance(chunk_m, AIMessageChunk):
+                chunk_m.usage_metadata = usage_metadata
             x_headers = chunk.get("x_headers")
             x_headers = x_headers if isinstance(x_headers, dict) else {}
             if isinstance(x_headers, dict) and "x-request-id" in x_headers:
                 chunk_m.id = x_headers["x-request-id"]
 
-            finish_reason = choice.get("finish_reason")
-            self._check_finish_reason(finish_reason)
-
             generation_info = {}
-            if finish_reason:
+            if finish_reason := choice.get("finish_reason"):
+                self._check_finish_reason(finish_reason)
+                generation_info["model_name"] = chunk.get("model")
                 generation_info["finish_reason"] = finish_reason
             if first_chunk:
                 generation_info["x_headers"] = x_headers
