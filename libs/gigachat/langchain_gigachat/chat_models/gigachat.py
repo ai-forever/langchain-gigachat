@@ -55,6 +55,7 @@ from langchain_core.messages import (
     ToolCall,
     ToolCallChunk,
     ToolMessage,
+    merge_message_runs,
 )
 from langchain_core.output_parsers import (
     JsonOutputKeyToolsParser,
@@ -475,6 +476,9 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
     def _build_payload(self, messages: List[BaseMessage], **kwargs: Any) -> gm.Chat:
         from gigachat.models import Chat
 
+        # Collapse multiple messages of same type into one
+        messages = merge_message_runs(messages)
+
         messages_dicts = [
             _convert_message_to_dict(m, self._cached_images) for m in messages
         ]
@@ -728,7 +732,9 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         self,
         schema: Optional[_DictOrPydanticClass] = None,
         *,
-        method: Literal["function_calling", "json_mode"] = "function_calling",
+        method: Literal[
+            "function_calling", "json_mode", "format_instructions"
+        ] = "function_calling",
         include_raw: Literal[True] = True,
         **kwargs: Any,
     ) -> Runnable[LanguageModelInput, _AllReturnType]: ...
@@ -738,7 +744,9 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         self,
         schema: Optional[_DictOrPydanticClass] = None,
         *,
-        method: Literal["function_calling", "json_mode"] = "function_calling",
+        method: Literal[
+            "function_calling", "json_mode", "format_instructions"
+        ] = "function_calling",
         include_raw: Literal[False] = False,
         **kwargs: Any,
     ) -> Runnable[LanguageModelInput, _DictOrPydantic]: ...
@@ -747,7 +755,9 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         self,
         schema: Optional[_DictOrPydanticClass] = None,
         *,
-        method: Literal["function_calling", "json_mode"] = "function_calling",
+        method: Literal[
+            "function_calling", "json_mode", "format_instructions"
+        ] = "function_calling",
         include_raw: bool = False,
         **kwargs: Any,
     ) -> Runnable[LanguageModelInput, _DictOrPydantic]:
@@ -779,6 +789,37 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 if is_pydantic_schema
                 else JsonOutputParser()
             )
+            if method == "format_instructions":
+                from langchain_core.prompt_values import ChatPromptValue
+                from langchain_core.runnables import RunnableLambda
+
+                def add_format_instructions(
+                    _input: LanguageModelInput, format_instructions: str
+                ) -> LanguageModelInput:
+                    if isinstance(_input, ChatPromptValue):
+                        messages = _input.messages
+                        return type(messages)(
+                            list(messages) + [HumanMessage(format_instructions)]  # type: ignore[call-arg]
+                        )
+                    elif isinstance(_input, str):
+                        return _input + f"\n\n{format_instructions}"
+                    elif isinstance(_input, Sequence):
+                        return type(_input)(
+                            list(_input) + [HumanMessage(format_instructions)]  # type: ignore[call-arg]
+                        )
+                    else:
+                        msg = (
+                            f"Invalid input type {type(_input)}. "
+                            "Must be a PromptValue, str, or list of BaseMessages."
+                        )
+                        raise ValueError(msg)  # noqa: TRY004
+
+                add_format_instructions_chain = RunnableLambda(
+                    lambda _input: add_format_instructions(
+                        _input, output_parser.get_format_instructions()
+                    )
+                )
+                llm = add_format_instructions_chain | llm
 
         if include_raw:
             parser_assign = RunnablePassthrough.assign(
