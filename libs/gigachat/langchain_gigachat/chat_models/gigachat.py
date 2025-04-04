@@ -55,6 +55,7 @@ from langchain_core.messages import (
     ToolCall,
     ToolCallChunk,
     ToolMessage,
+    merge_message_runs,
 )
 from langchain_core.output_parsers import (
     JsonOutputKeyToolsParser,
@@ -62,7 +63,7 @@ from langchain_core.output_parsers import (
     PydanticOutputParser,
     PydanticToolsParser,
 )
-from langchain_core.output_parsers.base import BaseOutputParser, OutputParserLike
+from langchain_core.output_parsers.base import OutputParserLike
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 from langchain_core.runnables import Runnable, RunnableMap, RunnablePassthrough
 from langchain_core.tools import BaseTool
@@ -475,6 +476,9 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
     def _build_payload(self, messages: List[BaseMessage], **kwargs: Any) -> gm.Chat:
         from gigachat.models import Chat
 
+        # Collapse multiple messages of same type into one
+        messages = merge_message_runs(messages)
+
         messages_dicts = [
             _convert_message_to_dict(m, self._cached_images) for m in messages
         ]
@@ -780,7 +784,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             llm = self.bind_tools([schema], tool_choice=key_name)
         else:
             llm = self
-            output_parser: BaseOutputParser = (
+            output_parser = (
                 PydanticOutputParser(pydantic_object=schema)  # type: ignore[arg-type]
                 if is_pydantic_schema
                 else JsonOutputParser()
@@ -795,13 +799,13 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                     if isinstance(_input, ChatPromptValue):
                         messages = _input.messages
                         return type(messages)(
-                            list(messages) + [HumanMessage(format_instructions)]
+                            list(messages) + [HumanMessage(format_instructions)]  # type: ignore[call-arg]
                         )
                     elif isinstance(_input, str):
                         return _input + f"\n\n{format_instructions}"
                     elif isinstance(_input, Sequence):
                         return type(_input)(
-                            list(_input) + [HumanMessage(format_instructions)]
+                            list(_input) + [HumanMessage(format_instructions)]  # type: ignore[call-arg]
                         )
                     else:
                         msg = (
