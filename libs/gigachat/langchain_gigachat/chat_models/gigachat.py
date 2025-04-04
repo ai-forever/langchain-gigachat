@@ -62,7 +62,7 @@ from langchain_core.output_parsers import (
     PydanticOutputParser,
     PydanticToolsParser,
 )
-from langchain_core.output_parsers.base import OutputParserLike, BaseOutputParser
+from langchain_core.output_parsers.base import BaseOutputParser, OutputParserLike
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 from langchain_core.runnables import Runnable, RunnableMap, RunnablePassthrough
 from langchain_core.tools import BaseTool
@@ -728,7 +728,9 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         self,
         schema: Optional[_DictOrPydanticClass] = None,
         *,
-        method: Literal["function_calling", "json_mode", "format_instructions"] = "function_calling",
+        method: Literal[
+            "function_calling", "json_mode", "format_instructions"
+        ] = "function_calling",
         include_raw: Literal[True] = True,
         **kwargs: Any,
     ) -> Runnable[LanguageModelInput, _AllReturnType]: ...
@@ -738,7 +740,9 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         self,
         schema: Optional[_DictOrPydanticClass] = None,
         *,
-        method: Literal["function_calling", "json_mode", "format_instructions"] = "function_calling",
+        method: Literal[
+            "function_calling", "json_mode", "format_instructions"
+        ] = "function_calling",
         include_raw: Literal[False] = False,
         **kwargs: Any,
     ) -> Runnable[LanguageModelInput, _DictOrPydantic]: ...
@@ -747,7 +751,9 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         self,
         schema: Optional[_DictOrPydanticClass] = None,
         *,
-        method: Literal["function_calling", "json_mode", "format_instructions"] = "function_calling",
+        method: Literal[
+            "function_calling", "json_mode", "format_instructions"
+        ] = "function_calling",
         include_raw: bool = False,
         **kwargs: Any,
     ) -> Runnable[LanguageModelInput, _DictOrPydantic]:
@@ -780,17 +786,23 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 else JsonOutputParser()
             )
             if method == "format_instructions":
-                from langchain_core.runnables import RunnableLambda
                 from langchain_core.prompt_values import ChatPromptValue
+                from langchain_core.runnables import RunnableLambda
 
-                def add_format_instructions(_input: LanguageModelInput, format_instructions: str) -> LanguageModelInput:
+                def add_format_instructions(
+                    _input: LanguageModelInput, format_instructions: str
+                ) -> LanguageModelInput:
                     if isinstance(_input, ChatPromptValue):
                         messages = _input.messages
-                        return type(messages)(list(messages) + [HumanMessage(format_instructions)])
+                        return type(messages)(
+                            list(messages) + [HumanMessage(format_instructions)]
+                        )
                     elif isinstance(_input, str):
-                        return _input + f'\n\n{format_instructions}'
+                        return _input + f"\n\n{format_instructions}"
                     elif isinstance(_input, Sequence):
-                        return type(_input)(list(_input) + [HumanMessage(format_instructions)])
+                        return type(_input)(
+                            list(_input) + [HumanMessage(format_instructions)]
+                        )
                     else:
                         msg = (
                             f"Invalid input type {type(_input)}. "
@@ -799,11 +811,11 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                         raise ValueError(msg)  # noqa: TRY004
 
                 add_format_instructions_chain = RunnableLambda(
-                    lambda _input: add_format_instructions(_input, output_parser.get_format_instructions())
+                    lambda _input: add_format_instructions(
+                        _input, output_parser.get_format_instructions()
+                    )
                 )
                 llm = add_format_instructions_chain | llm
-
-
 
         if include_raw:
             parser_assign = RunnablePassthrough.assign(
