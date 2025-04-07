@@ -323,7 +323,12 @@ def test_gigachat_stream(patch_gigachat: None) -> None:
     expected = [
         AIMessageChunk(content="Bar Baz", response_metadata={"x_headers": {}}, id=""),
         AIMessageChunk(
-            content=" Stream", response_metadata={"finish_reason": "stop"}, id=""
+            content=" Stream",
+            response_metadata={
+                "model_name": "GigaChat:v1.2.19.2",
+                "finish_reason": "stop",
+            },
+            id="",
         ),
     ]
 
@@ -339,7 +344,12 @@ async def test_gigachat_astream(patch_gigachat_astream: None) -> None:
     expected = [
         AIMessageChunk(content="Bar Baz", response_metadata={"x_headers": {}}, id=""),
         AIMessageChunk(
-            content=" Stream", response_metadata={"finish_reason": "stop"}, id=""
+            content=" Stream",
+            response_metadata={
+                "model_name": "GigaChat:v1.2.19.2",
+                "finish_reason": "stop",
+            },
+            id="",
         ),
     ]
     llm = GigaChat()
