@@ -55,7 +55,6 @@ from langchain_core.messages import (
     ToolCall,
     ToolCallChunk,
     ToolMessage,
-    merge_message_runs,
 )
 from langchain_core.output_parsers import (
     JsonOutputKeyToolsParser,
@@ -475,9 +474,6 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
 
     def _build_payload(self, messages: List[BaseMessage], **kwargs: Any) -> gm.Chat:
         from gigachat.models import Chat
-
-        # Collapse multiple messages of same type into one
-        messages = merge_message_runs(messages)
 
         messages_dicts = [
             _convert_message_to_dict(m, self._cached_images) for m in messages

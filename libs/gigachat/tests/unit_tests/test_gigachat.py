@@ -470,6 +470,11 @@ def test_structured_output() -> None:
     }
 
 
+def test_structured_output_format_instructions() -> None:
+    llm = GigaChat().with_structured_output(SomeResult, method="format_instructions")
+    assert llm.steps[0].invoke(input="Hello") == 'Hello\n\nThe output should be formatted as a JSON instance that conforms to the JSON schema below.\n\nAs an example, for the schema {"properties": {"foo": {"title": "Foo", "description": "a list of strings", "type": "array", "items": {"type": "string"}}}, "required": ["foo"]}\nthe object {"foo": ["bar", "baz"]} is a well-formatted instance of the schema. The object {"properties": {"foo": ["bar", "baz"]}} is not well-formatted.\n\nHere is the output schema:\n```\n{"description": "My desc", "properties": {"value": {"description": "some value", "title": "Value", "type": "integer"}, "description": {"description": "some descriptin", "title": "Description", "type": "string"}}, "required": ["value", "description"]}\n```'  # noqa: E501
+
+
 def test_ai_message_json_serialization(patch_gigachat: None) -> None:
     llm = GigaChat()
     response = llm.invoke("hello")
