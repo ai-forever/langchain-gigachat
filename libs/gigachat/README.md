@@ -1,6 +1,4 @@
-# langchain-gigachat
-
-This is a library integration with [GigaChat](https://giga.chat/).
+<div align="center" id="top">
 
 [![GitHub Release](https://img.shields.io/github/v/release/ai-forever/langchain-gigachat?style=flat-square)](https://github.com/ai-forever/langchain-gigachat/releases)
 [![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/ai-forever/langchain-gigachat/check_diffs.yml?style=flat-square)](https://github.com/ai-forever/langchain-gigachat/actions/workflows/check_diffs.yml)
@@ -9,7 +7,16 @@ This is a library integration with [GigaChat](https://giga.chat/).
 [![GitHub Repo stars](https://img.shields.io/github/stars/ai-forever/langchain-gigachat?style=flat-square)](https://star-history.com/#ai-forever/langchain-gigachat)
 [![GitHub Open Issues](https://img.shields.io/github/issues-raw/ai-forever/langchain-gigachat)](https://github.com/ai-forever/langchain-gigachat/issues)
 
+[English](README.md) | [Русский](README-ru_RU.md)
+
+</div>
+
+# langchain-gigachat
+
+This is a library integration with [GigaChat](https://giga.chat/).
+
 ## Installation
+
 ```bash
 pip install -U langchain-gigachat
 ```
@@ -18,7 +25,9 @@ pip install -U langchain-gigachat
 Follow these simple steps to get up and running quickly.
 
 ### Installation
+
 To install the package use following command:
+
 ```shell
 pip install -U langchain-gigachat
 ```
@@ -26,6 +35,7 @@ pip install -U langchain-gigachat
 ### Initialization
 
 To initialize chat model:
+
 ```python
 from langchain_gigachat.chat_models import GigaChat
 
