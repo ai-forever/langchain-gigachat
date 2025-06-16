@@ -89,8 +89,8 @@ class _BaseGigaChat(Serializable):
             "key_file_password": "GIGACHAT_KEY_FILE_PASSWORD",
         }
 
-    @property
-    def lc_serializable(self) -> bool:
+    @classmethod
+    def is_lc_serializable(cls) -> bool:
         return True
 
     @cached_property
