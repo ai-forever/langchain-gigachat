@@ -804,7 +804,10 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                     "schema must be specified when method is 'function_calling'. "
                     "Received None."
                 )
-            key_name = convert_to_gigachat_tool(schema)["function"]["name"]
+            func = convert_to_gigachat_tool(schema)["function"]
+            key_name = func.get(
+                "name", func.get("title")
+            )  # In case of pydantic from JSON (For openai capability)
             if is_pydantic_schema:
                 output_parser: OutputParserLike = PydanticToolsParser(
                     tools=[schema],  # type: ignore
