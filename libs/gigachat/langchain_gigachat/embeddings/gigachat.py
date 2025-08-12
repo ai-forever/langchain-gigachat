@@ -21,7 +21,7 @@ class GigaChatEmbeddings(BaseModel, Embeddings):
 
     Example:
         .. code-block:: python
-            from langchain_community.embeddings.gigachat import GigaChatEmbeddings
+            from langchain_gigachat.embeddings.gigachat import GigaChatEmbeddings
 
             embeddings =
                 GigaChatEmbeddings(credentials=..., scope=..., verify_ssl_certs=False)

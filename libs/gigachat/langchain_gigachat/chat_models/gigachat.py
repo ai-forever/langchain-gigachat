@@ -360,7 +360,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
     Example Usage:
         .. code-block:: python
 
-            from langchain_community.chat_models import GigaChat
+            from langchain_gigachat.chat_models import GigaChat
 
             # Authorization with Token
             # (obtainable in the personal cabinet under Authorization Data):
