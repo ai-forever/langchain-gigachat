@@ -483,7 +483,20 @@ def test_structured_output() -> None:
 def test_structured_output_json() -> None:
     llm = GigaChat().with_structured_output(SomeResult.model_json_schema())
     assert llm.steps[0].kwargs["function_call"] == {"name": "SomeResult"}  # type: ignore[attr-defined]
-    assert llm.steps[0].kwargs["tools"][0]["function"] is not None  # type: ignore[attr-defined]
+    assert llm.steps[0].kwargs["tools"][0]["function"] == {  # type: ignore[attr-defined]
+        "description": "My desc",
+        "properties": {
+            "value": {"description": "some value", "title": "Value", "type": "integer"},
+            "description": {
+                "description": "some descriptin",
+                "title": "Description",
+                "type": "string",
+            },
+        },
+        "required": ["value", "description"],
+        "title": "SomeResult",
+        "type": "object",
+    }
 
 
 def test_structured_output_format_instructions() -> None:
