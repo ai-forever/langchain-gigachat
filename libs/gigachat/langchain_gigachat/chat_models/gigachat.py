@@ -8,73 +8,39 @@ import logging
 import re
 from mimetypes import guess_extension
 from operator import itemgetter
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    AsyncIterator,
-    Callable,
-    Dict,
-    Iterator,
-    List,
-    Literal,
-    Mapping,
-    Optional,
-    Sequence,
-    Tuple,
-    Type,
-    TypedDict,
-    TypeVar,
-    Union,
-    overload,
-)
+from typing import (TYPE_CHECKING, Any, AsyncIterator, Callable, Dict,
+                    Iterator, List, Literal, Mapping, Optional, Sequence,
+                    Tuple, Type, TypedDict, TypeVar, Union, overload)
 from uuid import uuid4
 
-from langchain_core.callbacks import (
-    AsyncCallbackManagerForLLMRun,
-    CallbackManagerForLLMRun,
-)
+from langchain_core.callbacks import (AsyncCallbackManagerForLLMRun,
+                                      CallbackManagerForLLMRun)
 from langchain_core.language_models import LanguageModelInput
-from langchain_core.language_models.chat_models import (
-    BaseChatModel,
-    agenerate_from_stream,
-    generate_from_stream,
-)
-from langchain_core.messages import (
-    AIMessage,
-    AIMessageChunk,
-    BaseMessage,
-    BaseMessageChunk,
-    ChatMessage,
-    ChatMessageChunk,
-    FunctionMessage,
-    FunctionMessageChunk,
-    HumanMessage,
-    HumanMessageChunk,
-    SystemMessage,
-    SystemMessageChunk,
-    ToolCall,
-    ToolCallChunk,
-    ToolMessage,
-)
+from langchain_core.language_models.chat_models import (BaseChatModel,
+                                                        agenerate_from_stream,
+                                                        generate_from_stream)
+from langchain_core.messages import (AIMessage, AIMessageChunk, BaseMessage,
+                                     BaseMessageChunk, ChatMessage,
+                                     ChatMessageChunk, FunctionMessage,
+                                     FunctionMessageChunk, HumanMessage,
+                                     HumanMessageChunk, SystemMessage,
+                                     SystemMessageChunk, ToolCall,
+                                     ToolCallChunk, ToolMessage)
 from langchain_core.messages.ai import UsageMetadata
-from langchain_core.output_parsers import (
-    JsonOutputKeyToolsParser,
-    JsonOutputParser,
-    PydanticOutputParser,
-    PydanticToolsParser,
-)
+from langchain_core.output_parsers import (JsonOutputKeyToolsParser,
+                                           JsonOutputParser,
+                                           PydanticOutputParser,
+                                           PydanticToolsParser)
 from langchain_core.output_parsers.base import OutputParserLike
-from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
+from langchain_core.outputs import (ChatGeneration, ChatGenerationChunk,
+                                    ChatResult)
 from langchain_core.runnables import Runnable, RunnableMap, RunnablePassthrough
 from langchain_core.tools import BaseTool
 from langchain_core.utils.pydantic import is_basemodel_subclass, pre_init
-from pydantic import BaseModel
-
 from langchain_gigachat.chat_models.base_gigachat import _BaseGigaChat
 from langchain_gigachat.utils.function_calling import (
-    convert_to_gigachat_function,
-    convert_to_gigachat_tool,
-)
+    convert_to_gigachat_function, convert_to_gigachat_tool)
+from pydantic import BaseModel
 
 if TYPE_CHECKING:
     import gigachat.models as gm
@@ -128,6 +94,8 @@ def _convert_dict_to_message(message: gm.Messages) -> BaseMessage:
             additional_kwargs["cover_uuid"] = match.group("cover_UUID")
             additional_kwargs["video_uuid"] = match.group("UUID")
             additional_kwargs["postfix_message"] = match.group("postfix")
+    if hasattr(message, "reasoning_content") and message.reasoning_content:
+        additional_kwargs["reasoning_content"] = message.reasoning_content
     if message.role == MessagesRole.SYSTEM:
         return SystemMessage(content=message.content)
     elif message.role == MessagesRole.USER:
@@ -487,6 +455,9 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 functions.append(tool["function"])
 
         function_call = kwargs.pop("function_call", None)
+        reasoning_effort = kwargs.pop(
+            "reasoning_effort", self.reasoning_effort
+        )
 
         payload_dict = {
             "messages": messages_dicts,
@@ -498,6 +469,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             "max_tokens": self.max_tokens,
             "repetition_penalty": self.repetition_penalty,
             "update_interval": self.update_interval,
+            "reasoning_effort": reasoning_effort,
             **kwargs,
         }
 
@@ -526,6 +498,10 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             if x_headers.get("x-request-id") is not None:
                 message.id = x_headers["x-request-id"]
             if isinstance(message, AIMessage):
+                if hasattr(res, "reasoning_content") and res.reasoning_content:
+                    message.additional_kwargs["reasoning_content"] = (
+                        res.reasoning_content
+                    )
                 message.usage_metadata = UsageMetadata(
                     output_tokens=response.usage.completion_tokens,
                     input_tokens=response.usage.prompt_tokens,
@@ -631,11 +607,28 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 continue
 
             choice = chunk["choices"][0]
-            content = choice.get("delta", {}).get("content", {})
-            message_content += content
+            delta = choice.get("delta", {})
+            content = delta.get("content", "")
+            if content:
+                message_content += content
+
+            delta_reasoning = None
+            if "reasoning_content" in delta:
+                delta_reasoning = delta["reasoning_content"]
+
             if trim_content_to_stop_sequence(message_content, stop):
                 return
-            chunk_m = _convert_delta_to_message_chunk(choice["delta"], AIMessageChunk)
+            chunk_m = _convert_delta_to_message_chunk(delta, AIMessageChunk)
+
+            if isinstance(chunk_m, AIMessageChunk):
+                if not hasattr(chunk_m, "additional_kwargs"):
+                    chunk_m.additional_kwargs = {}
+                if delta_reasoning is not None and isinstance(
+                    delta_reasoning, str
+                ):
+                    chunk_m.additional_kwargs["reasoning_content"] = (
+                        delta_reasoning
+                    )
             usage_metadata = None
             if chunk.get("usage"):
                 usage_metadata = UsageMetadata(
@@ -688,11 +681,28 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 continue
 
             choice = chunk["choices"][0]
-            content = choice.get("delta", {}).get("content", {})
-            message_content += content
+            delta = choice.get("delta", {})
+            content = delta.get("content", "")
+            if content:
+                message_content += content
+
+            delta_reasoning = None
+            if "reasoning_content" in delta:
+                delta_reasoning = delta["reasoning_content"]
+
             if trim_content_to_stop_sequence(message_content, stop):
                 return
-            chunk_m = _convert_delta_to_message_chunk(choice["delta"], AIMessageChunk)
+            chunk_m = _convert_delta_to_message_chunk(delta, AIMessageChunk)
+
+            if isinstance(chunk_m, AIMessageChunk):
+                if not hasattr(chunk_m, "additional_kwargs"):
+                    chunk_m.additional_kwargs = {}
+                if delta_reasoning is not None and isinstance(
+                    delta_reasoning, str
+                ):
+                    chunk_m.additional_kwargs["reasoning_content"] = (
+                        delta_reasoning
+                    )
             usage_metadata = None
             if chunk.get("usage"):
                 usage_metadata = UsageMetadata(
@@ -879,7 +889,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             Union[dict, str, Literal["auto", "any", "none"], bool]
         ] = None,
         **kwargs: Any,
-    ) -> Runnable[LanguageModelInput, BaseMessage]:
+    ) -> Runnable[LanguageModelInput, AIMessage]:
         """Bind tool-like objects to this chat model.
         Assumes model is compatible with GigaChat tool-calling API."""
         formatted_tools = [convert_to_gigachat_tool(tool) for tool in tools]
