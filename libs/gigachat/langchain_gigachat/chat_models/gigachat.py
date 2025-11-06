@@ -8,39 +8,73 @@ import logging
 import re
 from mimetypes import guess_extension
 from operator import itemgetter
-from typing import (TYPE_CHECKING, Any, AsyncIterator, Callable, Dict,
-                    Iterator, List, Literal, Mapping, Optional, Sequence,
-                    Tuple, Type, TypedDict, TypeVar, Union, overload)
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    AsyncIterator,
+    Callable,
+    Dict,
+    Iterator,
+    List,
+    Literal,
+    Mapping,
+    Optional,
+    Sequence,
+    Tuple,
+    Type,
+    TypedDict,
+    TypeVar,
+    Union,
+    overload,
+)
 from uuid import uuid4
 
-from langchain_core.callbacks import (AsyncCallbackManagerForLLMRun,
-                                      CallbackManagerForLLMRun)
+from langchain_core.callbacks import (
+    AsyncCallbackManagerForLLMRun,
+    CallbackManagerForLLMRun,
+)
 from langchain_core.language_models import LanguageModelInput
-from langchain_core.language_models.chat_models import (BaseChatModel,
-                                                        agenerate_from_stream,
-                                                        generate_from_stream)
-from langchain_core.messages import (AIMessage, AIMessageChunk, BaseMessage,
-                                     BaseMessageChunk, ChatMessage,
-                                     ChatMessageChunk, FunctionMessage,
-                                     FunctionMessageChunk, HumanMessage,
-                                     HumanMessageChunk, SystemMessage,
-                                     SystemMessageChunk, ToolCall,
-                                     ToolCallChunk, ToolMessage)
+from langchain_core.language_models.chat_models import (
+    BaseChatModel,
+    agenerate_from_stream,
+    generate_from_stream,
+)
+from langchain_core.messages import (
+    AIMessage,
+    AIMessageChunk,
+    BaseMessage,
+    BaseMessageChunk,
+    ChatMessage,
+    ChatMessageChunk,
+    FunctionMessage,
+    FunctionMessageChunk,
+    HumanMessage,
+    HumanMessageChunk,
+    SystemMessage,
+    SystemMessageChunk,
+    ToolCall,
+    ToolCallChunk,
+    ToolMessage,
+)
 from langchain_core.messages.ai import UsageMetadata
-from langchain_core.output_parsers import (JsonOutputKeyToolsParser,
-                                           JsonOutputParser,
-                                           PydanticOutputParser,
-                                           PydanticToolsParser)
+from langchain_core.output_parsers import (
+    JsonOutputKeyToolsParser,
+    JsonOutputParser,
+    PydanticOutputParser,
+    PydanticToolsParser,
+)
 from langchain_core.output_parsers.base import OutputParserLike
-from langchain_core.outputs import (ChatGeneration, ChatGenerationChunk,
-                                    ChatResult)
+from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 from langchain_core.runnables import Runnable, RunnableMap, RunnablePassthrough
 from langchain_core.tools import BaseTool
 from langchain_core.utils.pydantic import is_basemodel_subclass, pre_init
+from pydantic import BaseModel
+
 from langchain_gigachat.chat_models.base_gigachat import _BaseGigaChat
 from langchain_gigachat.utils.function_calling import (
-    convert_to_gigachat_function, convert_to_gigachat_tool)
-from pydantic import BaseModel
+    convert_to_gigachat_function,
+    convert_to_gigachat_tool,
+)
 
 if TYPE_CHECKING:
     import gigachat.models as gm
@@ -363,9 +397,9 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
 
     """ Auto-upload Base-64 images. Not for production usage! """
     auto_upload_images: bool = False
-    """ 
-    Dict with cached images, with key as hashed 
-    base-64 image to File ID on GigaChat API 
+    """
+    Dict with cached images, with key as hashed
+    base-64 image to File ID on GigaChat API
     """
     _cached_images: Dict[str, str] = {}
 
