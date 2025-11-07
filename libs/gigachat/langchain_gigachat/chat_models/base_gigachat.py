@@ -75,6 +75,8 @@ class _BaseGigaChat(Serializable):
     """ The penalty applied to repeated tokens """
     update_interval: Optional[float] = None
     """ Minimum interval in seconds that elapses between sending tokens """
+    max_connections: Optional[int] = None
+    """Максимальное количество одновременных соединений к API GigaChat"""
 
     @property
     def _llm_type(self) -> str:
@@ -117,6 +119,7 @@ class _BaseGigaChat(Serializable):
             key_file_password=self.key_file_password,
             verbose=self.verbose,
             flags=self.flags,
+            max_connections=self.max_connections
         )
 
     @pre_init
