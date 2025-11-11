@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import ssl
-from functools import cached_property
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional
 
 from langchain_core.load.serializable import Serializable
@@ -78,6 +77,10 @@ class _BaseGigaChat(Serializable):
     max_connections: Optional[int] = None
     """Максимальное количество одновременных соединений к API GigaChat"""
 
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._client = self._create_client()
+
     @property
     def _llm_type(self) -> str:
         return "giga-chat-model"
@@ -95,8 +98,7 @@ class _BaseGigaChat(Serializable):
     def is_lc_serializable(cls) -> bool:
         return True
 
-    @cached_property
-    def _client(self) -> gigachat.GigaChat:
+    def _create_client(self) -> gigachat.GigaChat:
         """Returns GigaChat API client"""
         import gigachat
 
@@ -155,6 +157,7 @@ class _BaseGigaChat(Serializable):
             "max_tokens": self.max_tokens,
             "top_p": self.top_p,
             "repetition_penalty": self.repetition_penalty,
+            "max_connections": self.max_connections,
         }
 
     def tokens_count(
