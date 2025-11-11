@@ -119,7 +119,7 @@ class _BaseGigaChat(Serializable):
             key_file_password=self.key_file_password,
             verbose=self.verbose,
             flags=self.flags,
-            max_connections=self.max_connections
+            max_connections=self.max_connections,
         )
 
     @pre_init
