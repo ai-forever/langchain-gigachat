@@ -879,7 +879,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             Union[dict, str, Literal["auto", "any", "none"], bool]
         ] = None,
         **kwargs: Any,
-    ) -> Runnable[LanguageModelInput, AIMessage]:
+    ) -> Runnable[LanguageModelInput, BaseMessage]:
         """Bind tool-like objects to this chat model.
         Assumes model is compatible with GigaChat tool-calling API."""
         formatted_tools = [convert_to_gigachat_tool(tool) for tool in tools]
