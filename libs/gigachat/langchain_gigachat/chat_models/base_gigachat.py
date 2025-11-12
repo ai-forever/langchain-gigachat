@@ -74,6 +74,11 @@ class _BaseGigaChat(Serializable):
     """ The penalty applied to repeated tokens """
     update_interval: Optional[float] = None
     """ Minimum interval in seconds that elapses between sending tokens """
+    reasoning_effort: Optional[Literal["low", "medium", "high"]] = None
+    """Constrains effort on reasoning for reasoning models.
+
+    Currently supported values are `'low'`, `'medium'`, and
+    `'high'`"""
     max_connections: Optional[int] = None
     """Максимальное количество одновременных соединений к API GigaChat"""
 
