@@ -489,9 +489,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 functions.append(tool["function"])
 
         function_call = kwargs.pop("function_call", None)
-        reasoning_effort = kwargs.pop(
-            "reasoning_effort", self.reasoning_effort
-        )
+        reasoning_effort = kwargs.pop("reasoning_effort", self.reasoning_effort)
 
         payload_dict = {
             "messages": messages_dicts,
@@ -657,12 +655,8 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             if isinstance(chunk_m, AIMessageChunk):
                 if not hasattr(chunk_m, "additional_kwargs"):
                     chunk_m.additional_kwargs = {}
-                if delta_reasoning is not None and isinstance(
-                    delta_reasoning, str
-                ):
-                    chunk_m.additional_kwargs["reasoning_content"] = (
-                        delta_reasoning
-                    )
+                if delta_reasoning is not None and isinstance(delta_reasoning, str):
+                    chunk_m.additional_kwargs["reasoning_content"] = delta_reasoning
             usage_metadata = None
             if chunk.get("usage"):
                 usage_metadata = UsageMetadata(
@@ -731,12 +725,8 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             if isinstance(chunk_m, AIMessageChunk):
                 if not hasattr(chunk_m, "additional_kwargs"):
                     chunk_m.additional_kwargs = {}
-                if delta_reasoning is not None and isinstance(
-                    delta_reasoning, str
-                ):
-                    chunk_m.additional_kwargs["reasoning_content"] = (
-                        delta_reasoning
-                    )
+                if delta_reasoning is not None and isinstance(delta_reasoning, str):
+                    chunk_m.additional_kwargs["reasoning_content"] = delta_reasoning
             usage_metadata = None
             if chunk.get("usage"):
                 usage_metadata = UsageMetadata(
