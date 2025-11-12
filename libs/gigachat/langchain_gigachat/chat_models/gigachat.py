@@ -128,6 +128,8 @@ def _convert_dict_to_message(message: gm.Messages) -> BaseMessage:
             additional_kwargs["cover_uuid"] = match.group("cover_UUID")
             additional_kwargs["video_uuid"] = match.group("UUID")
             additional_kwargs["postfix_message"] = match.group("postfix")
+    if hasattr(message, "reasoning_content") and message.reasoning_content:
+        additional_kwargs["reasoning_content"] = message.reasoning_content
     if message.role == MessagesRole.SYSTEM:
         return SystemMessage(content=message.content)
     elif message.role == MessagesRole.USER:
@@ -395,9 +397,9 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
 
     """ Auto-upload Base-64 images. Not for production usage! """
     auto_upload_images: bool = False
-    """ 
-    Dict with cached images, with key as hashed 
-    base-64 image to File ID on GigaChat API 
+    """
+    Dict with cached images, with key as hashed
+    base-64 image to File ID on GigaChat API
     """
     _cached_images: Dict[str, str] = {}
 
@@ -487,6 +489,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 functions.append(tool["function"])
 
         function_call = kwargs.pop("function_call", None)
+        reasoning_effort = kwargs.pop("reasoning_effort", self.reasoning_effort)
 
         payload_dict = {
             "messages": messages_dicts,
@@ -498,6 +501,8 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             "max_tokens": self.max_tokens,
             "repetition_penalty": self.repetition_penalty,
             "update_interval": self.update_interval,
+            "reasoning_effort": reasoning_effort,
+            "max_connections": self.max_connections,
             **kwargs,
         }
 
@@ -526,6 +531,10 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             if x_headers.get("x-request-id") is not None:
                 message.id = x_headers["x-request-id"]
             if isinstance(message, AIMessage):
+                if hasattr(res, "reasoning_content") and res.reasoning_content:
+                    message.additional_kwargs["reasoning_content"] = (
+                        res.reasoning_content
+                    )
                 message.usage_metadata = UsageMetadata(
                     output_tokens=response.usage.completion_tokens,
                     input_tokens=response.usage.prompt_tokens,
@@ -631,11 +640,24 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 continue
 
             choice = chunk["choices"][0]
-            content = choice.get("delta", {}).get("content", {})
-            message_content += content
+            delta = choice.get("delta", {})
+            content = delta.get("content", "")
+            if content:
+                message_content += content
+
+            delta_reasoning = None
+            if "reasoning_content" in delta:
+                delta_reasoning = delta["reasoning_content"]
+
             if trim_content_to_stop_sequence(message_content, stop):
                 return
-            chunk_m = _convert_delta_to_message_chunk(choice["delta"], AIMessageChunk)
+            chunk_m = _convert_delta_to_message_chunk(delta, AIMessageChunk)
+
+            if isinstance(chunk_m, AIMessageChunk):
+                if not hasattr(chunk_m, "additional_kwargs"):
+                    chunk_m.additional_kwargs = {}
+                if delta_reasoning is not None and isinstance(delta_reasoning, str):
+                    chunk_m.additional_kwargs["reasoning_content"] = delta_reasoning
             usage_metadata = None
             if chunk.get("usage"):
                 usage_metadata = UsageMetadata(
@@ -688,11 +710,24 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 continue
 
             choice = chunk["choices"][0]
-            content = choice.get("delta", {}).get("content", {})
-            message_content += content
+            delta = choice.get("delta", {})
+            content = delta.get("content", "")
+            if content:
+                message_content += content
+
+            delta_reasoning = None
+            if "reasoning_content" in delta:
+                delta_reasoning = delta["reasoning_content"]
+
             if trim_content_to_stop_sequence(message_content, stop):
                 return
-            chunk_m = _convert_delta_to_message_chunk(choice["delta"], AIMessageChunk)
+            chunk_m = _convert_delta_to_message_chunk(delta, AIMessageChunk)
+
+            if isinstance(chunk_m, AIMessageChunk):
+                if not hasattr(chunk_m, "additional_kwargs"):
+                    chunk_m.additional_kwargs = {}
+                if delta_reasoning is not None and isinstance(delta_reasoning, str):
+                    chunk_m.additional_kwargs["reasoning_content"] = delta_reasoning
             usage_metadata = None
             if chunk.get("usage"):
                 usage_metadata = UsageMetadata(
@@ -879,13 +914,15 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             Union[dict, str, Literal["auto", "any", "none"], bool]
         ] = None,
         **kwargs: Any,
-    ) -> Runnable[LanguageModelInput, BaseMessage]:
+    ) -> Runnable[LanguageModelInput, AIMessage]:
         """Bind tool-like objects to this chat model.
         Assumes model is compatible with GigaChat tool-calling API."""
         formatted_tools = [convert_to_gigachat_tool(tool) for tool in tools]
         if tool_choice is not None and tool_choice:
             if isinstance(tool_choice, str):
-                if tool_choice not in ("auto", "none"):
+                if tool_choice == "any":
+                    tool_choice = "auto"
+                elif tool_choice not in ("auto", "none"):
                     tool_choice = {"name": tool_choice}
             elif isinstance(tool_choice, bool) and tool_choice:
                 if not formatted_tools:

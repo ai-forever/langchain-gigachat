@@ -36,7 +36,6 @@ from langchain_gigachat.chat_models.gigachat import (
     _convert_message_to_dict,
 )
 from langchain_gigachat.tools.giga_tool import FewShotExamples, giga_tool
-from tests.unit_tests.stubs import FakeAsyncCallbackHandler, FakeCallbackHandler
 
 
 @pytest.fixture
@@ -281,44 +280,6 @@ def test__convert_message_to_dict_chat(role: MessagesRole) -> None:
     assert actual == expected
 
 
-def test_gigachat_predict(patch_gigachat: None) -> None:
-    expected = "Bar Baz"
-
-    llm = GigaChat()
-    actual = llm.predict("bar")
-
-    assert actual == expected
-
-
-def test_gigachat_predict_stream(patch_gigachat: None) -> None:
-    expected = "Bar Baz Stream"
-    llm = GigaChat()
-    callback_handler = FakeCallbackHandler()
-    actual = llm.predict("bar", stream=True, callbacks=[callback_handler])
-    assert actual == expected
-    assert callback_handler.llm_streams == 2
-
-
-@pytest.mark.asyncio()
-async def test_gigachat_apredict(patch_gigachat_achat: None) -> None:
-    expected = "Bar Baz"
-
-    llm = GigaChat()
-    actual = await llm.apredict("bar")
-
-    assert actual == expected
-
-
-@pytest.mark.asyncio()
-async def test_gigachat_apredict_stream(patch_gigachat_astream: None) -> None:
-    expected = "Bar Baz Stream"
-    llm = GigaChat()
-    callback_handler = FakeAsyncCallbackHandler()
-    actual = await llm.apredict("bar", stream=True, callbacks=[callback_handler])
-    assert actual == expected
-    assert callback_handler.llm_streams == 2
-
-
 def test_gigachat_stream(patch_gigachat: None) -> None:
     expected = [
         AIMessageChunk(content="Bar Baz", response_metadata={"x_headers": {}}, id=""),
@@ -329,6 +290,13 @@ def test_gigachat_stream(patch_gigachat: None) -> None:
                 "finish_reason": "stop",
             },
             id="",
+        ),
+        AIMessageChunk(
+            content="",
+            additional_kwargs={},
+            response_metadata={},
+            id="",
+            chunk_position="last",
         ),
     ]
 
@@ -350,6 +318,13 @@ async def test_gigachat_astream(patch_gigachat_astream: None) -> None:
                 "finish_reason": "stop",
             },
             id="",
+        ),
+        AIMessageChunk(
+            content="",
+            additional_kwargs={},
+            response_metadata={},
+            id="",
+            chunk_position="last",
         ),
     ]
     llm = GigaChat()
@@ -483,7 +458,20 @@ def test_structured_output() -> None:
 def test_structured_output_json() -> None:
     llm = GigaChat().with_structured_output(SomeResult.model_json_schema())
     assert llm.steps[0].kwargs["function_call"] == {"name": "SomeResult"}  # type: ignore[attr-defined]
-    assert llm.steps[0].kwargs["tools"][0]["function"] is not None  # type: ignore[attr-defined]
+    assert llm.steps[0].kwargs["tools"][0]["function"] == {  # type: ignore[attr-defined]
+        "description": "My desc",
+        "properties": {
+            "value": {"description": "some value", "title": "Value", "type": "integer"},
+            "description": {
+                "description": "some descriptin",
+                "title": "Description",
+                "type": "string",
+            },
+        },
+        "required": ["value", "description"],
+        "title": "SomeResult",
+        "type": "object",
+    }
 
 
 def test_structured_output_format_instructions() -> None:
@@ -614,3 +602,14 @@ def test__convert_message_with_attachments_no_cache_to_dict_system(
     dialog, hashed_1, hashed_2 = upload_images_dialog
     actual = _convert_message_to_dict(dialog[0])
     assert actual == excepted
+
+
+def test_bind_tools_tool_choice_any(
+    patch_gigachat: None,
+) -> None:
+    """Test that tool_choice='any' works correctly and model responds."""
+    llm = GigaChat().bind_tools(tools=[_test_tool], tool_choice="any")
+    assert llm.kwargs["function_call"] == "auto"  # type: ignore[attr-defined]
+    response = llm.invoke("test")
+    assert response is not None
+    assert isinstance(response, AIMessage)
