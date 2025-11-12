@@ -498,6 +498,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             "max_tokens": self.max_tokens,
             "repetition_penalty": self.repetition_penalty,
             "update_interval": self.update_interval,
+            "max_connections": self.max_connections,
             **kwargs,
         }
 
