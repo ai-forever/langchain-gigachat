@@ -602,3 +602,14 @@ def test__convert_message_with_attachments_no_cache_to_dict_system(
     dialog, hashed_1, hashed_2 = upload_images_dialog
     actual = _convert_message_to_dict(dialog[0])
     assert actual == excepted
+
+
+def test_bind_tools_tool_choice_any(
+    patch_gigachat: None,
+) -> None:
+    """Test that tool_choice='any' works correctly and model responds."""
+    llm = GigaChat().bind_tools(tools=[_test_tool], tool_choice="any")
+    assert llm.kwargs["function_call"] == "auto"  # type: ignore[attr-defined]
+    response = llm.invoke("test")
+    assert response is not None
+    assert isinstance(response, AIMessage)
