@@ -502,6 +502,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             "repetition_penalty": self.repetition_penalty,
             "update_interval": self.update_interval,
             "reasoning_effort": reasoning_effort,
+            "max_connections": self.max_connections,
             **kwargs,
         }
 
@@ -919,7 +920,9 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         formatted_tools = [convert_to_gigachat_tool(tool) for tool in tools]
         if tool_choice is not None and tool_choice:
             if isinstance(tool_choice, str):
-                if tool_choice not in ("auto", "none"):
+                if tool_choice == "any":
+                    tool_choice = "auto"
+                elif tool_choice not in ("auto", "none"):
                     tool_choice = {"name": tool_choice}
             elif isinstance(tool_choice, bool) and tool_choice:
                 if not formatted_tools:
