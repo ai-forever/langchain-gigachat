@@ -1,12 +1,21 @@
 # AGENTS.md
 
 ## Project Overview
-langchain-gigachat. An integration package connecting GigaChat and LangChain.
+LangChain integration package for GigaChat LLM.
 
-This package provides LangChain-compatible wrappers for the `gigachat` Python library, enabling seamless integration with the LangChain ecosystem.
+### What This Library Does
+- Wraps `gigachat` SDK with LangChain-compatible interfaces
+- `GigaChat` — Chat model (subclass of `BaseChatModel`) with tool/function calling support
+- `GigaChatEmbeddings` — Embeddings model
+
+### Key Modules
+- `chat_models/` — `GigaChat` class with `_BaseGigaChat` common logic
+- `embeddings/` — `GigaChatEmbeddings` class
+- `utils/function_calling.py` — LangChain tool → GigaChat function conversion
+- `output_parsers/` — Output parsers for function results
 
 ## Dependencies
-- **gigachat**: The underlying GigaChat API client library (recently refactored to Pydantic V2)
+- **gigachat**: The underlying GigaChat API client library (Pydantic V2, v0.2.0+)
 - **langchain-core**: Core LangChain abstractions (v0.3+, Pydantic V2-native)
 
 ## Setup Commands
@@ -15,52 +24,16 @@ This package provides LangChain-compatible wrappers for the `gigachat` Python li
 - Lint code: `poetry run ruff check .`
 - Format code: `poetry run ruff format .`
 - Type check: `poetry run mypy langchain_gigachat`
+- Verify all: `poetry run ruff check . && poetry run ruff format --check . && poetry run mypy langchain_gigachat && poetry run pytest`
 
-## Build and Test Commands
-- Run unit tests: `make test`
-- Run integration tests: `make integration_test`
-- Lint: `make lint`
-- Format: `make format`
+## Code Style
+- Documentation: English, Google Python Style Guide, imperative mood ("Return..." not "Returns...")
+- Avoid unnecessary comments
 
-## Code Style Guidelines
-- Max line length: 88 (ruff default)
-- Use `ruff` for formatting and linting
-- Use `mypy` with `disallow_untyped_defs = True`
-- Do not add comments to the refactored code, only if it is completely necessary
-- **Documentation**:
-  - Language: English.
-  - Style: Google Python Style Guide.
-  - Mood: Imperative mood for functions/methods (e.g., "Return..." not "Returns...").
-
-## Refactoring Documentation
-- **Progress Tracking**: Refer to `docs/TODO.md` for the current status of refactoring tasks.
-  - Tasks are grouped by issue.
-  - Only analyzed and approved issues are added to the active plan.
-  - **Chronological Order**: All sections (issues) must be listed in **chronological ascending order** (Oldest first).
-    - This applies to both `docs/TODO.md` and `docs/REFACTORING.md`.
-    - New tasks should always be added at the end of the list.
-- **Refactoring Details**: Consult `docs/REFACTORING.md` for information on identified issues, chosen solutions, and other pertinent details related to the refactoring process.
-  - Includes detailed analysis of issues and approved solutions.
-  - **Workflow**:
-    - Before implementing each todo item list, get approval.
-    - After implementation, summarize results.
-  - **After solving each issue**:
-    - Add detailed information about the solution (why and how it was implemented in such way) to `docs/REFACTORING.md`.
-    - Update `docs/TODO.md` to reflect detailed implemented steps within each issue section.
-
-## AGENTS.md Purpose and Maintenance
-- **Purpose**: This file serves as the primary source of truth for AI coding agents. It contains context, rules, and instructions that might be too detailed or operational for the human-facing `README.md`. It ensures agents have predictable, clear guidance on how to build, test, and modify the project.
-- **When to Update**:
-  - When build steps, test commands, or development environment setup changes.
-  - When new coding conventions or architectural rules are adopted.
-  - When the refactoring strategy or documentation structure evolves (as defined in the rules below).
-- **Reference**: Follow the guidelines at [agents.md](https://agents.md) for structuring and maintaining this file.
-
-## Documentation Updates
-- Update only existing docs: `docs/REFACTORING.md`, `docs/TODO.md`, and `AGENTS.md`.
+## Refactoring
+See `docs/TODO.md` for task status and `docs/REFACTORING.md` for detailed analysis and solutions.
+Update these docs after solving each issue.
 
 ## Key Considerations
-- **Upstream Dependency**: The `gigachat` package has been significantly refactored (Pydantic V2, removed `verbose`, new exceptions). Changes here must align with upstream.
+- **Upstream Dependency**: The `gigachat` package (v0.2.0+) was significantly refactored. See `gigachat/docs/REFACTORING.md` for details. Changes here must align with upstream.
 - **LangChain Compatibility**: Must remain compatible with `langchain-core ^0.3` (Pydantic V2-native).
-- **Breaking Changes**: Document any breaking changes that affect users upgrading from previous versions.
-

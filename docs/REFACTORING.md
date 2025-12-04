@@ -4,6 +4,23 @@
 
 **Context**: The upstream `gigachat` package (v0.2.0) has undergone significant refactoring including Pydantic V2 migration, removal of the `verbose` parameter, improved exception hierarchy, and toolchain migration from Poetry to uv. This refactoring effort aligns `langchain-gigachat` with those changes.
 
+## Workflow
+
+### Progress Tracking
+- Refer to `docs/TODO.md` for current status of refactoring tasks.
+- Tasks are grouped by issue.
+- Only analyzed and approved issues are added to the active plan.
+- **Chronological Order**: All sections (issues) must be listed in chronological ascending order (oldest first). New tasks should always be added at the end.
+
+### Implementation Process
+1. Before implementing each todo item list, get approval.
+2. After implementation, summarize results.
+3. After solving each issue:
+   - Add detailed information about the solution (why and how) to this file.
+   - Update `docs/TODO.md` to reflect detailed implemented steps.
+
+---
+
 ## Pydantic V2 Migration
 - **Problem**: The codebase uses deprecated Pydantic V1 patterns that are incompatible with the refactored `gigachat` package (which requires `pydantic >= 2`):
   1. **Explicit V1 Imports** in `langchain_gigachat/utils/function_calling.py`:
