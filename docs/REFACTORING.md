@@ -21,7 +21,25 @@
 
 ---
 
+## Remove `verbose` Parameter
+
+- **Problem**: The `verbose` parameter was removed from `gigachat` v0.2.0 as it was unused. The `langchain-gigachat` package still references it:
+  - `langchain_gigachat/chat_models/base_gigachat.py`: `verbose: bool = False` field in `_BaseGigaChat`
+  - `langchain_gigachat/chat_models/base_gigachat.py`: `verbose=self.verbose` in `_client` property
+  - `langchain_gigachat/chat_models/gigachat.py`: `if self.verbose:` conditional in `_build_payload()`
+- **Analysis**:
+  - When upgrading to `gigachat >= 0.2.0`, passing `verbose=self.verbose` to the client will cause a `TypeError`.
+  - This is a simple removal task with no dependencies on Pydantic V2 migration.
+- **Solution**:
+  - Remove `verbose: bool = False` field from `_BaseGigaChat`.
+  - Remove `verbose=self.verbose` from `_client` property.
+  - Remove `if self.verbose:` conditional in `_build_payload()`.
+- **Status**: Pending.
+
+---
+
 ## Pydantic V2 Migration
+
 - **Problem**: The codebase uses deprecated Pydantic V1 patterns that are incompatible with the refactored `gigachat` package (which requires `pydantic >= 2`):
   1. **Explicit V1 Imports** in `langchain_gigachat/utils/function_calling.py`:
      - `from pydantic.v1 import BaseModel`
@@ -36,19 +54,13 @@
      - `langchain_gigachat/chat_models/base_gigachat.py`: `class Config: arbitrary_types_allowed = True`
      - `langchain_gigachat/embeddings/gigachat.py`: Same pattern
      - Should use `model_config = ConfigDict(arbitrary_types_allowed=True)`
-  4. **Removed `verbose` Parameter**:
-     - `langchain_gigachat/chat_models/base_gigachat.py`: `verbose: bool = False` field in `_BaseGigaChat`
-     - `langchain_gigachat/chat_models/base_gigachat.py`: `verbose=self.verbose` in `_client` property
-     - `langchain_gigachat/chat_models/gigachat.py`: `if self.verbose:` conditional in `_build_payload()`
-     - The `verbose` parameter was removed from `gigachat` v0.2.0 as it was unused.
-  5. **Outdated Dependency Version**:
+  4. **Outdated Dependency Version**:
      - `libs/gigachat/pyproject.toml`: `gigachat = "^0.1.41.post1"` needs update to `^0.2.0`
 - **Analysis**:
   - LangChain Core v0.3+ is Pydantic V2-native.
   - The `gigachat` package now requires `pydantic >= 2.0`.
   - Mixing V1 and V2 patterns causes type-checking issues and runtime surprises.
   - The `pydantic.v1` imports in `function_calling.py` are particularly problematic as they create V1 models that may be incompatible with V2 validation.
-  - When upgrading to `gigachat >= 0.2.0`, the `verbose` parameter will cause a `TypeError`.
 - **Solution**:
   - **Implementation Details**:
     - Replace all `pydantic.v1` imports with native `pydantic` imports.
@@ -56,7 +68,6 @@
     - Replace `.dict()` → `.model_dump()` throughout.
     - Replace `.parse_obj()` → `.model_validate()` throughout.
     - Replace `class Config:` with `model_config = ConfigDict(...)`.
-    - Remove `verbose` field and all its usages.
     - Update `gigachat` dependency version to `^0.2.0`.
     - Test thoroughly to ensure schema generation works correctly.
   - **Why**:
