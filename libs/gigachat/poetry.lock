@@ -386,7 +386,7 @@ optional = false
 python-versions = ">=3.8,<4"
 groups = ["main"]
 files = []
-develop = true
+develop = false
 
 [package.dependencies]
 httpx = "<1"
@@ -394,8 +394,10 @@ pydantic = ">=2.0,<3"
 pydantic-settings = ">=2.0,<3"
 
 [package.source]
-type = "directory"
-url = "../../../gigachat"
+type = "git"
+url = "https://github.com/ai-forever/gigachat.git"
+reference = "pre-1.0-refactor"
+resolved_reference = "8a9e9b22735003664f5835862b8443435ddffd76"
 
 [[package]]
 name = "h11"
@@ -1520,4 +1522,4 @@ cffi = ["cffi (>=1.11)"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.9,<4.0"
-content-hash = "07fa3c9e752d3c6388d1b762f3c7e2f0b5d4a4f0169c7be7afe33b87da1a0789"
+content-hash = "458f5b1c9d8c1ecd645da42954c8e714694cc665f060db41082ed05c2f247978"

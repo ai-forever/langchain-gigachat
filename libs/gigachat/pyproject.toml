@@ -13,7 +13,7 @@ license = "MIT"
 [tool.poetry.dependencies]
 python = ">=3.9,<4.0"
 langchain-core = "^0.3"
-gigachat = { path = "../../../gigachat", develop = true }
+gigachat = { git = "https://github.com/ai-forever/gigachat.git", branch = "pre-1.0-refactor" }
 types-requests = "^2.32"
 
 [tool.poetry.group.dev]
