@@ -37,3 +37,4 @@ Update these docs after solving each issue.
 ## Key Considerations
 - **Upstream Dependency**: The `gigachat` package (v0.2.0+) was significantly refactored. See `gigachat/docs/REFACTORING.md` for details. Changes here must align with upstream.
 - **LangChain Compatibility**: Must remain compatible with `langchain-core ^0.3` (Pydantic V2-native).
+- **Git Branch Dependency**: During refactoring, `gigachat` is installed from git branch (not local path or PyPI). See `docs/REFACTORING.md` → "Dependency Management Strategy" for rationale.

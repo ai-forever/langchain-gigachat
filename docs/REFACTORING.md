@@ -4,6 +4,24 @@
 
 **Context**: The upstream `gigachat` package (v0.2.0) has undergone significant refactoring including Pydantic V2 migration, removal of the `verbose` parameter, improved exception hierarchy, and toolchain migration from Poetry to uv. This refactoring effort aligns `langchain-gigachat` with those changes.
 
+## Dependency Management Strategy
+
+- **Problem**: During simultaneous refactoring of `gigachat` and `langchain-gigachat`, the dependency on `gigachat` must be managed carefully:
+  1. **Local path**: `gigachat = { path = "..." }` breaks CI (path doesn't exist on CI runners).
+  2. **PyPI**: Can't publish to PyPI until both packages are ready for simultaneous release.
+  3. **Circular dependency**: Changes in one package may require changes in the other before either is releasable.
+- **Solution**: Install `gigachat` from git branch using Poetry's git dependency syntax:
+  ```toml
+  gigachat = { git = "https://github.com/ai-forever/gigachat.git", branch = "<branch-name>" }
+  ```
+  See `libs/gigachat/pyproject.toml` for the current branch in use.
+- **Why**:
+  - **CI works**: Git URLs resolve on any machine with network access.
+  - **Version pinning**: The branch tracks in-progress refactoring changes.
+  - **Coordinated release**: Both packages can be developed in sync, then released simultaneously when ready.
+- **When to change**: Update to PyPI version (e.g., `gigachat = "^X.Y.Z"`) after coordinated release of both packages.
+- **Applies when**: Refactoring involves breaking changes to `gigachat` that require simultaneous development of both packages.
+
 ## Workflow
 
 ### Progress Tracking
