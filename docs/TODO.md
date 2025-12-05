@@ -7,9 +7,9 @@
   - [x] Create `docs/TODO.md` documentation
 
 ## Remove `verbose` Parameter
-- [ ] Remove `verbose: bool = False` field from `_BaseGigaChat` in `langchain_gigachat/chat_models/base_gigachat.py`
-- [ ] Remove `verbose=self.verbose` from `_client` property in `langchain_gigachat/chat_models/base_gigachat.py`
-- [ ] Remove `if self.verbose:` conditional in `_build_payload` method in `langchain_gigachat/chat_models/gigachat.py`
+- [x] Remove `verbose: bool = False` field from `_BaseGigaChat` in `langchain_gigachat/chat_models/base_gigachat.py`
+- [x] Remove `verbose=self.verbose` from `_client` property in `langchain_gigachat/chat_models/base_gigachat.py`
+- [x] Remove `if self.verbose:` conditional in `_build_payload` method in `langchain_gigachat/chat_models/gigachat.py`
 
 ## Pydantic V2 Migration
 - [ ] Migrate `function_calling.py` from Pydantic V1 to V2

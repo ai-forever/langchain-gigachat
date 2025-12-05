@@ -34,7 +34,7 @@
   - Remove `verbose: bool = False` field from `_BaseGigaChat`.
   - Remove `verbose=self.verbose` from `_client` property.
   - Remove `if self.verbose:` conditional in `_build_payload()`.
-- **Status**: Pending.
+- **Status**: Completed.
 
 ---
 
