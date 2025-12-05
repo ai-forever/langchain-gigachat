@@ -13,7 +13,7 @@ license = "MIT"
 [tool.poetry.dependencies]
 python = ">=3.9,<4.0"
 langchain-core = "^0.3"
-gigachat = "^0.1.41.post1"
+gigachat = { path = "../../../gigachat", develop = true }
 types-requests = "^2.32"
 
 [tool.poetry.group.dev]
@@ -65,13 +65,13 @@ disallow_untyped_defs = "True"
 [tool.pytest.ini_options]
 addopts = "--strict-markers --strict-config --durations=5 --cov=langchain_gigachat -vv"
 markers = [
-    "requires: mark tests as requiring a specific library",
-    "compile: mark placeholder test used to compile integration tests without running them",
-    "scheduled: mark tests to run in scheduled testing",
+  "requires: mark tests as requiring a specific library",
+  "compile: mark placeholder test used to compile integration tests without running them",
+  "scheduled: mark tests to run in scheduled testing",
 ]
 asyncio_mode = "auto"
 filterwarnings = [
-    "ignore::langchain_core._api.beta_decorator.LangChainBetaWarning",
+  "ignore::langchain_core._api.beta_decorator.LangChainBetaWarning",
 ]
 
 [tool.coverage.run]

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional
 from langchain_core.load.serializable import Serializable
 from langchain_core.utils import pre_init
 from langchain_core.utils.pydantic import get_fields
+from pydantic import ConfigDict
 
 if TYPE_CHECKING:
     import gigachat
@@ -44,8 +45,7 @@ class _BaseGigaChat(Serializable):
 
     ssl_context: Optional[ssl.SSLContext] = None
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     ca_bundle_file: Optional[str] = None
     cert_file: Optional[str] = None

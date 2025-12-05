@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 from langchain_core.embeddings import Embeddings
 from langchain_core.utils import pre_init
 from langchain_core.utils.pydantic import get_fields
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 logger = logging.getLogger(__name__)
 
@@ -58,8 +58,7 @@ class GigaChatEmbeddings(BaseModel, Embeddings):
 
     ssl_context: Optional[ssl.SSLContext] = None
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     ca_bundle_file: Optional[str] = None
     cert_file: Optional[str] = None

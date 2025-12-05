@@ -501,7 +501,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             **kwargs,
         }
 
-        payload = Chat.parse_obj(payload_dict)
+        payload = Chat.model_validate(payload_dict)
 
         return payload
 
@@ -537,7 +537,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             )
             generations.append(gen)
         llm_output = {
-            "token_usage": response.usage.dict(),
+            "token_usage": response.usage.model_dump(),
             "model_name": response.model,
             "x_headers": x_headers,
         }
@@ -614,7 +614,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         for chunk_d in self._client.stream(payload):
             chunk = {}
             if not isinstance(chunk_d, dict):
-                chunk = chunk_d.dict()
+                chunk = chunk_d.model_dump()
             else:
                 chunk = chunk_d
             if len(chunk["choices"]) == 0:
@@ -671,7 +671,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         async for chunk_d in self._client.astream(payload):
             chunk = {}
             if not isinstance(chunk_d, dict):
-                chunk = chunk_d.dict()
+                chunk = chunk_d.model_dump()
             else:
                 chunk = chunk_d
             if len(chunk["choices"]) == 0:
