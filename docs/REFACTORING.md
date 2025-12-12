@@ -39,23 +39,6 @@
 
 ---
 
-## Remove `verbose` Parameter
-
-- **Problem**: The `verbose` parameter was removed from `gigachat` v0.2.0 as it was unused. The `langchain-gigachat` package still references it:
-  - `langchain_gigachat/chat_models/base_gigachat.py`: `verbose: bool = False` field in `_BaseGigaChat`
-  - `langchain_gigachat/chat_models/base_gigachat.py`: `verbose=self.verbose` in `_client` property
-  - `langchain_gigachat/chat_models/gigachat.py`: `if self.verbose:` conditional in `_build_payload()`
-- **Analysis**:
-  - When upgrading to `gigachat >= 0.2.0`, passing `verbose=self.verbose` to the client will cause a `TypeError`.
-  - This is a simple removal task with no dependencies on Pydantic V2 migration.
-- **Solution**:
-  - Remove `verbose: bool = False` field from `_BaseGigaChat`.
-  - Remove `verbose=self.verbose` from `_client` property.
-  - Remove `if self.verbose:` conditional in `_build_payload()`.
-- **Status**: Completed.
-
----
-
 ## Pydantic V2 Migration
 
 - **Problem**: The codebase uses deprecated Pydantic V1 patterns that are incompatible with the refactored `gigachat` package (which requires `pydantic >= 2`):

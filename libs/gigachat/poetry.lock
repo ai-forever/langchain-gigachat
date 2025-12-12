@@ -397,7 +397,7 @@ pydantic-settings = ">=2.0,<3"
 type = "git"
 url = "https://github.com/ai-forever/gigachat.git"
 reference = "pre-1.0-refactor"
-resolved_reference = "8a9e9b22735003664f5835862b8443435ddffd76"
+resolved_reference = "52fd7261593d9c08e9a88d5afedbca76b8214351"
 
 [[package]]
 name = "h11"

@@ -503,6 +503,15 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
 
         payload = Chat.model_validate(payload_dict)
 
+        if self.verbose:
+            logger.warning(
+                "Giga request: %s",
+                json.dumps(
+                    payload.model_dump(exclude_none=True, by_alias=True),
+                    ensure_ascii=False,
+                ),
+            )
+
         return payload
 
     def _check_finish_reason(self, finish_reason: str | None) -> None:
@@ -536,6 +545,8 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 },
             )
             generations.append(gen)
+            if self.verbose:
+                logger.warning("Giga response: %s", message.content)
         llm_output = {
             "token_usage": response.usage.model_dump(),
             "model_name": response.model,
