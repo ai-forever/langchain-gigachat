@@ -35,3 +35,17 @@
   - [x] Remove `BaseModelV2Maybe`/`FieldV2Maybe` aliases in `tests/unit_tests/utils/test_function_calling.py`
   - [x] Remove V1/V2 compatibility code (`hasattr` checks for `model_validate`) in `output_parsers/gigachat_functions.py`
   - [x] Refactor `_model_to_schema()` in `function_calling.py` to use only `model_json_schema()` (remove `.schema()` V1 fallback)
+
+## Remove `verbose` Parameter
+- [x] Remove `verbose: bool = False` field from `_BaseGigaChat` in `base_gigachat.py`
+- [x] Remove `verbose=self.verbose` from `_client` property in `base_gigachat.py`
+- [x] Remove `if self.verbose:` request logging block in `gigachat.py` `_build_payload()`
+- [x] Remove `if self.verbose:` response logging in `gigachat.py` `_create_chat_result()`
+- [x] Verification
+  - [x] Run `ruff check` to verify no linting errors
+  - [x] Run `mypy` to verify type checking passes
+  - [x] Run `pytest` to verify no test regressions
+- [x] Documentation
+  - [x] Move content from `docs/V1_MIGRATION.md` to `docs/REFACTORING.md`
+  - [x] Add checklist to `docs/TODO.md`
+  - [x] Delete `docs/V1_MIGRATION.md`

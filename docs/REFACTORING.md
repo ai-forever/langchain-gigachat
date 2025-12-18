@@ -86,3 +86,25 @@
   - Removed `hasattr` compatibility checks in `output_parsers/gigachat_functions.py`.
   - Refactored `_model_to_schema()` to use only `model_json_schema()` (removed `.schema()` V1 fallback).
 - **Status**: Completed.
+
+## Remove `verbose` Parameter
+
+- **Problem**: The `verbose` parameter provided request/response logging functionality, but this is inconsistent with standard LangChain patterns and the upstream `gigachat` SDK (which removed the parameter).
+  - Location: `langchain_gigachat/chat_models/base_gigachat.py`: `verbose: bool = False` field in `_BaseGigaChat`
+  - Location: `langchain_gigachat/chat_models/base_gigachat.py`: `verbose=self.verbose` passed to `_client` property
+  - Location: `langchain_gigachat/chat_models/gigachat.py`: Request logging in `_build_payload()`, response logging in `_create_chat_result()`
+- **Solution**:
+  - **Implementation Details**:
+    - Removed `verbose: bool = False` field from `_BaseGigaChat`.
+    - Removed `verbose=self.verbose` from `_client` property.
+    - Removed `if self.verbose:` logging blocks from `_build_payload()` and `_create_chat_result()`.
+  - **Why**:
+    - **Upstream Alignment**: The `gigachat` SDK removed this unused parameter.
+    - **Consistency**: Standard logging via Python `logging` module is preferred.
+    - **LangChain Patterns**: Aligns with standard LangChain practices.
+- **Upstream Coordination**: Required by upstream `gigachat` SDK which removed the parameter.
+- **Verification**:
+  - `ruff check` — passed
+  - `mypy` — passed
+  - `pytest` — 74 passed, 2 xpassed
+- **Status**: Completed.
