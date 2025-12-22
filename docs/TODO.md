@@ -49,3 +49,40 @@
   - [x] Move content from `docs/V1_MIGRATION.md` to `docs/REFACTORING.md`
   - [x] Add checklist to `docs/TODO.md`
   - [x] Delete `docs/V1_MIGRATION.md`
+
+## Poetry to uv Migration
+- [x] Convert `pyproject.toml` from Poetry to PEP 621 format
+  - [x] Replace `[tool.poetry]` with `[project]` section
+  - [x] Convert dependencies to PEP 621 format with version ranges
+  - [x] Convert git dependency to uv-compatible format
+  - [x] Consolidate Poetry groups (dev/lint/typing/test) into `[dependency-groups]`
+  - [x] Change build backend from `poetry-core` to `hatchling`
+  - [x] Add hatch build configuration and metadata settings
+  - [x] Fix mypy config: change string `"True"` to boolean `true`
+- [x] Remove legacy `load_prompt.py` module
+  - [x] Delete `langchain_gigachat/tools/load_prompt.py` (unused, not exported)
+  - [x] Delete `tests/unit_tests/test_utils.py` (tested only load_prompt)
+  - [x] Remove `types-requests` from dependencies
+  - [x] Remove `requests_mock` from test dependencies
+- [x] Update Makefile
+  - [x] Replace all `poetry run` with `uv run`
+- [x] Rewrite CI/CD workflows
+  - [x] Rewrite `.github/workflows/_lint.yml` to use `astral-sh/setup-uv@v5`
+  - [x] Rewrite `.github/workflows/_test.yml` to use `astral-sh/setup-uv@v5`
+  - [x] Update `.github/workflows/check_diffs.yml`: remove `POETRY_VERSION` env
+  - [x] Update test matrix: Python 3.9-3.13 + 3.14 (experimental)
+  - [x] Delete `.github/actions/poetry_setup/` custom action
+- [x] Lock file transition
+  - [x] Delete `poetry.lock`
+  - [x] Generate `uv.lock` with `uv lock`
+- [x] Update documentation
+  - [x] Update `AGENTS.md`: change setup/run commands to uv
+  - [x] Update `docs/TODO.md` and `docs/REFACTORING.md`
+- [x] Verification
+  - [x] Run `uv sync` to install dependencies
+  - [x] Run `uv run ruff check` — passed
+  - [x] Run `uv run mypy` — passed (13 source files)
+  - [x] Run `uv run pytest` — 73 passed, 2 xpassed
+- [x] Post-migration cleanup
+  - [x] Delete empty `.github/actions/` directory
+  - [x] Delete unused `.github/scripts/get_min_versions.py` (broken, references Poetry)

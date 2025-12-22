@@ -8,13 +8,13 @@ TEST_FILE ?= tests/unit_tests/
 integration_test integration_tests: TEST_FILE = tests/integration_tests/
 
 test tests integration_test integration_tests:
-	poetry run pytest $(TEST_FILE)
+	uv run pytest $(TEST_FILE)
 
 check_imports: $(shell find langchain_gigachat -name '*.py')
-	poetry run python ./scripts/check_imports.py $^
+	uv run python ./scripts/check_imports.py $^
 
 dev:
-	poetry run pre-commit install && \
+	uv run pre-commit install && \
 	git remote set-head origin -a
 
 ######################
@@ -32,14 +32,14 @@ lint_tests: MYPY_CACHE=.mypy_cache_test
 
 lint lint_diff lint_package lint_tests:
 	./scripts/lint_imports.sh
-	poetry run ruff check .
-	poetry run ruff format $(PYTHON_FILES) --diff
-	poetry run ruff check --select I $(PYTHON_FILES)
-	mkdir -p $(MYPY_CACHE); poetry run mypy $(PYTHON_FILES) --cache-dir $(MYPY_CACHE)
+	uv run ruff check .
+	uv run ruff format $(PYTHON_FILES) --diff
+	uv run ruff check --select I $(PYTHON_FILES)
+	mkdir -p $(MYPY_CACHE); uv run mypy $(PYTHON_FILES) --cache-dir $(MYPY_CACHE)
 
 format format_diff:
-	poetry run ruff format $(PYTHON_FILES)
-	poetry run ruff check --select I --fix $(PYTHON_FILES)
+	uv run ruff format $(PYTHON_FILES)
+	uv run ruff check --select I --fix $(PYTHON_FILES)
 
 ######################
 # HELP

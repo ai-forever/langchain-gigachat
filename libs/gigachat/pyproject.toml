@@ -1,52 +1,43 @@
-[tool.poetry]
+[project]
 name = "langchain-gigachat"
 version = "0.3.12"
 description = "An integration package connecting GigaChat and LangChain"
 authors = []
 readme = "README.md"
-repository = "https://github.com/ai-forever/langchain-gigachat"
 license = "MIT"
+requires-python = ">=3.9,<4"
+dependencies = [
+  "langchain-core>=0.3,<1",
+  "gigachat @ git+https://github.com/ai-forever/gigachat.git@pre-1.0-refactor",
+]
 
-[tool.poetry.urls]
+[project.urls]
+Repository = "https://github.com/ai-forever/langchain-gigachat"
 "Source Code" = "https://github.com/ai-forever/langchain-gigachat/tree/master/libs/gigachat"
 
-[tool.poetry.dependencies]
-python = ">=3.9,<4.0"
-langchain-core = "^0.3"
-gigachat = { git = "https://github.com/ai-forever/gigachat.git", branch = "pre-1.0-refactor" }
-types-requests = "^2.32"
-
-[tool.poetry.group.dev]
-optional = true
-
-[tool.poetry.group.dev.dependencies]
-pre-commit = "^4.0.1"
-
-[tool.poetry.group.lint]
-optional = true
-
-[tool.poetry.group.lint.dependencies]
-ruff = "^0.7.0"
-
-[tool.poetry.group.typing]
-optional = true
-
-[tool.poetry.group.typing.dependencies]
-mypy = "^1.13.0"
-
-[tool.poetry.group.test]
-optional = true
-
-[tool.poetry.group.test.dependencies]
-pytest = "^8.3.3"
-pytest-cov = "^5.0.0"
-pytest-asyncio = "^0.24.0"
-pytest-mock = "^3.14.0"
-requests_mock = "^1.12.1"
+[dependency-groups]
+dev = [
+  "mypy>=1.13.0,<2",
+  "pytest>=8.3.3,<9",
+  "pytest-cov>=5.0.0,<6",
+  "pytest-asyncio>=0.24.0,<1",
+  "pytest-mock>=3.14.0,<4",
+  "ruff>=0.7.0,<1",
+  "pre-commit>=4.0.1,<5",
+]
 
 [build-system]
-requires = ["poetry-core>=1.0.0"]
-build-backend = "poetry.core.masonry.api"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.sdist]
+include = ["langchain_gigachat"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["langchain_gigachat"]
 
 [tool.ruff.lint]
 select = [
@@ -59,8 +50,8 @@ select = [
 [tool.ruff.format]
 
 [tool.mypy]
-ignore_missing_imports = "True"
-disallow_untyped_defs = "True"
+ignore_missing_imports = true
+disallow_untyped_defs = true
 
 [tool.pytest.ini_options]
 addopts = "--strict-markers --strict-config --durations=5 --cov=langchain_gigachat -vv"

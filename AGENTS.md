@@ -19,12 +19,12 @@ LangChain integration package for GigaChat LLM.
 - **langchain-core**: Core LangChain abstractions (v0.3+, Pydantic V2-native)
 
 ## Setup Commands
-- Install dependencies: `poetry install --with dev,lint,typing,test`
-- Run tests: `poetry run pytest`
-- Lint code: `poetry run ruff check .`
-- Format code: `poetry run ruff format .`
-- Type check: `poetry run mypy langchain_gigachat`
-- Verify all: `poetry run ruff check . && poetry run ruff format --check . && poetry run mypy langchain_gigachat && poetry run pytest`
+- Install dependencies: `uv sync`
+- Run tests: `uv run pytest`
+- Lint code: `uv run ruff check .`
+- Format code: `uv run ruff format .`
+- Type check: `uv run mypy langchain_gigachat`
+- Verify all: `uv run ruff check . && uv run ruff format --check . && uv run mypy langchain_gigachat && uv run pytest`
 
 ## Code Style
 - Documentation: English, Google Python Style Guide, imperative mood ("Return..." not "Returns...")

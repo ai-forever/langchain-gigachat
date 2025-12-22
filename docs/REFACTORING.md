@@ -10,16 +10,19 @@
   1. **Local path**: `gigachat = { path = "..." }` breaks CI (path doesn't exist on CI runners).
   2. **PyPI**: Can't publish to PyPI until both packages are ready for simultaneous release.
   3. **Circular dependency**: Changes in one package may require changes in the other before either is releasable.
-- **Solution**: Install `gigachat` from git branch using Poetry's git dependency syntax:
+- **Solution**: Install `gigachat` from git branch using PEP 508 direct reference syntax:
   ```toml
-  gigachat = { git = "https://github.com/ai-forever/gigachat.git", branch = "<branch-name>" }
+  dependencies = [
+    "gigachat @ git+https://github.com/ai-forever/gigachat.git@<branch-name>",
+  ]
   ```
   See `libs/gigachat/pyproject.toml` for the current branch in use.
+  Note: Requires `[tool.hatch.metadata] allow-direct-references = true` in pyproject.toml.
 - **Why**:
   - **CI works**: Git URLs resolve on any machine with network access.
   - **Version pinning**: The branch tracks in-progress refactoring changes.
   - **Coordinated release**: Both packages can be developed in sync, then released simultaneously when ready.
-- **When to change**: Update to PyPI version (e.g., `gigachat = "^X.Y.Z"`) after coordinated release of both packages.
+- **When to change**: Update to PyPI version (e.g., `gigachat>=X.Y.Z,<X+1`) after coordinated release of both packages.
 - **Applies when**: Refactoring involves breaking changes to `gigachat` that require simultaneous development of both packages.
 
 ## Workflow
@@ -107,4 +110,45 @@
   - `ruff check` — passed
   - `mypy` — passed
   - `pytest` — 74 passed, 2 xpassed
+- **Status**: Completed.
+
+## Poetry to uv Migration
+
+- **Problem**: The project used Poetry for dependency management and build, while the upstream `gigachat` package migrated to uv. Alignment with upstream tooling simplifies development and CI/CD.
+- **Solution**:
+  - **pyproject.toml Conversion**:
+    - Replaced `[tool.poetry]` with PEP 621 `[project]` section.
+    - Changed build backend from `poetry-core` to `hatchling`.
+    - Consolidated 4 Poetry dependency groups (dev/lint/typing/test) into single `[dependency-groups]` `dev` group.
+    - Added `[tool.hatch.metadata]` with `allow-direct-references = true` for git dependency support.
+    - Fixed mypy config: changed string `"True"` to boolean `true`.
+  - **Legacy Code Removal**:
+    - Removed `langchain_gigachat/tools/load_prompt.py` — legacy module not exported in public API.
+    - Removed `tests/unit_tests/test_utils.py` — only tested the removed module.
+    - Removed `types-requests`, `requests`, and `requests_mock` dependencies — only needed by removed module.
+  - **Makefile Updates**:
+    - Replaced all `poetry run` commands with `uv run`.
+  - **CI/CD Rewrite**:
+    - Replaced custom `.github/actions/poetry_setup/` with `astral-sh/setup-uv@v5`.
+    - Simplified `_lint.yml` and `_test.yml` workflows.
+    - Updated cache keys from `poetry.lock` to `uv.lock`.
+    - Expanded test matrix: Python 3.9, 3.10, 3.11, 3.12, 3.13 (required) + 3.14 (experimental).
+  - **Lock File**:
+    - Deleted `poetry.lock`, generated `uv.lock`.
+  - **Documentation**:
+    - Updated `AGENTS.md` with uv commands.
+- **Why**:
+  - **Upstream Alignment**: Matches `gigachat` package tooling.
+  - **Performance**: uv is significantly faster than Poetry.
+  - **Simplicity**: uv's built-in caching and simpler workflow configuration.
+  - **Modern Standards**: PEP 621 is the standard for Python project metadata.
+- **Verification**:
+  - `uv sync` — installed 50 packages successfully
+  - `uv run ruff check` — passed
+  - `uv run mypy` — passed (13 source files)
+  - `uv run pytest` — 73 passed, 2 xpassed, 70% coverage
+- **Post-Migration Cleanup**:
+  - Deleted empty `.github/actions/` directory (poetry_setup was removed earlier).
+  - Deleted `.github/scripts/get_min_versions.py` — unused script that parsed `tool.poetry.dependencies` (no longer exists after PEP 621 migration).
+  - Kept `.github/scripts/check_diff.py` — actively used by `check_diffs.yml`.
 - **Status**: Completed.
