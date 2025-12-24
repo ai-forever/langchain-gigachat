@@ -152,3 +152,27 @@
   - Deleted `.github/scripts/get_min_versions.py` — unused script that parsed `tool.poetry.dependencies` (no longer exists after PEP 621 migration).
   - Kept `.github/scripts/check_diff.py` — actively used by `check_diffs.yml`.
 - **Status**: Completed.
+
+## Code Cleanup
+
+- **Problem**: The codebase contained legacy code and outdated documentation:
+  1. `GigaChat` class docstring referenced `langchain_community.chat_models` (wrong import path) and used verbose example-heavy format instead of the upstream `Args:` format.
+  2. Commented-out `FunctionInProgressMessageChunk` block in `_convert_delta_to_message_chunk()` — dead code for unimplemented feature.
+  3. Unused `_convert_function_to_dict()` function in `gigachat.py` — legacy code superseded by `convert_to_gigachat_function()` in `function_calling.py`.
+  4. Unused `_get_type_hints()` wrapper function in `function_calling.py` — the actual code uses `get_type_hints()` directly.
+- **Solution**:
+  - **Docstring Rewrite**: Replaced example-heavy docstring with upstream `gigachat` SDK format using `Args:` section documenting all parameters.
+  - **Dead Code Removal**:
+    - Deleted 5-line commented `FunctionInProgressMessageChunk` block.
+    - Deleted 27-line `_convert_function_to_dict()` function.
+    - Deleted 7-line `_get_type_hints()` function.
+    - Removed unused `functools` import.
+  - **Why**:
+    - **Consistency**: Docstring format matches upstream `gigachat` SDK.
+    - **Maintainability**: Removed ~40 lines of dead code.
+    - **Correctness**: Import path now references `langchain_gigachat` (implicitly via `Args:` format).
+- **Verification**:
+  - `uv run ruff check` — passed
+  - `uv run ruff format` — passed
+  - `uv run pytest` — 73 passed, 2 xpassed
+- **Status**: Completed.

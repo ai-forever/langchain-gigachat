@@ -86,3 +86,17 @@
 - [x] Post-migration cleanup
   - [x] Delete empty `.github/actions/` directory
   - [x] Delete unused `.github/scripts/get_min_versions.py` (broken, references Poetry)
+
+## Code Cleanup
+- [x] Rewrite `GigaChat` class docstring
+  - [x] Replace legacy `langchain_community` example-heavy docstring with upstream `gigachat` SDK format
+  - [x] Use `Args:` section to document all parameters
+- [x] Remove dead code
+  - [x] Delete commented `FunctionInProgressMessageChunk` block in `gigachat.py`
+  - [x] Delete unused `_convert_function_to_dict()` function in `gigachat.py`
+  - [x] Delete unused `_get_type_hints()` function in `function_calling.py`
+  - [x] Remove unused `functools` import in `function_calling.py`
+- [x] Verification
+  - [x] Run `uv run ruff check` — passed
+  - [x] Run `uv run ruff format` — passed
+  - [x] Run `uv run pytest` — 73 passed, 2 xpassed

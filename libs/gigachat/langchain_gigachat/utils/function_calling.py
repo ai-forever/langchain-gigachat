@@ -1,5 +1,4 @@
 import collections.abc
-import functools
 import inspect
 import types
 import typing
@@ -387,15 +386,6 @@ def convert_pydantic_to_gigachat_function(
         return_parameters=return_schema,
         few_shot_examples=few_shot_examples,
     )
-
-
-def _get_type_hints(func: Callable) -> Optional[Dict[str, Type]]:
-    if isinstance(func, functools.partial):
-        func = func.func
-    try:
-        return get_type_hints(func)
-    except Exception:
-        return None
 
 
 def create_return_schema_from_function(func: Callable) -> Optional[Type[BaseModel]]:
