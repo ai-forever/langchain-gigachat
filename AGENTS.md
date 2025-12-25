@@ -34,9 +34,6 @@ LangChain integration package for GigaChat LLM.
 See `docs/TODO.md` for task status and `docs/REFACTORING.md` for detailed analysis and solutions.
 Update these docs after solving each issue.
 
-## v1.0 Migration
-See `docs/V1_MIGRATION.md` for v1.0 migration plan, including breaking changes.
-
 ## Key Considerations
 - **Upstream Dependency**: The `gigachat` package (v0.2.0+) was significantly refactored. See `gigachat/docs/REFACTORING.md` for details. Changes here must align with upstream.
 - **LangChain Compatibility**: Must remain compatible with `langchain-core ^0.3` (Pydantic V2-native).
