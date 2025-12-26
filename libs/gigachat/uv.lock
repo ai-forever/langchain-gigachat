@@ -449,13 +449,17 @@ wheels = [
 
 [[package]]
 name = "gigachat"
-version = "0.2.0"
-source = { git = "https://github.com/ai-forever/gigachat.git?rev=pre-1.0-refactor#cc20ab6fef97f35bb714c95587af5e6cf4898ab5" }
+version = "0.2.0b2"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
     { name = "pydantic" },
     { name = "pydantic-settings", version = "2.11.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
     { name = "pydantic-settings", version = "2.12.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a0/dc/dfc8d8cee6a49551e28690c3c9f463f68d63ae6ad9e733eb086db2089d55/gigachat-0.2.0b2.tar.gz", hash = "sha256:a9d5f76163955b65b71bebb26a7574d5f0d90034e3bbbe29a6eccba17b07bd54", size = 30904, upload-time = "2025-12-26T09:58:24.707Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e6/d6/77241d9074dd80d8ca6f3f1993e759b46e6a8569cd10004a55b956f1cca0/gigachat-0.2.0b2-py3-none-any.whl", hash = "sha256:b21b2196b732393b8a48dea32551984867d34c6870ce561c414b7560664dc311", size = 41018, upload-time = "2025-12-26T09:58:23.306Z" },
 ]
 
 [[package]]
@@ -579,7 +583,7 @@ wheels = [
 
 [[package]]
 name = "langchain-gigachat"
-version = "0.3.12"
+version = "0.4.0b2"
 source = { editable = "." }
 dependencies = [
     { name = "gigachat" },
@@ -600,7 +604,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "gigachat", git = "https://github.com/ai-forever/gigachat.git?rev=pre-1.0-refactor" },
+    { name = "gigachat", specifier = ">=0.2.0b2,<0.3" },
     { name = "langchain-core", specifier = ">=0.3,<1" },
 ]
 
