@@ -1,6 +1,6 @@
 [project]
 name = "langchain-gigachat"
-version = "0.3.12"
+version = "0.4.0b1"
 description = "An integration package connecting GigaChat and LangChain"
 authors = []
 readme = "README.md"
@@ -8,7 +8,7 @@ license = "MIT"
 requires-python = ">=3.9,<4"
 dependencies = [
   "langchain-core>=0.3,<1",
-  "gigachat @ git+https://github.com/ai-forever/gigachat.git@pre-1.0-refactor",
+  "gigachat>=0.2.0b1,<0.3",
 ]
 
 [project.urls]
@@ -29,9 +29,6 @@ dev = [
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
-
-[tool.hatch.metadata]
-allow-direct-references = true
 
 [tool.hatch.build.targets.sdist]
 include = ["langchain_gigachat"]
