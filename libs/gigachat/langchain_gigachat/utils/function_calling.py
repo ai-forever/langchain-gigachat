@@ -1,5 +1,4 @@
 import collections.abc
-import functools
 import inspect
 import types
 import typing
@@ -87,7 +86,6 @@ def _convert_typed_dict_to_gigachat_function(
     typed_dict: type,
 ) -> GigaFunctionDescription:
     visited: dict = {}
-    from pydantic.v1 import BaseModel
 
     model = cast(
         type[BaseModel],
@@ -106,8 +104,7 @@ def _is_optional(field: type) -> bool:
 def _convert_any_typed_dicts_to_pydantic(
     type_: type, *, visited: dict, depth: int = 0
 ) -> type:
-    from pydantic.v1 import Field as Field_v1
-    from pydantic.v1 import create_model as create_model_v1
+    from pydantic import Field, create_model
 
     if type_ in visited:
         return visited[type_]
@@ -141,7 +138,7 @@ def _convert_any_typed_dicts_to_pydantic(
                     field_kwargs["description"] = arg_desc
                 else:
                     pass
-                fields[arg] = (new_arg_type, Field_v1(**field_kwargs))
+                fields[arg] = (new_arg_type, Field(**field_kwargs))
             else:
                 new_arg_type = _convert_any_typed_dicts_to_pydantic(
                     arg_type, depth=depth + 1, visited=visited
@@ -152,8 +149,8 @@ def _convert_any_typed_dicts_to_pydantic(
                     field_kwargs = {"default": ...}
                 if arg_desc := arg_descriptions.get(arg):
                     field_kwargs["description"] = arg_desc
-                fields[arg] = (new_arg_type, Field_v1(**field_kwargs))
-        model = create_model_v1(typed_dict.__name__, **fields)
+                fields[arg] = (new_arg_type, Field(**field_kwargs))
+        model = create_model(typed_dict.__name__, **fields)
         model.__doc__ = description
         visited[typed_dict] = model
         return model
@@ -247,13 +244,10 @@ def _get_python_function_name(function: Callable) -> str:
 
 
 def _model_to_schema(model: Union[type[BaseModel], dict[str, Any]]) -> dict:
-    if hasattr(model, "model_json_schema"):
-        # Pydantic 2
-        from langchain_gigachat.utils.pydantic_generator import GigaChatJsonSchema
+    from langchain_gigachat.utils.pydantic_generator import GigaChatJsonSchema
 
+    if hasattr(model, "model_json_schema"):
         return model.model_json_schema(schema_generator=GigaChatJsonSchema)
-    elif hasattr(model, "schema"):
-        return model.schema()  # Pydantic 1
     else:
         msg = "Model must be a Pydantic model."
         raise TypeError(msg)
@@ -392,15 +386,6 @@ def convert_pydantic_to_gigachat_function(
         return_parameters=return_schema,
         few_shot_examples=few_shot_examples,
     )
-
-
-def _get_type_hints(func: Callable) -> Optional[Dict[str, Type]]:
-    if isinstance(func, functools.partial):
-        func = func.func
-    try:
-        return get_type_hints(func)
-    except Exception:
-        return None
 
 
 def create_return_schema_from_function(func: Callable) -> Optional[Type[BaseModel]]:

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional
 from langchain_core.load.serializable import Serializable
 from langchain_core.utils import pre_init
 from langchain_core.utils.pydantic import get_fields
+from pydantic import ConfigDict
 
 if TYPE_CHECKING:
     import gigachat
@@ -44,8 +45,7 @@ class _BaseGigaChat(Serializable):
 
     ssl_context: Optional[ssl.SSLContext] = None
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     ca_bundle_file: Optional[str] = None
     cert_file: Optional[str] = None
@@ -65,8 +65,6 @@ class _BaseGigaChat(Serializable):
     """ Maximum number of tokens to generate """
     use_api_for_tokens: bool = False
     """ Use GigaChat API for tokens count """
-    verbose: bool = False
-    """ Verbose logging """
     flags: Optional[List[str]] = None
     """ Feature flags """
     top_p: Optional[float] = None
@@ -115,7 +113,6 @@ class _BaseGigaChat(Serializable):
             cert_file=self.cert_file,
             key_file=self.key_file,
             key_file_password=self.key_file_password,
-            verbose=self.verbose,
             flags=self.flags,
         )
 

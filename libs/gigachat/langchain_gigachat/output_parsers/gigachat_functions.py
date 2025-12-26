@@ -84,10 +84,12 @@ class PydanticOutputFunctionsParser(OutputFunctionsParser):
         """
         _result = super().parse_result(result)
         if self.args_only:
-            if hasattr(self.pydantic_schema, "model_validate"):
-                pydantic_args = self.pydantic_schema.model_validate(_result)
-            else:
-                pydantic_args = self.pydantic_schema.parse_obj(_result)  # type: ignore
+            if isinstance(self.pydantic_schema, dict):
+                raise ValueError(
+                    "If multiple pydantic schemas are provided then args_only should be"
+                    " False."
+                )
+            pydantic_args = self.pydantic_schema.model_validate(_result)
         else:
             fn_name = _result["name"]
             _args = _result["arguments"]
@@ -95,10 +97,7 @@ class PydanticOutputFunctionsParser(OutputFunctionsParser):
                 pydantic_schema = self.pydantic_schema[fn_name]
             else:
                 pydantic_schema = self.pydantic_schema
-            if hasattr(pydantic_schema, "model_validate"):
-                pydantic_args = pydantic_schema.model_validate(_args)  # type: ignore
-            else:
-                pydantic_args = pydantic_schema.parse_obj(_args)  # type: ignore
+            pydantic_args = pydantic_schema.model_validate(_args)  # type: ignore
         return pydantic_args
 
 

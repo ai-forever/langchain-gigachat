@@ -258,12 +258,6 @@ def _convert_delta_to_message_chunk(
         additional_kwargs["video_uuid"] = match.group("UUID")
         additional_kwargs["postfix_message"] = match.group("postfix")
 
-    # if (
-    #     role == "function_in_progress"
-    #     or default_class == FunctionInProgressMessageChunk
-    # ):
-    #     return FunctionInProgressMessageChunk(content=content)
-
     if role == "user" or default_class == HumanMessageChunk:
         return HumanMessageChunk(content=content)
     elif (
@@ -286,35 +280,6 @@ def _convert_delta_to_message_chunk(
         return ChatMessageChunk(content=content, role=role)  # type: ignore[arg-type]
     else:
         return default_class(content=content)  # type: ignore[call-arg]
-
-
-def _convert_function_to_dict(function: Dict) -> Any:
-    from gigachat.models import Function, FunctionParameters
-
-    res = Function(name=function["name"], description=function["description"])
-
-    if "parameters" in function:
-        if isinstance(function["parameters"], dict):
-            if "properties" in function["parameters"]:
-                props = function["parameters"]["properties"]
-                properties = {}
-
-                for k, v in props.items():
-                    properties[k] = {"type": v["type"], "description": v["description"]}
-
-                res.parameters = FunctionParameters(
-                    type="object",
-                    properties=properties,  # type: ignore[arg-type]
-                    required=props.get("required", []),
-                )
-            else:
-                raise TypeError(
-                    f"No properties in parameters in {function['parameters']}"
-                )
-        else:
-            raise TypeError(f"Got unknown type {function['parameters']}")
-
-    return res
 
 
 class _FunctionCall(TypedDict):
@@ -352,45 +317,37 @@ def trim_content_to_stop_sequence(
 
 
 class GigaChat(_BaseGigaChat, BaseChatModel):
-    """`GigaChat` large language models API.
+    """
+    LangChain chat model for GigaChat API.
 
-    To use, provide credentials via token, login and password,
-    or mTLS for secure access to the GigaChat API.
-
-    Example Usage:
-        .. code-block:: python
-
-            from langchain_community.chat_models import GigaChat
-
-            # Authorization with Token
-            # (obtainable in the personal cabinet under Authorization Data):
-            giga = GigaChat(credentials="YOUR_TOKEN")
-
-            # Personal Space:
-            giga = GigaChat(credentials="YOUR_TOKEN", scope="GIGACHAT_API_PERS")
-
-            # Corporate Space:
-            giga = GigaChat(credentials="YOUR_TOKEN", scope="GIGACHAT_API_CORP")
-
-            # Authorization with Login and Password:
-            giga = GigaChat(
-                base_url="https://gigachat.devices.sberbank.ru/api/v1",
-                user="YOUR_USERNAME",
-                password="YOUR_PASSWORD",
-            )
-
-            # Mutual Authentication via TLS (mTLS):
-            giga = GigaChat(
-                base_url="https://gigachat.devices.sberbank.ru/api/v1",
-                ca_bundle_file="certs/ca.pem",  # chain_pem.txt
-                cert_file="certs/tls.pem",       # published_pem.txt
-                key_file="certs/tls.key",
-                key_file_password="YOUR_KEY_PASSWORD",
-            )
-
-            # Authorization with Temporary Token:
-            giga = GigaChat(access_token="YOUR_TEMPORARY_TOKEN")
-
+    Args:
+        base_url: Address against which requests are executed.
+        auth_url: Address for requesting OAuth 2.0 access token.
+        credentials: Authorization data.
+        scope: API version to which access is provided.
+        access_token: JWE token.
+        model: Name of the model to receive a response from.
+        user: User name for authorization.
+        password: Password for authorization.
+        timeout: Timeout for requests.
+        verify_ssl_certs: Check SSL certificates.
+        ca_bundle_file: Path to CA bundle file.
+        cert_file: Path to certificate file.
+        key_file: Path to key file.
+        key_file_password: Password for key file.
+        ssl_context: SSL context.
+        profanity_check: Check for profanity.
+        streaming: Whether to stream the results or not.
+        temperature: What sampling temperature to use.
+        max_tokens: Maximum number of tokens to generate.
+        use_api_for_tokens: Use GigaChat API for tokens count.
+        flags: Feature flags.
+        top_p: Top_p value to use for nucleus sampling.
+            Must be between 0.0 and 1.0.
+        repetition_penalty: The penalty applied to repeated tokens.
+        update_interval: Minimum interval in seconds that elapses between
+            sending tokens.
+        auto_upload_images: Auto-upload Base-64 images. Not for production usage.
     """
 
     """ Auto-upload Base-64 images. Not for production usage! """
@@ -501,15 +458,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             **kwargs,
         }
 
-        payload = Chat.parse_obj(payload_dict)
-
-        if self.verbose:
-            logger.warning(
-                "Giga request: %s",
-                json.dumps(
-                    payload.dict(exclude_none=True, by_alias=True), ensure_ascii=False
-                ),
-            )
+        payload = Chat.model_validate(payload_dict)
 
         return payload
 
@@ -544,10 +493,8 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 },
             )
             generations.append(gen)
-            if self.verbose:
-                logger.warning("Giga response: %s", message.content)
         llm_output = {
-            "token_usage": response.usage.dict(),
+            "token_usage": response.usage.model_dump(),
             "model_name": response.model,
             "x_headers": x_headers,
         }
@@ -624,7 +571,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         for chunk_d in self._client.stream(payload):
             chunk = {}
             if not isinstance(chunk_d, dict):
-                chunk = chunk_d.dict()
+                chunk = chunk_d.model_dump()
             else:
                 chunk = chunk_d
             if len(chunk["choices"]) == 0:
@@ -681,7 +628,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         async for chunk_d in self._client.astream(payload):
             chunk = {}
             if not isinstance(chunk_d, dict):
-                chunk = chunk_d.dict()
+                chunk = chunk_d.model_dump()
             else:
                 chunk = chunk_d
             if len(chunk["choices"]) == 0:

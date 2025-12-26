@@ -4,9 +4,8 @@ from typing import Any, Callable, List, Literal, Optional, Union
 from typing import TypedDict as TypingTypedDict
 
 import pytest
-from pydantic import BaseModel as BaseModelV2Maybe  # pydantic: ignore
-from pydantic import Field as FieldV2Maybe  # pydantic: ignore
 from typing_extensions import TypedDict as ExtensionsTypedDict
+from typing_extensions import is_typeddict
 
 from langchain_gigachat.tools.giga_tool import FewShotExamples, GigaBaseTool, giga_tool
 
@@ -138,14 +137,12 @@ def dummy_pydantic() -> type[BaseModel]:
 
 
 @pytest.fixture()
-def dummy_pydantic_v2() -> type[BaseModelV2Maybe]:
-    class dummy_function(BaseModelV2Maybe):  # noqa: N801
+def dummy_pydantic_v2() -> type[BaseModel]:
+    class dummy_function(BaseModel):  # noqa: N801
         """dummy function"""
 
-        arg1: Optional[int] = FieldV2Maybe(..., description="foo")
-        arg2: Literal["bar", "baz"] = FieldV2Maybe(
-            ..., description="one of 'bar', 'baz'"
-        )
+        arg1: Optional[int] = Field(..., description="foo")
+        arg2: Literal["bar", "baz"] = Field(..., description="one of 'bar', 'baz'")
 
     return dummy_function
 
@@ -311,6 +308,9 @@ def test_convert_to_gigachat_function(
     if isinstance(func, str):
         func = request.getfixturevalue(func)
 
+    if is_typeddict(func):
+        expected["parameters"]["properties"]["arg1"]["default"] = None  # type: ignore
+
     actual = convert_to_gigachat_function(func)  # type: ignore
     assert actual == expected
 
@@ -354,9 +354,9 @@ def test_simple_tool() -> None:
 
 @pytest.mark.xfail(reason="Direct pydantic v2 models not yet supported")
 def test_convert_to_openai_function_nested_v2() -> None:
-    class NestedV2(BaseModelV2Maybe):
-        nested_v2_arg1: int = FieldV2Maybe(..., description="foo")
-        nested_v2_arg2: Literal["bar", "baz"] = FieldV2Maybe(
+    class NestedV2(BaseModel):
+        nested_v2_arg1: int = Field(..., description="foo")
+        nested_v2_arg2: Literal["bar", "baz"] = Field(
             ..., description="one of 'bar', 'baz'"
         )
 
