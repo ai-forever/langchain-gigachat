@@ -675,7 +675,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         functions: Sequence[Union[Dict[str, Any], Type[BaseModel], Callable, type]],
         function_call: Optional[str] = None,
         **kwargs: Any,
-    ) -> Runnable[LanguageModelInput, BaseMessage]:
+    ) -> Runnable[LanguageModelInput, AIMessage]:
         """Bind functions (and other objects) to this chat model.
 
         Args:
@@ -826,7 +826,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             Union[dict, str, Literal["auto", "any", "none"], bool]
         ] = None,
         **kwargs: Any,
-    ) -> Runnable[LanguageModelInput, BaseMessage]:
+    ) -> Runnable[LanguageModelInput, AIMessage]:
         """Bind tool-like objects to this chat model.
         Assumes model is compatible with GigaChat tool-calling API."""
         formatted_tools = [convert_to_gigachat_tool(tool) for tool in tools]

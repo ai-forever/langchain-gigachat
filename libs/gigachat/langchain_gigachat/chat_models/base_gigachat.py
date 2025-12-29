@@ -53,8 +53,6 @@ class _BaseGigaChat(Serializable):
     key_file_password: Optional[str] = None
     # Support for connection to GigaChat through SSL certificates
 
-    profanity: bool = True
-    """ DEPRECATED: Check for profanity """
     profanity_check: Optional[bool] = None
     """ Check for profanity """
     streaming: bool = False
@@ -130,12 +128,6 @@ class _BaseGigaChat(Serializable):
         diff = set(values.keys()) - fields
         if diff:
             logger.warning(f"Extra fields {diff} in GigaChat class")
-        if "profanity" in fields and values.get("profanity") is False:
-            logger.warning(
-                "'profanity' field is deprecated. Use 'profanity_check' instead."
-            )
-            if values.get("profanity_check") is None:
-                values["profanity_check"] = values.get("profanity")
         return values
 
     @property
