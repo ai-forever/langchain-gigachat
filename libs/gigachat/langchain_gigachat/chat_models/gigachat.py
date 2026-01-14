@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import re
+import warnings
 from mimetypes import guess_extension
 from operator import itemgetter
 from typing import (
@@ -832,7 +833,19 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         formatted_tools = [convert_to_gigachat_tool(tool) for tool in tools]
         if tool_choice is not None and tool_choice:
             if isinstance(tool_choice, str):
-                if tool_choice not in ("auto", "none"):
+                # GigaChat API doesn't support "any" tool choice
+                # Convert to "auto" as the closest alternative
+                if tool_choice == "any":
+                    warnings.warn(
+                        "GigaChat API does not support tool_choice='any'. "
+                        "Using 'auto' instead. "
+                        "The model may choose not to call any tool, "
+                        "which may break agent behavior.",
+                        UserWarning,
+                        stacklevel=2,
+                    )
+                    tool_choice = "auto"
+                elif tool_choice not in ("auto", "none"):
                     tool_choice = {"name": tool_choice}
             elif isinstance(tool_choice, bool) and tool_choice:
                 if not formatted_tools:
