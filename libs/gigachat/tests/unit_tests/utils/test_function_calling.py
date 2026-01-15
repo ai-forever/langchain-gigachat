@@ -352,7 +352,6 @@ def test_simple_tool() -> None:
     assert actual == expected
 
 
-@pytest.mark.xfail(reason="Direct pydantic v2 models not yet supported")
 def test_convert_to_openai_function_nested_v2() -> None:
     class NestedV2(BaseModel):
         nested_v2_arg1: int = Field(..., description="foo")
@@ -406,9 +405,6 @@ def test_convert_to_gigachat_function_nested() -> None:
     assert actual == expected
 
 
-@pytest.mark.xfail(
-    reason="Pydantic converts Optional[str] to str in .model_json_schema()"
-)
 def test_function_optional_param() -> None:
     @tool
     def func5(a: Optional[str], b: str, c: Optional[list[Optional[str]]]) -> None:
