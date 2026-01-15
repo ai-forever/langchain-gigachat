@@ -111,7 +111,7 @@ class _BaseGigaChat(Serializable):
         return {
             "temperature": self.temperature,
             "model": self.model,
-            "profanity": self.profanity_check,
+            "profanity_check": self.profanity_check,
             "streaming": self.streaming,
             "max_tokens": self.max_tokens,
             "top_p": self.top_p,

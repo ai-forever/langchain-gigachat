@@ -88,6 +88,7 @@ IMAGE_SEARCH_REGEX = re.compile(
 VIDEO_SEARCH_REGEX = re.compile(
     r'<video\scover="(?P<cover_UUID>.+?)"\ssrc="(?P<UUID>.+?)"\sfuse="true"/>(?P<postfix>.+)?'  # noqa
 )
+BASE64_DATA_REGEX = re.compile(r"data:(.+);(.+),(.+)")
 
 
 def _validate_content(content: Any) -> Any:
@@ -283,10 +284,6 @@ def _convert_delta_to_message_chunk(
         return default_class(content=content)  # type: ignore[call-arg]
 
 
-class _FunctionCall(TypedDict):
-    name: str
-
-
 _BM = TypeVar("_BM", bound=BaseModel)
 _DictOrPydanticClass = Union[Dict[str, Any], Type[_BM], Type]
 _DictOrPydantic = Union[Dict, _BM]
@@ -377,7 +374,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                         continue
                     if content_part.get("type") == "image_url":
                         image_url = content_part["image_url"]["url"]
-                        matches = re.search(r"data:(.+);(.+),(.+)", image_url)
+                        matches = BASE64_DATA_REGEX.search(image_url)
                         if matches and not self.auto_upload_images:
                             logger.warning(
                                 "You trying to send base-64 images, "
@@ -407,7 +404,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                         continue
                     if content_part.get("type") == "image_url":
                         image_url = content_part["image_url"]["url"]
-                        matches = re.search(r"data:(.+);(.+),(.+)", image_url)
+                        matches = BASE64_DATA_REGEX.search(image_url)
                         if matches and not self.auto_upload_images:
                             logger.warning(
                                 "You trying to send base-64 images, "
@@ -654,7 +651,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 chunk_m.usage_metadata = usage_metadata
             x_headers = chunk.get("x_headers")
             x_headers = x_headers if isinstance(x_headers, dict) else {}
-            if isinstance(x_headers, dict) and "x-request-id" in x_headers:
+            if "x-request-id" in x_headers:
                 chunk_m.id = x_headers["x-request-id"]
 
             generation_info = {}

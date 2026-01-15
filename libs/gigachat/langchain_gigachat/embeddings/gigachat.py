@@ -13,15 +13,7 @@ MAX_BATCH_SIZE_PARTS = 90
 
 
 class GigaChatEmbeddings(BaseModel, Embeddings):
-    """GigaChat Embeddings models.
-
-    Example:
-        .. code-block:: python
-            from langchain_community.embeddings.gigachat import GigaChatEmbeddings
-
-            embeddings =
-                GigaChatEmbeddings(credentials=..., scope=..., verify_ssl_certs=False)
-    """
+    """GigaChat Embeddings models."""
 
     base_url: Optional[str] = None
     """ Base API URL """

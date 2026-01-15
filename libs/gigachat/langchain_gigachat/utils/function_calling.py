@@ -238,11 +238,6 @@ def _parse_google_docstring(
     return description, arg_descriptions
 
 
-def _get_python_function_name(function: Callable) -> str:
-    """Get the name of a Python function."""
-    return function.__name__
-
-
 def _model_to_schema(model: Union[type[BaseModel], dict[str, Any]]) -> dict:
     from langchain_gigachat.utils.pydantic_generator import GigaChatJsonSchema
 
@@ -422,7 +417,7 @@ def convert_python_function_to_gigachat_function(
     """
     from langchain_core import tools
 
-    func_name = _get_python_function_name(function)
+    func_name = function.__name__
     model = tools.create_schema_from_function(
         func_name,
         function,
