@@ -1,21 +1,14 @@
 from __future__ import annotations
 
-import logging
 import ssl
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
+import gigachat
+import gigachat.models as gm
+from gigachat._types import FileTypes
 from langchain_core.load.serializable import Serializable
-from langchain_core.utils import pre_init
-from langchain_core.utils.pydantic import get_fields
 from pydantic import ConfigDict
-
-if TYPE_CHECKING:
-    import gigachat
-    import gigachat.models as gm
-    from gigachat._types import FileTypes
-
-logger = logging.getLogger(__name__)
 
 
 class _BaseGigaChat(Serializable):
@@ -91,9 +84,7 @@ class _BaseGigaChat(Serializable):
 
     @cached_property
     def _client(self) -> gigachat.GigaChat:
-        """Returns GigaChat API client"""
-        import gigachat
-
+        """Return GigaChat API client."""
         return gigachat.GigaChat(
             base_url=self.base_url,
             auth_url=self.auth_url,
@@ -113,22 +104,6 @@ class _BaseGigaChat(Serializable):
             key_file_password=self.key_file_password,
             flags=self.flags,
         )
-
-    @pre_init
-    def validate_environment(cls, values: Dict) -> Dict:
-        """Validate authenticate data in environment and python package is installed."""
-        try:
-            import gigachat  # noqa: F401
-        except ImportError:
-            raise ImportError(
-                "Could not import gigachat python package. "
-                "Please install it with `pip install gigachat`."
-            )
-        fields = set(get_fields(cls).keys())
-        diff = set(values.keys()) - fields
-        if diff:
-            logger.warning(f"Extra fields {diff} in GigaChat class")
-        return values
 
     @property
     def _identifying_params(self) -> Dict[str, Any]:

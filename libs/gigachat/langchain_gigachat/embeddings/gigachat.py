@@ -1,16 +1,12 @@
 from __future__ import annotations
 
-import logging
 import ssl
 from functools import cached_property
-from typing import Any, Dict, List, Optional
+from typing import Any, List, Optional
 
+import gigachat
 from langchain_core.embeddings import Embeddings
-from langchain_core.utils import pre_init
-from langchain_core.utils.pydantic import get_fields
 from pydantic import BaseModel, ConfigDict
-
-logger = logging.getLogger(__name__)
 
 MAX_BATCH_SIZE_CHARS = 1000000
 MAX_BATCH_SIZE_PARTS = 90
@@ -26,11 +22,6 @@ class GigaChatEmbeddings(BaseModel, Embeddings):
             embeddings =
                 GigaChatEmbeddings(credentials=..., scope=..., verify_ssl_certs=False)
     """
-
-    """ DEPRECATED: Send texts one-by-one to server (to increase token limit) """
-    one_by_one_mode: bool = False
-    """ DEPRECATED: Debug timeout for limit rps to server """
-    _debug_delay: float = 0
 
     base_url: Optional[str] = None
     """ Base API URL """
@@ -74,9 +65,7 @@ class GigaChatEmbeddings(BaseModel, Embeddings):
 
     @cached_property
     def _client(self) -> Any:
-        """Returns GigaChat API client"""
-        import gigachat
-
+        """Return GigaChat API client."""
         return gigachat.GigaChat(
             base_url=self.base_url,
             auth_url=self.auth_url,
@@ -94,22 +83,6 @@ class GigaChatEmbeddings(BaseModel, Embeddings):
             key_file=self.key_file,
             key_file_password=self.key_file_password,
         )
-
-    @pre_init
-    def validate_environment(cls, values: Dict) -> Dict:
-        """Validate authenticate data in environment and python package is installed."""
-        try:
-            import gigachat  # noqa: F401
-        except ImportError:
-            raise ImportError(
-                "Could not import gigachat python package. "
-                "Please install it with `pip install gigachat`."
-            )
-        fields = set(get_fields(cls).keys())
-        diff = set(values.keys()) - fields
-        if diff:
-            logger.warning(f"Extra fields {diff} in GigaChat class")
-        return values
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         """Embed documents using a GigaChat embeddings models.

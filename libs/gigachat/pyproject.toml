@@ -1,6 +1,6 @@
 [project]
 name = "langchain-gigachat-lc1"
-version = "0.4.0b3"
+version = "0.4.0b4"
 description = "An integration package connecting GigaChat and LangChain"
 authors = []
 readme = "README.md"

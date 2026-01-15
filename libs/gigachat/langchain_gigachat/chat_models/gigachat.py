@@ -361,8 +361,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
 
     @pre_init
     def validate_environment(cls, values: Dict) -> Dict:
-        values = super(GigaChat, cls).validate_environment(values)
-        if values["auto_upload_images"]:
+        if values.get("auto_upload_images"):
             logger.warning(
                 "`auto_upload_images` is experiment option. "
                 "Please, don't use it on production. "
