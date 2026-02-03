@@ -200,10 +200,13 @@
   - **Import Cleanup**:
     - Direct `gigachat` imports instead of `TYPE_CHECKING` block (simplifies code)
     - Removed unused `logging` module imports where logger was not used
-  - **`tool_choice='any'` Workaround**:
-    - GigaChat API does not support `tool_choice='any'`
-    - Added automatic conversion to `'auto'` with `UserWarning`
-    - Prevents crashes when LangChain agents pass `tool_choice='any'`
+  - **`tool_choice='any'` Handling**:
+    - GigaChat API does not support `tool_choice='any'` (forces model to call some tool)
+    - **Default behavior**: Raises `ValueError` with clear error message explaining the limitation
+    - **Opt-in fallback**: New `allow_any_tool_choice_fallback: bool = False` parameter in `GigaChat` class
+    - When `allow_any_tool_choice_fallback=True`: converts `'any'` → `'auto'` with `UserWarning`
+    - **Rationale**: Silent conversion to `'auto'` changes semantics unpredictably — user expects forced tool call, but model may return text instead. Explicit error is safer; users must consciously opt-in to fallback behavior.
+    - **Tests**: Added 4 tests covering default error, fallback with warning, and normal `'auto'`/specific tool cases
   - **Type Annotation Improvements**:
     - `bind_functions()` and `bind_tools()` return `Runnable[..., AIMessage]` (was `BaseMessage`). Chat models always return `AIMessage` — the previous `BaseMessage` annotation was overly broad. This is a backwards-compatible refinement that improves IDE autocompletion and static analysis.
     - Removed redundant `# type: ignore` comments
@@ -225,5 +228,5 @@
 - **Migration Notes** (for users upgrading from `langchain-core<1`):
   - Replace `llm.predict("text")` → `llm.invoke("text").content`
   - Replace `await llm.apredict("text")` → `(await llm.ainvoke("text")).content`
-  - If using `tool_choice='any'`, expect warning and `'auto'` behavior
+  - If using `tool_choice='any'`: now raises `ValueError` by default. Either use `'auto'`/specific tool name, or set `GigaChat(allow_any_tool_choice_fallback=True)` for automatic conversion to `'auto'`
 - **Status**: In progress (testing).

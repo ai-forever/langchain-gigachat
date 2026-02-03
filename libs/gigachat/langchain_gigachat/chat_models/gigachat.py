@@ -346,10 +346,19 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         update_interval: Minimum interval in seconds that elapses between
             sending tokens.
         auto_upload_images: Auto-upload Base-64 images. Not for production usage.
+        allow_any_tool_choice_fallback: Allow automatic fallback from
+            tool_choice='any' to 'auto'. By default, 'any' raises an error
+            because GigaChat API doesn't support it. Set to True to silently
+            convert to 'auto' (may cause unpredictable agent behavior).
     """
 
     """ Auto-upload Base-64 images. Not for production usage! """
     auto_upload_images: bool = False
+    """
+    Allow automatic fallback from tool_choice='any' to 'auto'.
+    GigaChat API doesn't support 'any', so by default it raises an error.
+    """
+    allow_any_tool_choice_fallback: bool = False
     """ 
     Dict with cached images, with key as hashed 
     base-64 image to File ID on GigaChat API 
@@ -830,8 +839,15 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         if tool_choice is not None and tool_choice:
             if isinstance(tool_choice, str):
                 # GigaChat API doesn't support "any" tool choice
-                # Convert to "auto" as the closest alternative
                 if tool_choice == "any":
+                    if not self.allow_any_tool_choice_fallback:
+                        raise ValueError(
+                            "GigaChat API does not support tool_choice='any'. "
+                            "Use 'auto' or specify a concrete tool name. "
+                            "If you want to automatically convert 'any' to 'auto', "
+                            "set allow_any_tool_choice_fallback=True when creating "
+                            "the GigaChat instance."
+                        )
                     warnings.warn(
                         "GigaChat API does not support tool_choice='any'. "
                         "Using 'auto' instead. "

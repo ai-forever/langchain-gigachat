@@ -608,3 +608,45 @@ def test__convert_message_with_attachments_no_cache_to_dict_system(
     dialog, hashed_1, hashed_2 = upload_images_dialog
     actual = _convert_message_to_dict(dialog[0])
     assert actual == excepted
+
+
+class PersonTool(BaseModel):
+    """Get person info"""
+
+    name: str = Field(description="Person name")
+
+
+def test_bind_tools_any_tool_choice_raises_by_default() -> None:
+    """tool_choice='any' should raise ValueError by default."""
+    llm = GigaChat()
+    with pytest.raises(ValueError, match="does not support tool_choice='any'"):
+        llm.bind_tools(tools=[PersonTool], tool_choice="any")
+
+
+def test_bind_tools_any_tool_choice_with_fallback_enabled() -> None:
+    """tool_choice='any' should fallback to 'auto' with warning when enabled."""
+    import warnings
+
+    llm = GigaChat(allow_any_tool_choice_fallback=True)
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        bound = llm.bind_tools(tools=[PersonTool], tool_choice="any")
+        assert len(w) == 1
+        assert "does not support tool_choice='any'" in str(w[0].message)
+        assert "Using 'auto' instead" in str(w[0].message)
+    # Verify fallback to "auto"
+    assert bound.kwargs["function_call"] == "auto"  # type: ignore[attr-defined]
+
+
+def test_bind_tools_auto_tool_choice_works() -> None:
+    """tool_choice='auto' should work without issues."""
+    llm = GigaChat()
+    bound = llm.bind_tools(tools=[PersonTool], tool_choice="auto")
+    assert bound.kwargs["function_call"] == "auto"  # type: ignore[attr-defined]
+
+
+def test_bind_tools_specific_tool_choice_works() -> None:
+    """tool_choice with specific tool name should work."""
+    llm = GigaChat()
+    bound = llm.bind_tools(tools=[PersonTool], tool_choice="PersonTool")
+    assert bound.kwargs["function_call"] == {"name": "PersonTool"}  # type: ignore[attr-defined]
