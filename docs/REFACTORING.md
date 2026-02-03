@@ -176,3 +176,54 @@
   - `uv run ruff format` — passed
   - `uv run pytest` — 73 passed, 2 xpassed
 - **Status**: Completed.
+
+## LangChain Core 1.x Support (Branch: `lc1-support`)
+
+- **Problem**: LangChain Core 1.x introduced breaking changes including removal of deprecated methods (`predict`, `apredict`) and stricter typing. The package needed adaptation to support `langchain-core>=1,<2`.
+- **Solution**:
+  - **Dependency Updates** (`pyproject.toml`):
+    - `langchain-core>=0.3,<1` → `langchain-core>=1,<2`
+    - `requires-python>=3.9` → `>=3.10` (LangChain 1.x requirement)
+    - Temporary package rename: `langchain-gigachat` → `langchain-gigachat-lc1`
+  - **Removed Deprecated Fields**:
+    - `_BaseGigaChat`: Removed `profanity: bool` field (use `profanity_check` instead)
+    - `_BaseGigaChat`: Removed `validate_environment()` pre_init validator. It performed three checks that became redundant:
+      1. **Import check** (`import gigachat`) — now `gigachat` is imported directly at module level, so ImportError occurs immediately on module load
+      2. **Extra fields warning** — Pydantic V2 handles unknown fields via `model_config`, duplicating this check is unnecessary
+      3. **`profanity` → `profanity_check` migration** — the deprecated `profanity` field is now fully removed, no migration needed
+    - `GigaChatEmbeddings`: Removed `one_by_one_mode: bool` and `_debug_delay: float` fields
+    - `GigaChatEmbeddings`: Removed `validate_environment()` validator (same reasons as above)
+  - **Removed Unused Code**:
+    - Deleted `_get_python_function_name()` — replaced with direct `function.__name__`
+    - Deleted `_FunctionCall` TypedDict — unused
+    - Deleted `output_parsers/gigachat_functions.py` module — legacy parsers no longer needed
+  - **Import Cleanup**:
+    - Direct `gigachat` imports instead of `TYPE_CHECKING` block (simplifies code)
+    - Removed unused `logging` module imports where logger was not used
+  - **`tool_choice='any'` Workaround**:
+    - GigaChat API does not support `tool_choice='any'`
+    - Added automatic conversion to `'auto'` with `UserWarning`
+    - Prevents crashes when LangChain agents pass `tool_choice='any'`
+  - **Type Annotation Improvements**:
+    - `bind_functions()` and `bind_tools()` return `Runnable[..., AIMessage]` (was `BaseMessage`). Chat models always return `AIMessage` — the previous `BaseMessage` annotation was overly broad. This is a backwards-compatible refinement that improves IDE autocompletion and static analysis.
+    - Removed redundant `# type: ignore` comments
+    - Removed redundant `isinstance()` checks after type-narrowing assignments
+  - **Module Exports**:
+    - `tools/__init__.py`: Added exports for `FewShotExamples`, `GigaBaseTool`, `GigaStructuredTool`, `GigaTool`, `giga_tool`
+    - `utils/__init__.py`: Added exports for `convert_to_gigachat_function`, `convert_to_gigachat_tool`
+  - **Minor Fixes**:
+    - Compiled `BASE64_DATA_REGEX` at module level (was inline, repeated)
+    - Fixed `_identifying_params` key: `profanity` → `profanity_check`
+  - **Test Updates**:
+    - Removed tests for `predict()`/`apredict()` methods (removed in LangChain 1.x). Callback coverage preserved: added `test_gigachat_stream_callbacks` using modern API (`config={"callbacks": [...]}`).
+    - Deleted `tests/unit_tests/stubs.py` (270+ lines) — contained `FakeCallbackHandler`/`FakeAsyncCallbackHandler` used only by removed tests. New test uses simple 5-line inline `TokenCounter` class instead.
+    - Added expected `chunk_position="last"` chunk in stream tests — LangChain Core 1.x `BaseChatModel.stream()` now appends a final marker chunk to signal stream completion. This is upstream behavior, not our code.
+- **Why**:
+  - **Ecosystem Alignment**: LangChain Core 1.x is the current stable version
+  - **Reduced Surface Area**: Deprecated code removal simplifies maintenance
+  - **Better DX**: Proper module exports improve discoverability
+- **Migration Notes** (for users upgrading from `langchain-core<1`):
+  - Replace `llm.predict("text")` → `llm.invoke("text").content`
+  - Replace `await llm.apredict("text")` → `(await llm.ainvoke("text")).content`
+  - If using `tool_choice='any'`, expect warning and `'auto'` behavior
+- **Status**: In progress (testing).

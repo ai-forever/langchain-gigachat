@@ -6,7 +6,11 @@ authors = []
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10,<4"
-dependencies = ["langchain-core>=1,<2", "gigachat>=0.2.0b2,<0.3"]
+dependencies = [
+    "langchain-core>=1,<2",
+    "gigachat>=0.2.0,<0.3",
+    "python-dotenv>=1.2.1",
+]
 
 [project.urls]
 Repository = "https://github.com/ai-forever/langchain-gigachat"
@@ -21,6 +25,7 @@ dev = [
   "pytest-mock>=3.14.0,<4",
   "ruff>=0.7.0,<1",
   "pre-commit>=4.0.1,<5",
+  "langchain-gigachat-lc1",
 ]
 
 [build-system]
@@ -61,3 +66,6 @@ filterwarnings = [
 
 [tool.coverage.run]
 omit = ["tests/*"]
+
+[tool.uv.sources]
+langchain-gigachat-lc1 = { workspace = true }

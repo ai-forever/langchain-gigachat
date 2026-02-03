@@ -334,6 +334,25 @@ async def test_gigachat_astream(patch_gigachat_astream: None) -> None:
     assert actual == expected
 
 
+def test_gigachat_stream_callbacks(patch_gigachat: None) -> None:
+    """Test that streaming triggers callbacks for each token."""
+    from typing import Any
+
+    from langchain_core.callbacks import BaseCallbackHandler
+
+    class TokenCounter(BaseCallbackHandler):
+        tokens: int = 0
+
+        def on_llm_new_token(self, token: str, **kwargs: Any) -> None:
+            self.tokens += 1
+
+    counter = TokenCounter()
+    llm = GigaChat()
+    list(llm.stream("bar", config={"callbacks": [counter]}))
+    # 3 chunks: content, finish, and final empty chunk (chunk_position="last")
+    assert counter.tokens == 3
+
+
 def test_gigachat_build_payload_existing_parameter() -> None:
     llm = GigaChat()
     payload = llm._build_payload([], max_tokens=1)
