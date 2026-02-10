@@ -230,3 +230,28 @@
   - Replace `await llm.apredict("text")` → `(await llm.ainvoke("text")).content`
   - If using `tool_choice='any'`: now raises `ValueError` by default. Either use `'auto'`/specific tool name, or set `GigaChat(allow_any_tool_choice_fallback=True)` for automatic conversion to `'auto'`
 - **Status**: In progress (testing).
+
+---
+
+## Phase 2: Refactoring Plan
+
+Agreed upon during the refactoring review meeting. Each item will be expanded with a full Problem/Solution/Verification writeup in a dedicated section as work begins (per the Workflow section above).
+
+- [ ] **2.1. Mixin for Chat and Embeddings** — Reduce code duplication between `GigaChat` and `GigaChatEmbeddings` by extracting shared logic (client init, auth, config) into a mixin or shared base class. Also add missing `lc_secrets` to `GigaChatEmbeddings` (currently absent — credentials can leak during serialization).
+- [ ] **2.2. Base64 Image Handling** — Check API status for direct base64 submission. If supported — switch to it. If not — implement proper caching with eviction (current `_cached_images` dict has no eviction, risk of overflow). Also fix `_cached_images` from class attribute to per-instance private attr (currently shared across all instances — multi-tenant risk).
+- [ ] **2.3. Multimodal File Upload** — Support audio, document (and possibly video) input upload. Extend `get_text_and_images_from_content()` to handle new content block types beyond `text`/`image_url`. Verify compatibility with LangChain content blocks.
+- [ ] **2.4. Format Instructions Mode** — Decide: keep or remove `with_structured_output(method="format_instructions")`. If keep — rewrite. *Owner: Крестников.*
+- [ ] **2.5. LangChain Legacy (LCL) Chains Review** — Full review of all legacy LangChain chain patterns in the code. Remove where possible. Includes reviewing `bind_functions` (legacy path) — docstring mentions "auto" but implementation only supports force-by-name.
+- [ ] **2.6. Register on models.dev** — Add GigaChat models to [models.dev](https://models.dev).
+- [ ] **2.7. `profiles.py`** — Research how `profiles.py` works in other LangChain partner packages. Determine necessity, add if needed. Currently absent.
+- [ ] **2.8. `giga_tool` Decorator Revision** — Review extra functionality (`return_schema`, `few_shot_examples`) over standard `@tool`. If replaceable by LangChain extras — remove. If removed: rewrite examples, document as **breaking change**.
+- [ ] **2.9. Embeddings Batch Settings** — Check if API natively handles reasonable batches. If so — remove custom `MAX_BATCH_SIZE_CHARS` / `MAX_BATCH_SIZE_PARTS` logic. If not — keep and document.
+- [ ] **2.10. Rewrite README.md** — Full rewrite following `gigachat` package README style. Fix known mismatch: RU README references `giga.get_token()` which is SDK-only, not wrapped. *Blocked: do after refactoring is complete.*
+- [ ] **2.11. Remove `trim_content_to_stop_sequence`** — Fully remove the function and all call sites (`_generate`, `_agenerate`, `_stream`, `_astream`). Stop sequence handling should be API-side.
+- [ ] **2.12. `x_headers` Audit** — Map all places where `x_headers` are set/consumed (`response_metadata`, `generation_info`, `message.id`). Decide on refactoring or documentation.
+- [ ] **2.13. `TYPE_CHECKING` Block** — Remove conditional `TYPE_CHECKING` import in `gigachat.py` or confirm it is necessary.
+- [ ] **2.14. LangChain 1.0 New Mechanisms** — Test compatibility with content blocks, `create_agent`, middleware. Additionally review: multi-tool calling support (currently only `tool_calls[0]` is forwarded), `ToolMessage` role mapping (`role="function"` — check if API supports a proper tool role), and SDK exception translation to LangChain exception types.
+- [ ] **2.15. CI/Contribution Documentation** — Create or rewrite CI docs, contribution guide, and other developer docs following LangChain upstream conventions.
+- [ ] **2.16. CI Refactoring** — Review tests (remove unnecessary, add missing), assess coverage (~70%), decide on expansion. VCR tests — not now.
+- [ ] **2.17. `get_file` Naming and API Surface Cleanup** — `_BaseGigaChat.get_file/aget_file` actually calls SDK `get_image/aget_image` (downloads file content, not metadata). Rename or document clearly. Also consider wrapping additional SDK-only file endpoints (`GET /files`, `DELETE /files/{id}`) if useful.
+- [ ] **2.18. Expose SDK Connection Settings** — `max_retries`, `max_connections`, `retry_backoff_factor` are currently SDK-only (configurable only via `GIGACHAT_*` env vars). Evaluate whether to expose them as explicit LangChain wrapper fields for discoverability.
