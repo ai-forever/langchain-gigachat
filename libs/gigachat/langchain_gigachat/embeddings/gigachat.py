@@ -1,53 +1,17 @@
 from __future__ import annotations
 
-import ssl
-from functools import cached_property
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
-import gigachat
 from langchain_core.embeddings import Embeddings
-from pydantic import BaseModel, ConfigDict
 
-MAX_BATCH_SIZE_CHARS = 1000000
-MAX_BATCH_SIZE_PARTS = 90
+from langchain_gigachat._client import _GigaChatClientMixin
 
 
-class GigaChatEmbeddings(BaseModel, Embeddings):
+class GigaChatEmbeddings(_GigaChatClientMixin, Embeddings):
     """GigaChat Embeddings models."""
 
-    base_url: Optional[str] = None
-    """ Base API URL """
-    auth_url: Optional[str] = None
-    """ Auth URL """
-    credentials: Optional[str] = None
-    """ Auth Token """
-    scope: Optional[str] = None
-    """ Permission scope for access token """
-
-    access_token: Optional[str] = None
-    """ Access token for GigaChat """
-
-    model: Optional[str] = None
-    """Model name to use."""
-    user: Optional[str] = None
-    """ Username for authenticate """
-    password: Optional[str] = None
-    """ Password for authenticate """
-
     timeout: Optional[float] = 600
-    """ Timeout for request. By default it works for long requests. """
-    verify_ssl_certs: Optional[bool] = None
-    """ Check certificates for all requests """
-
-    ssl_context: Optional[ssl.SSLContext] = None
-
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-
-    ca_bundle_file: Optional[str] = None
-    cert_file: Optional[str] = None
-    key_file: Optional[str] = None
-    key_file_password: Optional[str] = None
-    # Support for connection to GigaChat through SSL certificates
+    """Timeout for requests. By default it works for long requests."""
 
     prefix_query: str = (
         "Дано предложение, необходимо найти его парафраз \nпредложение: "
@@ -55,29 +19,15 @@ class GigaChatEmbeddings(BaseModel, Embeddings):
 
     use_prefix_query: bool = False
 
-    @cached_property
-    def _client(self) -> Any:
-        """Return GigaChat API client."""
-        return gigachat.GigaChat(
-            base_url=self.base_url,
-            auth_url=self.auth_url,
-            credentials=self.credentials,
-            scope=self.scope,
-            access_token=self.access_token,
-            model=self.model,
-            user=self.user,
-            password=self.password,
-            timeout=self.timeout,
-            ssl_context=self.ssl_context,
-            verify_ssl_certs=self.verify_ssl_certs,
-            ca_bundle_file=self.ca_bundle_file,
-            cert_file=self.cert_file,
-            key_file=self.key_file,
-            key_file_password=self.key_file_password,
-        )
+    def _get_embed_kwargs(self) -> Dict[str, Any]:
+        """Return extra kwargs for the SDK embeddings call."""
+        kwargs: Dict[str, Any] = {}
+        if self.model is not None:
+            kwargs["model"] = self.model
+        return kwargs
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
-        """Embed documents using a GigaChat embeddings models.
+        """Embed documents using a GigaChat embeddings model.
 
         Args:
             texts: The list of texts to embed.
@@ -85,33 +35,11 @@ class GigaChatEmbeddings(BaseModel, Embeddings):
         Returns:
             List of embeddings, one for each text.
         """
-        result: List[List[float]] = []
-        size = 0
-        local_texts = []
-        embed_kwargs = {}
-        if self.model is not None:
-            embed_kwargs["model"] = self.model
-        for text in texts:
-            local_texts.append(text)
-            size += len(text)
-            if size > MAX_BATCH_SIZE_CHARS or len(local_texts) > MAX_BATCH_SIZE_PARTS:
-                for embedding in self._client.embeddings(
-                    texts=local_texts, **embed_kwargs
-                ).data:
-                    result.append(embedding.embedding)
-                size = 0
-                local_texts = []
-        # Call for last iteration
-        if local_texts:
-            for embedding in self._client.embeddings(
-                texts=local_texts, **embed_kwargs
-            ).data:
-                result.append(embedding.embedding)
-
-        return result
+        response = self._client.embeddings(texts=texts, **self._get_embed_kwargs())
+        return [item.embedding for item in response.data]
 
     async def aembed_documents(self, texts: List[str]) -> List[List[float]]:
-        """Embed documents using a GigaChat embeddings models.
+        """Embed documents using a GigaChat embeddings model.
 
         Args:
             texts: The list of texts to embed.
@@ -119,35 +47,13 @@ class GigaChatEmbeddings(BaseModel, Embeddings):
         Returns:
             List of embeddings, one for each text.
         """
-        result: List[List[float]] = []
-        size = 0
-        local_texts = []
-        embed_kwargs = {}
-        if self.model is not None:
-            embed_kwargs["model"] = self.model
-        for text in texts:
-            local_texts.append(text)
-            size += len(text)
-            if size > MAX_BATCH_SIZE_CHARS or len(local_texts) > MAX_BATCH_SIZE_PARTS:
-                embeddings = await self._client.aembeddings(
-                    texts=local_texts, **embed_kwargs
-                )
-                for embedding in embeddings.data:
-                    result.append(embedding.embedding)
-                size = 0
-                local_texts = []
-        # Call for last iteration
-        if local_texts:
-            embeddings = await self._client.aembeddings(
-                texts=local_texts, **embed_kwargs
-            )
-            for embedding in embeddings.data:
-                result.append(embedding.embedding)
-
-        return result
+        response = await self._client.aembeddings(
+            texts=texts, **self._get_embed_kwargs()
+        )
+        return [item.embedding for item in response.data]
 
     def embed_query(self, text: str) -> List[float]:
-        """Embed a query using a GigaChat embeddings models.
+        """Embed a query using a GigaChat embeddings model.
 
         Args:
             text: The text to embed.
@@ -160,7 +66,7 @@ class GigaChatEmbeddings(BaseModel, Embeddings):
         return self.embed_documents(texts=[text])[0]
 
     async def aembed_query(self, text: str) -> List[float]:
-        """Embed a query using a GigaChat embeddings models.
+        """Embed a query using a GigaChat embeddings model.
 
         Args:
             text: The text to embed.
