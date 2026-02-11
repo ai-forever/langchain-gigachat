@@ -23,10 +23,7 @@ from typing import (
     Sequence,
     Tuple,
     Type,
-    TypedDict,
-    TypeVar,
     Union,
-    overload,
 )
 from uuid import uuid4
 
@@ -70,6 +67,7 @@ from langchain_core.runnables import Runnable, RunnableMap, RunnablePassthrough
 from langchain_core.tools import BaseTool
 from langchain_core.utils.pydantic import is_basemodel_subclass, pre_init
 from pydantic import BaseModel
+from typing_extensions import override
 
 from langchain_gigachat.chat_models.base_gigachat import _BaseGigaChat
 from langchain_gigachat.utils.function_calling import (
@@ -284,17 +282,6 @@ def _convert_delta_to_message_chunk(
         return default_class(content=content)  # type: ignore[call-arg]
 
 
-_BM = TypeVar("_BM", bound=BaseModel)
-_DictOrPydanticClass = Union[Dict[str, Any], Type[_BM], Type]
-_DictOrPydantic = Union[Dict, _BM]
-
-
-class _AllReturnType(TypedDict):
-    raw: BaseMessage
-    parsed: Optional[_DictOrPydantic]
-    parsing_error: Optional[BaseException]
-
-
 def trim_content_to_stop_sequence(
     content: str, stop_sequence: Optional[List[str]]
 ) -> Union[str, bool]:
@@ -506,6 +493,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         }
         return ChatResult(generations=generations, llm_output=llm_output)
 
+    @override
     def _generate(
         self,
         messages: List[BaseMessage],
@@ -534,6 +522,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
 
         return self._create_chat_result(response)
 
+    @override
     async def _agenerate(
         self,
         messages: List[BaseMessage],
@@ -562,6 +551,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
 
         return self._create_chat_result(response)
 
+    @override
     def _stream(
         self,
         messages: List[BaseMessage],
@@ -619,6 +609,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
 
             yield ChatGenerationChunk(message=chunk_m, generation_info=generation_info)
 
+    @override
     async def _astream(
         self,
         messages: List[BaseMessage],
@@ -712,42 +703,41 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             kwargs = {**kwargs, "function_call": function_call_}
         return super().bind(functions=formatted_functions, **kwargs)
 
-    # TODO: Fix typing.
-    @overload  # type: ignore[override]
+    @override
     def with_structured_output(
         self,
-        schema: Optional[_DictOrPydanticClass] = None,
+        schema: Dict[str, Any] | type,
         *,
-        method: Literal[
-            "function_calling", "json_mode", "format_instructions"
-        ] = "function_calling",
-        include_raw: Literal[True] = True,
-        **kwargs: Any,
-    ) -> Runnable[LanguageModelInput, _AllReturnType]: ...
-
-    @overload
-    def with_structured_output(
-        self,
-        schema: Optional[_DictOrPydanticClass] = None,
-        *,
-        method: Literal[
-            "function_calling", "json_mode", "format_instructions"
-        ] = "function_calling",
-        include_raw: Literal[False] = False,
-        **kwargs: Any,
-    ) -> Runnable[LanguageModelInput, _DictOrPydantic]: ...
-
-    def with_structured_output(
-        self,
-        schema: Optional[_DictOrPydanticClass] = None,
-        *,
-        method: Literal[
-            "function_calling", "json_mode", "format_instructions"
-        ] = "function_calling",
         include_raw: bool = False,
         **kwargs: Any,
-    ) -> Runnable[LanguageModelInput, _DictOrPydantic]:
-        """Model wrapper that returns outputs formatted to match the given schema."""
+    ) -> Runnable[LanguageModelInput, Dict | BaseModel]:
+        """Return a model wrapper that formats outputs to match a schema.
+
+        Args:
+            schema: Output schema. Can be a dict-like tool/schema description
+                or a Pydantic class.
+            include_raw: If ``False``, return only parsed structured output.
+                If ``True``, return a dict with ``raw``, ``parsed``, and
+                ``parsing_error`` keys.
+            **kwargs: Additional options for structured output.
+                Supported key:
+                - ``method``: ``"function_calling"`` (default) or
+                  ``"json_mode"``.
+
+        Raises:
+            ValueError: If ``method`` is unsupported or unknown kwargs are passed.
+
+        Returns:
+            Runnable that keeps the same input type as this chat model and
+            returns parsed structured output (or a raw+parsed payload when
+            ``include_raw=True``).
+        """
+        method = kwargs.pop("method", "function_calling")
+        if method not in ("function_calling", "json_mode"):
+            raise ValueError(
+                "Unrecognized method. Expected 'function_calling' or 'json_mode'. "
+                f"Received: {method}"
+            )
         if kwargs:
             raise ValueError(f"Received unsupported arguments {kwargs}")
         is_pydantic_schema = _is_pydantic_class(schema)
@@ -778,37 +768,6 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 if is_pydantic_schema
                 else JsonOutputParser()
             )
-            if method == "format_instructions":
-                from langchain_core.prompt_values import ChatPromptValue
-                from langchain_core.runnables import RunnableLambda
-
-                def add_format_instructions(
-                    _input: LanguageModelInput, format_instructions: str
-                ) -> LanguageModelInput:
-                    if isinstance(_input, ChatPromptValue):
-                        messages = _input.messages
-                        return type(messages)(
-                            list(messages) + [HumanMessage(format_instructions)]  # type: ignore[call-arg]
-                        )
-                    elif isinstance(_input, str):
-                        return _input + f"\n\n{format_instructions}"
-                    elif isinstance(_input, Sequence):
-                        return type(_input)(
-                            list(_input) + [HumanMessage(format_instructions)]  # type: ignore[call-arg]
-                        )
-                    else:
-                        msg = (
-                            f"Invalid input type {type(_input)}. "
-                            "Must be a PromptValue, str, or list of BaseMessages."
-                        )
-                        raise ValueError(msg)  # noqa: TRY004
-
-                add_format_instructions_chain = RunnableLambda(
-                    lambda _input: add_format_instructions(
-                        _input, output_parser.get_format_instructions()
-                    )
-                )
-                llm = add_format_instructions_chain | llm
 
         if include_raw:
             parser_assign = RunnablePassthrough.assign(
@@ -822,6 +781,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         else:
             return llm | output_parser
 
+    @override
     def bind_tools(
         self,
         tools: Sequence[

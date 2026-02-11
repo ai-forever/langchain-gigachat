@@ -100,3 +100,15 @@
   - [x] Run `uv run ruff check` — passed
   - [x] Run `uv run ruff format` — passed
   - [x] Run `uv run pytest` — 73 passed, 2 xpassed
+
+## Phase 2: Refactoring Plan
+- [x] 2.4. Format Instructions Mode
+  - [x] Remove `method="format_instructions"` from `GigaChat.with_structured_output()` public API
+  - [x] Remove legacy prompt-injection branch in `chat_models/gigachat.py`
+  - [x] Remove tests that verify `format_instructions` behavior
+
+## `with_structured_output` Override Typing Compatibility
+- [x] Align `GigaChat.with_structured_output()` signature with `BaseChatModel` override contract
+  - [x] Keep provider-specific `method` handling via `**kwargs` instead of explicit typed param
+  - [x] Remove overload-only typing artifacts that caused mypy override incompatibility
+  - [x] Update method docstring to describe `method` option and `include_raw` behavior
