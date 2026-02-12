@@ -269,7 +269,7 @@ Agreed upon during the refactoring review meeting. Each item will be expanded wi
 - [x] **2.1. Mixin for Chat and Embeddings** — Reduce code duplication between `GigaChat` and `GigaChatEmbeddings` by extracting shared logic (client init, auth, config) into a mixin or shared base class. Also add missing `lc_secrets` to `GigaChatEmbeddings` (currently absent — credentials can leak during serialization).
 - [ ] **2.2. Base64 Image Handling** — Check API status for direct base64 submission. If supported — switch to it. If not — implement proper caching with eviction (current `_cached_images` dict has no eviction, risk of overflow). Also fix `_cached_images` from class attribute to per-instance private attr (currently shared across all instances — multi-tenant risk).
 - [ ] **2.3. Multimodal File Upload** — Support audio, document (and possibly video) input upload. Extend `get_text_and_images_from_content()` to handle new content block types beyond `text`/`image_url`. Verify compatibility with LangChain content blocks.
-- [ ] **2.4. Format Instructions Mode** — Decide: keep or remove `with_structured_output(method="format_instructions")`. If keep — rewrite. *Owner: Крестников.*
+- [x] **2.4. Format Instructions Mode** — **Breaking change approved**: remove `with_structured_output(method="format_instructions")` from public API. Rationale: issue #40 is solved via `function_calling` JSON/Pydantic schema support, while `format_instructions` remains legacy prompt-based behavior with weak schema guarantees and extra maintenance cost. Migration: use `method="function_calling"` (preferred) or `method="json_mode"` where applicable.
 - [ ] **2.5. LangChain Legacy (LCL) Chains Review** — Full review of all legacy LangChain chain patterns in the code. Remove where possible. Includes reviewing `bind_functions` (legacy path) — docstring mentions "auto" but implementation only supports force-by-name.
 - [ ] **2.6. Register on models.dev** — Add GigaChat models to [models.dev](https://models.dev).
 - [ ] **2.7. `profiles.py`** — Research how `profiles.py` works in other LangChain partner packages. Determine necessity, add if needed. Currently absent.
@@ -284,3 +284,48 @@ Agreed upon during the refactoring review meeting. Each item will be expanded wi
 - [ ] **2.16. CI Refactoring** — Review tests (remove unnecessary, add missing), assess coverage (~70%), decide on expansion. VCR tests — not now.
 - [ ] **2.17. `get_file` Naming and API Surface Cleanup** — `_BaseGigaChat.get_file/aget_file` actually calls SDK `get_image/aget_image` (downloads file content, not metadata). Rename or document clearly. Also consider wrapping additional SDK-only file endpoints (`GET /files`, `DELETE /files/{id}`) if useful.
 - [ ] **2.18. Expose SDK Connection Settings** — `max_retries`, `max_connections`, `retry_backoff_factor` are currently SDK-only (configurable only via `GIGACHAT_*` env vars). Evaluate whether to expose them as explicit LangChain wrapper fields for discoverability.
+
+## Remove `format_instructions` Structured Output Mode
+
+- **Problem**: `with_structured_output(method="format_instructions")` kept legacy prompt-based structured parsing in public API despite overlap with tool/schema-first approaches.
+  - Location: `langchain_gigachat/chat_models/gigachat.py` — `with_structured_output()` method accepted `"format_instructions"` and injected parser instructions into user input.
+  - Location: `tests/unit_tests/test_gigachat.py` — dedicated test for prompt injection behavior.
+- **Solution**:
+  - **Implementation Details**:
+    - Removed `"format_instructions"` from all `with_structured_output()` method overloads and runtime signature.
+    - Deleted legacy branch that built `RunnableLambda` and appended parser format instructions to prompt input.
+    - Removed unit test that validated prompt-injection behavior for `"format_instructions"`.
+  - **Why**:
+    - **API Clarity**: Public structured-output API now exposes only supported modes: `function_calling` and `json_mode`.
+    - **Reliability**: Removed prompt-engineering-based fallback with weaker schema guarantees.
+    - **Maintenance**: Less branching and less mode-specific test surface.
+- **Migration Notes**:
+  - Replace `method="format_instructions"` with `method="function_calling"` (preferred for strict schema extraction) or `method="json_mode"` where schema forcing is not required.
+- **Verification**:
+  - `uv run ruff check libs/gigachat/langchain_gigachat/chat_models/gigachat.py libs/gigachat/tests/unit_tests/test_gigachat.py`
+  - `uv run pytest libs/gigachat/tests/unit_tests/test_gigachat.py -k structured_output`
+- **Status**: Completed.
+
+## `with_structured_output` Override Typing Compatibility
+
+- **Problem**: `make lint` failed on `mypy` due to an incompatible method override in `GigaChat.with_structured_output()` compared to `langchain_core.language_models.chat_models.BaseChatModel`.
+  - Location: `langchain_gigachat/chat_models/gigachat.py` (around method definition for `with_structured_output`).
+  - Error: `Signature of "with_structured_output" incompatible with supertype "BaseChatModel"`.
+  - Root cause:
+    - Provider-specific `method` was part of the typed signature instead of being handled through `**kwargs`.
+    - Overload return types narrowed the contract and were not accepted as a compatible override.
+    - Signature did not follow the base contract shape used by current LangChain integrations.
+- **Solution**:
+  - **Implementation Details**:
+    - Updated `with_structured_output` signature to match `BaseChatModel` contract:
+      - `schema: Dict[str, Any] | type`
+      - `include_raw: bool = False`
+      - `**kwargs: Any`
+    - Kept provider-specific mode selection via `kwargs.pop("method", "function_calling")` with validation for supported values (`function_calling`, `json_mode`).
+    - Removed overload-based typing branch and helper TypedDict used only by these overloads.
+    - Updated method docstring to document supported `kwargs` options (`method`) and `include_raw` behavior.
+  - **Why**:
+    - **Type Safety**: Restores `mypy` compatibility with superclass override rules.
+    - **LangChain Consistency**: Follows the same pattern as other partner packages: base contract in signature, provider options in `**kwargs`.
+    - **Behavior Preservation**: Runtime behavior for supported structured output modes remains unchanged.
+- **Status**: Completed.
