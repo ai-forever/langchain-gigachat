@@ -100,3 +100,22 @@
   - [x] Run `uv run ruff check` — passed
   - [x] Run `uv run ruff format` — passed
   - [x] Run `uv run pytest` — 73 passed, 2 xpassed
+
+## Embeddings Batch Settingssim
+- [x] Remove `MAX_BATCH_SIZE_CHARS` and `MAX_BATCH_SIZE_PARTS` constants from `embeddings/gigachat.py`
+- [x] Simplify `embed_documents()` to a single SDK call (remove batching loop)
+- [x] Simplify `aembed_documents()` to a single SDK call (remove batching loop)
+- [x] Extract `_get_embed_kwargs()` helper to DRY model kwarg logic
+- [x] Add unit tests for embeddings (`tests/unit_tests/test_embeddings.py`)
+  - [x] `test_embed_documents` — all texts passed in single call
+  - [x] `test_embed_documents_with_model` — model kwarg forwarded
+  - [x] `test_embed_documents_no_model_kwarg` — no extra kwarg when model is None
+  - [x] `test_aembed_documents` — async variant
+  - [x] `test_embed_query` — delegates to embed_documents
+  - [x] `test_embed_query_with_prefix` — prefix prepended when enabled
+  - [x] `test_aembed_query` — async query variant
+- [x] Verification
+  - [x] `uv run ruff check` — passed
+  - [x] `uv run ruff format --check` — passed
+  - [x] `uv run mypy` — passed
+  - [x] `uv run pytest` — 83 passed, 79% coverage

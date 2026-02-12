@@ -233,11 +233,40 @@
 
 ---
 
+## Embeddings Batch Settings
+
+- **Problem**: `GigaChatEmbeddings` split input lists into sub-batches using two hard-coded constants:
+  - `MAX_BATCH_SIZE_CHARS = 1_000_000` (total character count threshold)
+  - `MAX_BATCH_SIZE_PARTS = 90` (max texts per request)
+
+  The batching loop accumulated texts, flushed a batch when either limit was exceeded, then processed the remainder — duplicated identically in `embed_documents()` and `aembed_documents()`.
+- **Analysis**:
+  - The GigaChat Embeddings API accepts `input` as either a `string` or `List[string]` natively — the server handles batching internally.
+  - The upstream `gigachat` SDK passes the list directly to the API without any client-side splitting.
+  - The client-side batch limits were defensive but unnecessary, adding complexity without benefit.
+- **Solution**:
+  - **Removed** `MAX_BATCH_SIZE_CHARS` and `MAX_BATCH_SIZE_PARTS` constants.
+  - **Simplified** `embed_documents()` and `aembed_documents()` to a single SDK call passing all texts at once.
+  - **Extracted** `_get_embed_kwargs()` helper to DRY the `model` kwarg logic shared by both methods.
+  - **Added** 7 unit tests covering sync/async `embed_documents`, `embed_query`, prefix query, and model forwarding (97% coverage on `embeddings/gigachat.py`).
+- **Why**:
+  - **Simplicity**: Removed ~40 lines of duplicated batching logic.
+  - **Correctness**: Client-side splitting could reorder or misalign results if the API returned data differently per batch.
+  - **API alignment**: Trusts the server to manage batch limits, matching the SDK's behavior.
+- **Verification**:
+  - `uv run ruff check` — passed
+  - `uv run ruff format --check` — passed
+  - `uv run mypy` — passed
+  - `uv run pytest` — 83 passed (7 new embeddings tests), 79% coverage
+- **Status**: Completed.
+
+---
+
 ## Phase 2: Refactoring Plan
 
 Agreed upon during the refactoring review meeting. Each item will be expanded with a full Problem/Solution/Verification writeup in a dedicated section as work begins (per the Workflow section above).
 
-- [ ] **2.1. Mixin for Chat and Embeddings** — Reduce code duplication between `GigaChat` and `GigaChatEmbeddings` by extracting shared logic (client init, auth, config) into a mixin or shared base class. Also add missing `lc_secrets` to `GigaChatEmbeddings` (currently absent — credentials can leak during serialization).
+- [x] **2.1. Mixin for Chat and Embeddings** — Reduce code duplication between `GigaChat` and `GigaChatEmbeddings` by extracting shared logic (client init, auth, config) into a mixin or shared base class. Also add missing `lc_secrets` to `GigaChatEmbeddings` (currently absent — credentials can leak during serialization).
 - [ ] **2.2. Base64 Image Handling** — Check API status for direct base64 submission. If supported — switch to it. If not — implement proper caching with eviction (current `_cached_images` dict has no eviction, risk of overflow). Also fix `_cached_images` from class attribute to per-instance private attr (currently shared across all instances — multi-tenant risk).
 - [ ] **2.3. Multimodal File Upload** — Support audio, document (and possibly video) input upload. Extend `get_text_and_images_from_content()` to handle new content block types beyond `text`/`image_url`. Verify compatibility with LangChain content blocks.
 - [ ] **2.4. Format Instructions Mode** — Decide: keep or remove `with_structured_output(method="format_instructions")`. If keep — rewrite. *Owner: Крестников.*
@@ -245,7 +274,7 @@ Agreed upon during the refactoring review meeting. Each item will be expanded wi
 - [ ] **2.6. Register on models.dev** — Add GigaChat models to [models.dev](https://models.dev).
 - [ ] **2.7. `profiles.py`** — Research how `profiles.py` works in other LangChain partner packages. Determine necessity, add if needed. Currently absent.
 - [ ] **2.8. `giga_tool` Decorator Revision** — Review extra functionality (`return_schema`, `few_shot_examples`) over standard `@tool`. If replaceable by LangChain extras — remove. If removed: rewrite examples, document as **breaking change**.
-- [ ] **2.9. Embeddings Batch Settings** — Check if API natively handles reasonable batches. If so — remove custom `MAX_BATCH_SIZE_CHARS` / `MAX_BATCH_SIZE_PARTS` logic. If not — keep and document.
+- [x] **2.9. Embeddings Batch Settings** — API natively handles batches (`input` accepts `List[string]`). Removed custom `MAX_BATCH_SIZE_CHARS` / `MAX_BATCH_SIZE_PARTS` logic. See dedicated section below.
 - [ ] **2.10. Rewrite README.md** — Full rewrite following `gigachat` package README style. Fix known mismatch: RU README references `giga.get_token()` which is SDK-only, not wrapped. *Blocked: do after refactoring is complete.*
 - [ ] **2.11. Remove `trim_content_to_stop_sequence`** — Fully remove the function and all call sites (`_generate`, `_agenerate`, `_stream`, `_astream`). Stop sequence handling should be API-side.
 - [ ] **2.12. `x_headers` Audit** — Map all places where `x_headers` are set/consumed (`response_metadata`, `generation_info`, `message.id`). Decide on refactoring or documentation.
