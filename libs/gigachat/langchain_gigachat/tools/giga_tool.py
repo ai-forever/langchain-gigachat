@@ -226,6 +226,23 @@ def giga_tool(
 ) -> Callable[[Union[Callable[..., Any], Runnable]], BaseTool]: ...
 
 
+@overload
+def giga_tool(
+    name_or_callable: Callable[..., Any],
+    runnable: None = None,
+    *args: Any,
+    return_direct: bool = False,
+    args_schema: Union[type[BaseModel], dict[str, Any], None] = None,
+    infer_schema: bool = True,
+    response_format: Literal["content", "content_and_artifact"] = "content",
+    parse_docstring: bool = False,
+    error_on_invalid_docstring: bool = True,
+    return_schema: Optional[type[BaseModel]] = None,
+    few_shot_examples: FewShotExamples = None,
+    **kwargs: Any,
+) -> BaseTool: ...
+
+
 def giga_tool(
     name_or_callable: Union[str, Callable[..., Any], None] = None,
     runnable: Optional[Runnable] = None,
