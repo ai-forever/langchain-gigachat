@@ -642,3 +642,67 @@ def test_bind_tools_specific_tool_choice_works() -> None:
     llm = GigaChat()
     bound = llm.bind_tools(tools=[PersonTool], tool_choice="PersonTool")
     assert bound.kwargs["function_call"] == {"name": "PersonTool"}  # type: ignore[attr-defined]
+
+
+# ---------------------------------------------------------------------------
+# Connection settings (2.18)
+# ---------------------------------------------------------------------------
+
+
+def test_connection_settings_defaults() -> None:
+    """Connection settings default to None (SDK defaults apply)."""
+    llm = GigaChat()
+    assert llm.max_retries is None
+    assert llm.max_connections is None
+    assert llm.retry_backoff_factor is None
+    assert llm.retry_on_status_codes is None
+
+
+def test_connection_settings_explicit_values() -> None:
+    """Connection settings can be set explicitly."""
+    llm = GigaChat(
+        max_retries=3,
+        max_connections=10,
+        retry_backoff_factor=1.0,
+        retry_on_status_codes=(429, 503),
+    )
+    assert llm.max_retries == 3
+    assert llm.max_connections == 10
+    assert llm.retry_backoff_factor == 1.0
+    assert llm.retry_on_status_codes == (429, 503)
+
+
+def test_connection_settings_forwarded_to_sdk(mocker: MockerFixture) -> None:
+    """Connection settings are passed to the SDK client constructor."""
+    sdk_mock = mocker.patch("gigachat.GigaChat")
+
+    llm = GigaChat(
+        max_retries=2,
+        max_connections=5,
+        retry_backoff_factor=0.25,
+        retry_on_status_codes=(500, 502),
+    )
+    # Access _client to trigger lazy initialization
+    _ = llm._client
+
+    sdk_mock.assert_called_once()
+    call_kwargs = sdk_mock.call_args[1]
+    assert call_kwargs["max_retries"] == 2
+    assert call_kwargs["max_connections"] == 5
+    assert call_kwargs["retry_backoff_factor"] == 0.25
+    assert call_kwargs["retry_on_status_codes"] == (500, 502)
+
+
+def test_connection_settings_none_forwarded_to_sdk(mocker: MockerFixture) -> None:
+    """When connection settings are None, None is forwarded to the SDK."""
+    sdk_mock = mocker.patch("gigachat.GigaChat")
+
+    llm = GigaChat()
+    _ = llm._client
+
+    sdk_mock.assert_called_once()
+    call_kwargs = sdk_mock.call_args[1]
+    assert call_kwargs["max_retries"] is None
+    assert call_kwargs["max_connections"] is None
+    assert call_kwargs["retry_backoff_factor"] is None
+    assert call_kwargs["retry_on_status_codes"] is None

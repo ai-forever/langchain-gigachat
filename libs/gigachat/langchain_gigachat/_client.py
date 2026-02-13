@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import ssl
 from functools import cached_property
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 import gigachat
 from langchain_core.load.serializable import Serializable
@@ -59,6 +59,27 @@ class _GigaChatClientMixin(Serializable):
     key_file_password: Optional[str] = None
     """Password for key file."""
 
+    max_retries: Optional[int] = None
+    """Maximum number of retries for transient errors.
+
+    SDK default is 0 (disabled). When using LangChain's built-in retry mechanisms
+    (e.g. ``.with_retry()``), keep this at ``None``/``0`` to avoid multiplicative
+    retry counts.
+    """
+    max_connections: Optional[int] = None
+    """Maximum number of simultaneous connections to the GigaChat API."""
+    retry_backoff_factor: Optional[float] = None
+    """Backoff factor for retry delays (SDK default: 0.5).
+
+    The delay between retries is calculated as
+    ``retry_backoff_factor * (2 ** (retry_number - 1))`` seconds.
+    """
+    retry_on_status_codes: Optional[Tuple[int, ...]] = None
+    """HTTP status codes that trigger a retry.
+
+    SDK default: ``(429, 500, 502, 503, 504)``.
+    """
+
     @property
     def lc_secrets(self) -> Dict[str, str]:
         return {
@@ -94,6 +115,10 @@ class _GigaChatClientMixin(Serializable):
             "cert_file": self.cert_file,
             "key_file": self.key_file,
             "key_file_password": self.key_file_password,
+            "max_retries": self.max_retries,
+            "max_connections": self.max_connections,
+            "retry_backoff_factor": self.retry_backoff_factor,
+            "retry_on_status_codes": self.retry_on_status_codes,
         }
 
     @cached_property

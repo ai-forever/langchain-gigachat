@@ -154,3 +154,21 @@
   - [x] `uv run ruff format --check` — passed
   - [x] `uv run mypy` — passed
   - [x] `uv run pytest` — 83 passed, 79% coverage
+
+### 2.18. Expose SDK Connection Settings
+- [x] Add `max_retries`, `max_connections`, `retry_backoff_factor`, `retry_on_status_codes` fields to `_GigaChatClientMixin` in `_client.py`
+  - [x] All fields default to `None` (SDK defaults apply via env vars or `Settings`)
+  - [x] Added docstrings with SDK defaults and retry-stacking warning
+- [x] Forward new fields through `_get_client_init_kwargs()` to SDK constructor
+- [x] Update `GigaChat` class docstring in `gigachat.py` to document new parameters
+- [x] Add unit tests
+  - [x] `test_connection_settings_defaults` — all fields default to None
+  - [x] `test_connection_settings_explicit_values` — fields accept explicit values
+  - [x] `test_connection_settings_forwarded_to_sdk` — values forwarded to SDK constructor
+  - [x] `test_connection_settings_none_forwarded_to_sdk` — None forwarded when unset
+  - [x] `test_embeddings_connection_settings_forwarded` — works for `GigaChatEmbeddings` too
+- [x] Verification
+  - [x] `uv run ruff check` — passed
+  - [x] `uv run ruff format --check` — passed
+  - [x] `uv run mypy` — passed
+  - [x] `uv run pytest` — 51 passed, 70% coverage (100% on `_client.py`)

@@ -283,7 +283,7 @@ Agreed upon during the refactoring review meeting. Each item will be expanded wi
 - [ ] **2.15. CI/Contribution Documentation** — Create or rewrite CI docs, contribution guide, and other developer docs following LangChain upstream conventions.
 - [ ] **2.16. CI Refactoring** — Review tests (remove unnecessary, add missing), assess coverage (~70%), decide on expansion. VCR tests — not now.
 - [ ] **2.17. `get_file` Naming and API Surface Cleanup** — `_BaseGigaChat.get_file/aget_file` actually calls SDK `get_image/aget_image` (downloads file content, not metadata). Rename or document clearly. Also consider wrapping additional SDK-only file endpoints (`GET /files`, `DELETE /files/{id}`) if useful.
-- [ ] **2.18. Expose SDK Connection Settings** — `max_retries`, `max_connections`, `retry_backoff_factor` are currently SDK-only (configurable only via `GIGACHAT_*` env vars). Evaluate whether to expose them as explicit LangChain wrapper fields for discoverability.
+- [x] **2.18. Expose SDK Connection Settings** — `max_retries`, `max_connections`, `retry_backoff_factor`, `retry_on_status_codes` are now exposed as explicit fields on `_GigaChatClientMixin` (shared by `GigaChat` and `GigaChatEmbeddings`). See dedicated section below.
 
 ## Remove `format_instructions` Structured Output Mode
 
@@ -328,4 +328,32 @@ Agreed upon during the refactoring review meeting. Each item will be expanded wi
     - **Type Safety**: Restores `mypy` compatibility with superclass override rules.
     - **LangChain Consistency**: Follows the same pattern as other partner packages: base contract in signature, provider options in `**kwargs`.
     - **Behavior Preservation**: Runtime behavior for supported structured output modes remains unchanged.
+- **Status**: Completed.
+
+## Expose SDK Connection Settings
+
+- **Problem**: The `gigachat` SDK supports several connection/retry settings (`max_retries`, `max_connections`, `retry_backoff_factor`, `retry_on_status_codes`) that were configurable only via `GIGACHAT_*` environment variables. Users of the LangChain wrapper had no way to set them programmatically without env vars, making them effectively invisible and undiscoverable.
+  - Location: `langchain_gigachat/_client.py` — `_GigaChatClientMixin` did not include these fields.
+  - Location: `langchain_gigachat/_client.py` — `_get_client_init_kwargs()` did not forward them to the SDK.
+- **Solution**:
+  - **Implementation Details**:
+    - Added four new fields to `_GigaChatClientMixin`:
+      - `max_retries: Optional[int] = None` — maximum number of retries for transient errors (SDK default: 0, disabled).
+      - `max_connections: Optional[int] = None` — maximum simultaneous connections to the API.
+      - `retry_backoff_factor: Optional[float] = None` — backoff factor for retry delays (SDK default: 0.5).
+      - `retry_on_status_codes: Optional[Tuple[int, ...]] = None` — HTTP status codes that trigger a retry (SDK default: `(429, 500, 502, 503, 504)`).
+    - All fields default to `None`, meaning the SDK's own defaults (from `Settings` / env vars) apply unchanged.
+    - Updated `_get_client_init_kwargs()` to forward the four new fields to the SDK constructor.
+    - Updated `GigaChat` class docstring in `chat_models/gigachat.py` to document the new parameters.
+    - Added docstring warnings about retry stacking: when using LangChain's `.with_retry()`, keep `max_retries` at `None`/`0` to avoid multiplicative retry counts.
+  - **Why**:
+    - **Discoverability**: Connection settings are now visible in IDE autocompletion, docstrings, and `help()`.
+    - **Programmatic Configuration**: Users can set retry/connection policies without env vars.
+    - **Consistency**: All SDK constructor parameters are now exposed through the wrapper.
+  - **Design Decision**: Fields default to `None` rather than the SDK defaults (e.g. `max_retries=0`). This ensures that env-var-based configuration (`GIGACHAT_MAX_RETRIES`, etc.) still works as a fallback — the SDK only applies its own defaults when `None` is passed.
+- **Verification**:
+  - `uv run ruff check` — passed
+  - `uv run ruff format --check` — passed
+  - `uv run mypy` — passed
+  - `uv run pytest` — 51 passed, `_client.py` 100% coverage
 - **Status**: Completed.

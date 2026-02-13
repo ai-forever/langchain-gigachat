@@ -321,6 +321,15 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         key_file: Path to key file.
         key_file_password: Password for key file.
         ssl_context: SSL context.
+        max_retries: Maximum number of retries for transient errors
+            (SDK default: 0, disabled). Avoid combining with LangChain's
+            ``.with_retry()`` to prevent multiplicative retry counts.
+        max_connections: Maximum number of simultaneous connections to the
+            GigaChat API.
+        retry_backoff_factor: Backoff factor for retry delays
+            (SDK default: 0.5).
+        retry_on_status_codes: HTTP status codes that trigger a retry
+            (SDK default: ``(429, 500, 502, 503, 504)``).
         profanity_check: Check for profanity.
         streaming: Whether to stream the results or not.
         temperature: What sampling temperature to use.
