@@ -543,22 +543,22 @@ def dummy_return_parameters_with_fews_tool() -> GigaBaseTool:
 
 
 @pytest.fixture()
-def dummy_return_parameters_with_fews_decorator() -> Callable:
+def dummy_return_parameters_with_fews_decorator() -> BaseTool:
     @giga_tool(
         few_shot_examples=[{"arg1": 1, "arg2": "bar"}, {"arg1": 2, "arg2": "baz"}]
     )
-    def dummy_function(  # type: ignore
+    def dummy_function(
         arg1: Optional[int] = Field(..., description="foo"),
         arg2: Literal["bar", "baz"] = Field(..., description="one of 'bar', 'baz'"),
     ) -> ReturnParameters:
         """dummy function"""
-        pass
+        return ReturnParameters(arg1=arg1 or 0, arg2=arg2)
 
     return dummy_function
 
 
 @pytest.fixture()
-def dummy_return_parameters_through_arg_with_fews_decorator() -> Callable:
+def dummy_return_parameters_through_arg_with_fews_decorator() -> BaseTool:
     @giga_tool(
         few_shot_examples=[{"arg1": 1, "arg2": "bar"}, {"arg1": 2, "arg2": "baz"}],
         return_schema=ReturnParameters,
@@ -568,7 +568,7 @@ def dummy_return_parameters_through_arg_with_fews_decorator() -> Callable:
         arg2: Literal["bar", "baz"] = Field(..., description="one of 'bar', 'baz'"),
     ) -> None:
         """dummy function"""
-        pass
+        return None
 
     return dummy_function
 

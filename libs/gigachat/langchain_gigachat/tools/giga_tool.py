@@ -4,7 +4,16 @@ from __future__ import annotations
 
 import inspect
 import textwrap
-from typing import Annotated, Any, Awaitable, Callable, Literal, Optional, Union
+from typing import (
+    Annotated,
+    Any,
+    Awaitable,
+    Callable,
+    Literal,
+    Optional,
+    Union,
+    overload,
+)
 
 from langchain_core.callbacks import Callbacks
 from langchain_core.runnables import Runnable
@@ -198,6 +207,23 @@ def _create_giga_tool_factory(
         )
 
     return _make_tool
+
+
+@overload
+def giga_tool(
+    name_or_callable: None = None,
+    runnable: None = None,
+    *args: Any,
+    return_direct: bool = False,
+    args_schema: Union[type[BaseModel], dict[str, Any], None] = None,
+    infer_schema: bool = True,
+    response_format: Literal["content", "content_and_artifact"] = "content",
+    parse_docstring: bool = False,
+    error_on_invalid_docstring: bool = True,
+    return_schema: Optional[type[BaseModel]] = None,
+    few_shot_examples: FewShotExamples = None,
+    **kwargs: Any,
+) -> Callable[[Union[Callable[..., Any], Runnable]], BaseTool]: ...
 
 
 def giga_tool(
