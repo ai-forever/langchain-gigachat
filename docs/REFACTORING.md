@@ -39,6 +39,7 @@
 3. After solving each issue:
    - Add detailed information about the solution (why and how) to this file.
    - Update `docs/TODO.md` to reflect detailed implemented steps.
+   - Update `docs/REFACTORING_CHANGELOG.md` when any refactoring item is marked as completed.
 
 ---
 
@@ -229,6 +230,7 @@
   - Replace `llm.predict("text")` → `llm.invoke("text").content`
   - Replace `await llm.apredict("text")` → `(await llm.ainvoke("text")).content`
   - If using `tool_choice='any'`: now raises `ValueError` by default. Either use `'auto'`/specific tool name, or set `GigaChat(allow_any_tool_choice_fallback=True)` for automatic conversion to `'auto'`
+  - **Before release/merge**: rename package in `libs/gigachat/pyproject.toml` from `langchain-gigachat-lc1` back to `langchain-gigachat` to avoid publishing/dependency confusion.
 - **Status**: In progress (testing).
 
 ---
