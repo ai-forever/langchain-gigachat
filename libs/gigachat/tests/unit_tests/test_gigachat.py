@@ -1,6 +1,6 @@
 import base64
 import hashlib
-from typing import Any, AsyncGenerator, Iterable, List, Tuple
+from typing import Any, AsyncGenerator, Iterable, List, Tuple, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -651,12 +651,12 @@ def test_ai_upload_image_cache_eviction(
         msg_a = [{"type": "image_url", "image_url": {"url": img_a}}]
         msg_b = [{"type": "image_url", "image_url": {"url": img_b}}]
         msg_c = [{"type": "image_url", "image_url": {"url": img_c}}]
-        llm.invoke([HumanMessage(content=msg_a)])
+        llm.invoke([HumanMessage(content=cast(Any, msg_a))])
         assert len(llm._cached_images) == 1 and hash_a in llm._cached_images
-        llm.invoke([HumanMessage(content=msg_b)])
+        llm.invoke([HumanMessage(content=cast(Any, msg_b))])
         assert len(llm._cached_images) == 2
         assert hash_a in llm._cached_images and hash_b in llm._cached_images
-        llm.invoke([HumanMessage(content=msg_c)])
+        llm.invoke([HumanMessage(content=cast(Any, msg_c))])
         assert len(llm._cached_images) == 2
         assert hash_a not in llm._cached_images
         assert hash_b in llm._cached_images and hash_c in llm._cached_images
