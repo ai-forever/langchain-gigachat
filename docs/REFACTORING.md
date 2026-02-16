@@ -279,7 +279,7 @@ Agreed upon during the refactoring review meeting. Each item will be expanded wi
 - [x] **2.9. Embeddings Batch Settings** — API natively handles batches (`input` accepts `List[string]`). Removed custom `MAX_BATCH_SIZE_CHARS` / `MAX_BATCH_SIZE_PARTS` logic. See dedicated section below.
 - [ ] **2.10. Rewrite README.md** — Full rewrite following `gigachat` package README style. Fix known mismatch: RU README references `giga.get_token()` which is SDK-only, not wrapped. *Blocked: do after refactoring is complete.*
 - [x] **2.11. Remove `trim_content_to_stop_sequence`** — Fully remove the function and all call sites (`_generate`, `_agenerate`, `_stream`, `_astream`). Stop sequence handling should be API-side. See dedicated section below.
-- [ ] **2.12. `x_headers` Audit** — Map all places where `x_headers` are set/consumed (`response_metadata`, `generation_info`, `message.id`). Decide on refactoring or documentation.
+- [x] **2.12. `x_headers` Audit** — Map all places where `x_headers` are set/consumed (`response_metadata`, `generation_info`, `message.id`). Decide on refactoring or documentation.
 - [ ] **2.13. `TYPE_CHECKING` Block** — Remove conditional `TYPE_CHECKING` import in `gigachat.py` or confirm it is necessary.
 - [ ] **2.14. LangChain 1.0 New Mechanisms** — Test compatibility with content blocks, `create_agent`, middleware. Additionally review: multi-tool calling support (currently only `tool_calls[0]` is forwarded), `ToolMessage` role mapping (`role="function"` — check if API supports a proper tool role), and SDK exception translation to LangChain exception types.
 - [ ] **2.15. CI/Contribution Documentation** — Create or rewrite CI docs, contribution guide, and other developer docs following LangChain upstream conventions.
@@ -391,3 +391,36 @@ Agreed upon during the refactoring review meeting. Each item will be expanded wi
   - `uv run mypy` — passed
   - `uv run pytest` — 51 passed, `_client.py` 100% coverage
 - **Status**: Completed.
+
+## x_headers Audit (2.12)
+
+- **Goal**: Map all places where GigaChat API `x_headers` are set or consumed (`response_metadata`, `generation_info`, `message.id`) and decide on refactoring vs documentation.
+- **Outcome**: Audit documented; refactor done — shared streaming helper centralizes usage and x_headers for stream path.
+
+### Where x_headers are set
+
+| Location | Source | Used for |
+|----------|--------|----------|
+| `_create_chat_result()` | `response.x_headers` (GigaChat `ChatCompletion`) | (1) `message.id = x_headers["x-request-id"]` for tracing; (2) `llm_output["x_headers"]` so run output exposes full headers (e.g. `x-request-id`, `x-session-id`, `x-client-id`). |
+| `_stream()` / `_astream()` | Via `_build_stream_chunk(chunk, first_chunk)` | Chunk dict → (1) `chunk_m.id = x_headers["x-request-id"]` on each chunk; (2) `generation_info["x_headers"] = x_headers` on the **first** chunk only. Chunk `generation_info` is merged into message `response_metadata` by LangChain. |
+
+### Where x_headers are consumed
+
+- **Inside this package**: Not used for control flow; only passed through to the user.
+- **By the user**:  
+  - `message.id` / `chunk.id` — GigaChat request id, useful for support and tracing.  
+  - `response_metadata["x_headers"]` (stream) or run `llm_output["x_headers"]` (non-stream) — full headers dict for debugging or session/request correlation.
+- **Tests**: `test_gigachat_stream` and `test_gigachat_astream` expect the first chunk to have `response_metadata={"x_headers": {}}` (mock returns empty dict).
+
+### Refactor (stream path)
+
+- **`_build_stream_chunk(self, chunk: dict, first_chunk: bool)`** in `gigachat.py`: single place that builds message chunk, usage metadata, x_headers, and generation_info from a normalized stream chunk dict. `_stream()` and `_astream()` now normalize the raw chunk to a dict, call `_build_stream_chunk()`, then run callback and yield. Non-stream path (`_create_chat_result`) unchanged — it still sets `message.id` and `llm_output["x_headers"]` from the response object.
+
+### Design notes
+
+- Non-stream path does **not** put `x_headers` into `ChatGeneration.generation_info`; it only sets `message.id` and `llm_output["x_headers"]`. So non-stream `response_metadata` on the final message comes from `generation_info` (finish_reason, model_name) and does not include `x_headers` unless the framework merges `llm_output` elsewhere.
+- Stream path puts `x_headers` in `generation_info` on the first chunk so that the accumulated message's `response_metadata` includes it; that logic now lives in `_build_stream_chunk()`.
+
+### Status
+
+- Completed: audit documented; shared helper `_build_stream_chunk()` added; `_stream` and `_astream` refactored to use it.

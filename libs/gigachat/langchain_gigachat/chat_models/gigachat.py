@@ -456,6 +456,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             message = _convert_dict_to_message(res.message)
             x_headers = response.x_headers if response.x_headers else {}
             if x_headers.get("x-request-id") is not None:
+                # GigaChat request id for tracing and support.
                 message.id = x_headers["x-request-id"]
             if isinstance(message, AIMessage):
                 message.usage_metadata = UsageMetadata(
@@ -479,9 +480,51 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         llm_output = {
             "token_usage": response.usage.model_dump(),
             "model_name": response.model,
-            "x_headers": x_headers,
+            "x_headers": x_headers,  # GigaChat response headers for debugging.
         }
         return ChatResult(generations=generations, llm_output=llm_output)
+
+    def _build_stream_chunk(
+        self,
+        chunk: Dict[str, Any],
+        first_chunk: bool,
+    ) -> Tuple[BaseMessageChunk, Dict[str, Any], Any]:
+        """Build message chunk and generation_info from a normalized stream chunk dict.
+
+        Usage and x_headers are set here in one place for both _stream and _astream.
+        Caller is responsible for normalizing the raw chunk to a dict and for callbacks.
+        """
+        choice = chunk["choices"][0]
+        content = choice.get("delta", {}).get("content", {})
+        chunk_m = _convert_delta_to_message_chunk(choice["delta"], AIMessageChunk)
+
+        usage_metadata = None
+        if chunk.get("usage"):
+            usage_metadata = UsageMetadata(
+                output_tokens=chunk["usage"]["completion_tokens"],
+                input_tokens=chunk["usage"]["prompt_tokens"],
+                total_tokens=chunk["usage"]["total_tokens"],
+                input_token_details={
+                    "cache_read": chunk["usage"].get("precached_prompt_tokens", 0)
+                },
+            )
+        if isinstance(chunk_m, AIMessageChunk):
+            chunk_m.usage_metadata = usage_metadata
+
+        x_headers = chunk.get("x_headers")
+        x_headers = x_headers if isinstance(x_headers, dict) else {}
+        if "x-request-id" in x_headers:
+            chunk_m.id = x_headers["x-request-id"]
+
+        generation_info: Dict[str, Any] = {}
+        if finish_reason := choice.get("finish_reason"):
+            self._check_finish_reason(finish_reason)
+            generation_info["model_name"] = chunk.get("model")
+            generation_info["finish_reason"] = finish_reason
+        if first_chunk:
+            generation_info["x_headers"] = x_headers
+
+        return (chunk_m, generation_info, content)
 
     @override
     def _generate(
@@ -535,48 +578,19 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
     ) -> Iterator[ChatGenerationChunk]:
         self._upload_images(messages)
         payload = self._build_payload(messages, **kwargs)
-
         first_chunk = True
+
         for chunk_d in self._client.stream(payload):
-            chunk = {}
-            if not isinstance(chunk_d, dict):
-                chunk = chunk_d.model_dump()
-            else:
-                chunk = chunk_d
+            chunk = chunk_d if isinstance(chunk_d, dict) else chunk_d.model_dump()
             if len(chunk["choices"]) == 0:
                 continue
 
-            choice = chunk["choices"][0]
-            content = choice.get("delta", {}).get("content", {})
-            chunk_m = _convert_delta_to_message_chunk(choice["delta"], AIMessageChunk)
-            usage_metadata = None
-            if chunk.get("usage"):
-                usage_metadata = UsageMetadata(
-                    output_tokens=chunk["usage"]["completion_tokens"],
-                    input_tokens=chunk["usage"]["prompt_tokens"],
-                    total_tokens=chunk["usage"]["total_tokens"],
-                    input_token_details={
-                        "cache_read": chunk["usage"].get("precached_prompt_tokens", 0)
-                    },
-                )
-            if isinstance(chunk_m, AIMessageChunk):
-                chunk_m.usage_metadata = usage_metadata
-            x_headers = chunk.get("x_headers")
-            x_headers = x_headers if isinstance(x_headers, dict) else {}
-            if "x-request-id" in x_headers:
-                chunk_m.id = x_headers["x-request-id"]
-
-            generation_info = {}
-            if finish_reason := choice.get("finish_reason"):
-                self._check_finish_reason(finish_reason)
-                generation_info["model_name"] = chunk.get("model")
-                generation_info["finish_reason"] = finish_reason
-            if first_chunk:
-                generation_info["x_headers"] = x_headers
-                first_chunk = False
+            chunk_m, generation_info, content = self._build_stream_chunk(
+                chunk, first_chunk
+            )
+            first_chunk = False
             if run_manager:
                 run_manager.on_llm_new_token(content)
-
             yield ChatGenerationChunk(message=chunk_m, generation_info=generation_info)
 
     @override
@@ -592,45 +606,16 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         first_chunk = True
 
         async for chunk_d in self._client.astream(payload):
-            chunk = {}
-            if not isinstance(chunk_d, dict):
-                chunk = chunk_d.model_dump()
-            else:
-                chunk = chunk_d
+            chunk = chunk_d if isinstance(chunk_d, dict) else chunk_d.model_dump()
             if len(chunk["choices"]) == 0:
                 continue
 
-            choice = chunk["choices"][0]
-            content = choice.get("delta", {}).get("content", {})
-            chunk_m = _convert_delta_to_message_chunk(choice["delta"], AIMessageChunk)
-            usage_metadata = None
-            if chunk.get("usage"):
-                usage_metadata = UsageMetadata(
-                    output_tokens=chunk["usage"]["completion_tokens"],
-                    input_tokens=chunk["usage"]["prompt_tokens"],
-                    total_tokens=chunk["usage"]["total_tokens"],
-                    input_token_details={
-                        "cache_read": chunk["usage"].get("precached_prompt_tokens", 0)
-                    },
-                )
-            if isinstance(chunk_m, AIMessageChunk):
-                chunk_m.usage_metadata = usage_metadata
-            x_headers = chunk.get("x_headers")
-            x_headers = x_headers if isinstance(x_headers, dict) else {}
-            if "x-request-id" in x_headers:
-                chunk_m.id = x_headers["x-request-id"]
-
-            generation_info = {}
-            if finish_reason := choice.get("finish_reason"):
-                self._check_finish_reason(finish_reason)
-                generation_info["model_name"] = chunk.get("model")
-                generation_info["finish_reason"] = finish_reason
-            if first_chunk:
-                generation_info["x_headers"] = x_headers
-                first_chunk = False
+            chunk_m, generation_info, content = self._build_stream_chunk(
+                chunk, first_chunk
+            )
+            first_chunk = False
             if run_manager:
                 await run_manager.on_llm_new_token(content)
-
             yield ChatGenerationChunk(message=chunk_m, generation_info=generation_info)
 
     def bind_functions(
