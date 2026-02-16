@@ -387,6 +387,39 @@ async def test_gigachat_bind_with_description() -> None:
     llm.bind_tools(tools=[Person], tool_choice="Person")
 
 
+async def test_gigachat_bind_functions_auto_and_none() -> None:
+    class Person(BaseModel):
+        """Simple description"""
+
+        name: str = Field(..., title="Name")
+
+    llm = GigaChat()
+    bound_auto = llm.bind_functions(functions=[Person], function_call="auto")
+    assert bound_auto.kwargs["function_call"] == "auto"  # type: ignore[attr-defined]
+
+    bound_none = llm.bind_functions(functions=[Person], function_call="none")
+    assert bound_none.kwargs["function_call"] == "none"  # type: ignore[attr-defined]
+
+
+async def test_gigachat_bind_functions_force_name_among_many() -> None:
+    class Person(BaseModel):
+        """Person description"""
+
+        name: str = Field(..., title="Name")
+
+    class Animal(BaseModel):
+        """Animal description"""
+
+        species: str = Field(..., title="Species")
+
+    llm = GigaChat()
+    bound = llm.bind_functions(functions=[Person, Animal], function_call="Animal")
+    assert bound.kwargs["function_call"] == {"name": "Animal"}  # type: ignore[attr-defined]
+
+    with pytest.raises(ValueError, match="not found in provided functions"):
+        llm.bind_functions(functions=[Person], function_call="Unknown")
+
+
 @tool
 def _test_tool(
     arg: str, config: RunnableConfig, injected: Annotated[str, InjectedToolArg]

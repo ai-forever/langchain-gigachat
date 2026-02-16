@@ -682,7 +682,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         function_call: Optional[str] = None,
         **kwargs: Any,
     ) -> Runnable[LanguageModelInput, AIMessage]:
-        """Bind functions (and other objects) to this chat model.
+        """Bind functions (legacy) to this chat model.
 
         Args:
             functions: A list of function definitions to bind to this chat model.
@@ -690,26 +690,29 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 models and callables will be automatically converted to
                 their schema dictionary representation.
             function_call: Which function to require the model to call.
-                Must be the name of the single provided function or
-                "auto" to automatically determine which function to call
-                (if any).
-            kwargs: Any additional parameters to pass to the
-                :class:`~langchain.runnable.Runnable` constructor.
+                Supported values:
+                - ``None``: Do not force a function call (model decides).
+                - ``"auto"``: Let the model decide whether to call a function.
+                - ``"none"``: Explicitly disable function calling.
+                - ``"<function_name>"``: Force a specific function by name.
+            kwargs: Any additional parameters forwarded to the underlying
+                runnable binding.
         """
         formatted_functions = [convert_to_gigachat_function(fn) for fn in functions]
         if function_call is not None:
-            if len(formatted_functions) != 1:
-                raise ValueError(
-                    "When specifying `function_call`, you must provide exactly one "
-                    "function."
-                )
-            if formatted_functions[0]["name"] != function_call:
-                raise ValueError(
-                    f"Function call {function_call} was specified, but the only "
-                    f"provided function was {formatted_functions[0]['name']}."
-                )
-            function_call_ = {"name": function_call}
-            kwargs = {**kwargs, "function_call": function_call_}
+            if function_call in ("auto", "none"):
+                kwargs = {**kwargs, "function_call": function_call}
+            else:
+                available_names = [fn.get("name") for fn in formatted_functions]
+                if function_call not in available_names:
+                    available = ", ".join(n for n in available_names if n)
+                    available = available or "<unknown>"
+                    raise ValueError(
+                        f"Function call {function_call} was specified, but it was "
+                        f"not found in provided functions: {available}."
+                    )
+                function_call_ = {"name": function_call}
+                kwargs = {**kwargs, "function_call": function_call_}
         return super().bind(functions=formatted_functions, **kwargs)
 
     @override

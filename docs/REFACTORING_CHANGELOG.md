@@ -130,6 +130,12 @@
   - [x] Remove legacy prompt-injection branch in `chat_models/gigachat.py`
   - [x] Remove tests that verify `format_instructions` behavior
 
+### 2.5. LangChain Legacy (LCL) Chains Review
+- [x] Review and minimize legacy LangChain patterns
+  - [x] Fix `GigaChat.bind_functions()` docstring vs behavior mismatch (`"auto"`/`"none"` support)
+  - [x] Allow forcing by name among multiple functions (remove single-function restriction)
+  - [x] Add unit tests for `bind_functions()` legacy behaviors
+
 ### `with_structured_output` Override Typing Compatibility
 - [x] Align `GigaChat.with_structured_output()` signature with `BaseChatModel` override contract
   - [x] Keep provider-specific `method` handling via `**kwargs` instead of explicit typed param

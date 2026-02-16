@@ -272,7 +272,7 @@ Agreed upon during the refactoring review meeting. Each item will be expanded wi
 - [ ] **2.2. Base64 Image Handling** — Implement proper caching with eviction (current `_cached_images` dict has no eviction, risk of overflow). Also fix `_cached_images` from class attribute to per-instance private attr (currently shared across all instances — multi-tenant risk).
 - [ ] **2.3. Multimodal File Upload** — Support audio, document (and possibly video) input upload. Extend `get_text_and_images_from_content()` to handle new content block types beyond `text`/`image_url`. Verify compatibility with LangChain content blocks.
 - [x] **2.4. Format Instructions Mode** — **Breaking change approved**: remove `with_structured_output(method="format_instructions")` from public API. Rationale: issue #40 is solved via `function_calling` JSON/Pydantic schema support, while `format_instructions` remains legacy prompt-based behavior with weak schema guarantees and extra maintenance cost. Migration: use `method="function_calling"` (preferred) or `method="json_mode"` where applicable.
-- [ ] **2.5. LangChain Legacy (LCL) Chains Review** — Full review of all legacy LangChain chain patterns in the code. Remove where possible. Includes reviewing `bind_functions` (legacy path) — docstring mentions "auto" but implementation only supports force-by-name.
+- [x] **2.5. LangChain Legacy (LCL) Chains Review** — Full review of all legacy LangChain chain patterns in the code. Remove where possible. Includes reviewing `bind_functions` (legacy path) — docstring mentions "auto" but implementation only supports force-by-name.
 - [ ] **2.6. Register on models.dev** — Add GigaChat models to [models.dev](https://models.dev).
 - [ ] **2.7. `profiles.py`** — Research how `profiles.py` works in other LangChain partner packages. Determine necessity, add if needed. Currently absent.
 - [ ] **2.8. `giga_tool` Decorator Revision** — Review extra functionality (`return_schema`, `few_shot_examples`) over standard `@tool`. If replaceable by LangChain extras — remove. If removed: rewrite examples, document as **breaking change**.
@@ -330,6 +330,30 @@ Agreed upon during the refactoring review meeting. Each item will be expanded wi
     - **Type Safety**: Restores `mypy` compatibility with superclass override rules.
     - **LangChain Consistency**: Follows the same pattern as other partner packages: base contract in signature, provider options in `**kwargs`.
     - **Behavior Preservation**: Runtime behavior for supported structured output modes remains unchanged.
+- **Status**: Completed.
+
+## LangChain Legacy (LCL) Chains Review
+
+- **Problem**: The codebase still exposed legacy LangChain patterns where possible:
+  - `GigaChat.bind_functions()` docstring claimed it supported `"auto"` mode, but the implementation only supported forcing a specific function name and required exactly one function to be provided.
+  - `bind_functions()` documentation referenced `langchain` (non-core) module paths, which is inaccurate for `langchain-core>=1`.
+- **Note (why LCL was not removed from `with_structured_output`)**:
+  - `GigaChat.with_structured_output()` is already implemented using modern tool-calling (`bind_tools()` + tool schema parsing) and does not rely on legacy chain abstractions.
+  - The remaining legacy surface (`bind_functions()`) is kept as a compatibility shim for existing user code and for LangChain's historical API, but `with_structured_output()` intentionally stays on the tool-first path.
+- **Solution**:
+  - Updated `GigaChat.bind_functions()` to support:
+    - `function_call="auto"` and `function_call="none"` (forwarded to the API as-is)
+    - forcing by name among *multiple* provided functions (`{"name": "<function_name>"}`)
+  - Updated the docstring to describe supported `function_call` values and removed the incorrect single-function restriction.
+  - Added unit tests for `"auto"`/`"none"` and forcing a name among multiple functions.
+- **Why**:
+  - **Correctness**: Documentation now matches runtime behavior.
+  - **Compatibility**: Keeps `bind_functions()` as a legacy entry point while aligning behavior with modern tool-calling semantics.
+  - **Reduced legacy surface**: Avoids special-case constraints that only existed in the legacy path.
+- **Verification**:
+  - `uv run ruff check` — passed
+  - `uv run mypy` — passed
+  - `uv run pytest` — passed
 - **Status**: Completed.
 
 ## Expose SDK Connection Settings
