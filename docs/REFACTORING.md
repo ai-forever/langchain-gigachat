@@ -275,7 +275,7 @@ Agreed upon during the refactoring review meeting. Each item will be expanded wi
 - [x] **2.5. LangChain Legacy (LCL) Chains Review** — Full review of all legacy LangChain chain patterns in the code. Remove where possible. Includes reviewing `bind_functions` (legacy path) — docstring mentions "auto" but implementation only supports force-by-name.
 - [x] **2.6. Register on models.dev** — Add GigaChat models to [models.dev](https://models.dev).
 - [ ] **2.7. `profiles.py`** — Research how `profiles.py` works in other LangChain partner packages. Determine necessity, add if needed. Currently absent.
-- [ ] **2.8. `giga_tool` Decorator Revision** — Review extra functionality (`return_schema`, `few_shot_examples`) over standard `@tool`. If replaceable by LangChain extras — remove. If removed: rewrite examples, document as **breaking change**.
+- [x] **2.8. `giga_tool` Decorator Revision** — Review extra functionality (`return_schema`, `few_shot_examples`) over standard `@tool`. If replaceable by LangChain extras — remove. If removed: rewrite examples, document as **breaking change**.
 - [x] **2.9. Embeddings Batch Settings** — API natively handles batches (`input` accepts `List[string]`). Removed custom `MAX_BATCH_SIZE_CHARS` / `MAX_BATCH_SIZE_PARTS` logic. See dedicated section below.
 - [ ] **2.10. Rewrite README.md** — Full rewrite following `gigachat` package README style. Fix known mismatch: RU README references `giga.get_token()` which is SDK-only, not wrapped. *Blocked: do after refactoring is complete.*
 - [ ] **2.11. Remove `trim_content_to_stop_sequence`** — Fully remove the function and all call sites (`_generate`, `_agenerate`, `_stream`, `_astream`). Stop sequence handling should be API-side.
