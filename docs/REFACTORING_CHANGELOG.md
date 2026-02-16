@@ -136,6 +136,8 @@
   - [x] Allow forcing by name among multiple functions (remove single-function restriction)
   - [x] Add unit tests for `bind_functions()` legacy behaviors
 
+### 2.6 models.dev
+- [x] WIP: https://github.com/anomalyco/models.dev/pull/927
 ### `with_structured_output` Override Typing Compatibility
 - [x] Align `GigaChat.with_structured_output()` signature with `BaseChatModel` override contract
   - [x] Keep provider-specific `method` handling via `**kwargs` instead of explicit typed param
