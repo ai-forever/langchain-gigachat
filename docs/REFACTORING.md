@@ -280,7 +280,7 @@ Agreed upon during the refactoring review meeting. Each item will be expanded wi
 - [ ] **2.10. Rewrite README.md** — Full rewrite following `gigachat` package README style. Fix known mismatch: RU README references `giga.get_token()` which is SDK-only, not wrapped. *Blocked: do after refactoring is complete.*
 - [x] **2.11. Remove `trim_content_to_stop_sequence`** — Fully remove the function and all call sites (`_generate`, `_agenerate`, `_stream`, `_astream`). Stop sequence handling should be API-side. See dedicated section below.
 - [x] **2.12. `x_headers` Audit** — Map all places where `x_headers` are set/consumed (`response_metadata`, `generation_info`, `message.id`). Decide on refactoring or documentation.
-- [ ] **2.13. `TYPE_CHECKING` Block** — Remove conditional `TYPE_CHECKING` import in `gigachat.py` or confirm it is necessary.
+- [x] **2.13. `TYPE_CHECKING` Block** — Remove conditional `TYPE_CHECKING` import in `gigachat.py` or confirm it is necessary.
 - [ ] **2.14. LangChain 1.0 New Mechanisms** — Test compatibility with content blocks, `create_agent`, middleware. Additionally review: multi-tool calling support (currently only `tool_calls[0]` is forwarded), `ToolMessage` role mapping (`role="function"` — check if API supports a proper tool role), and SDK exception translation to LangChain exception types.
 - [ ] **2.15. CI/Contribution Documentation** — Create or rewrite CI docs, contribution guide, and other developer docs following LangChain upstream conventions.
 - [ ] **2.16. CI Refactoring** — Review tests (remove unnecessary, add missing), assess coverage (~70%), decide on expansion. VCR tests — not now.

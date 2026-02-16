@@ -186,3 +186,8 @@
 - [x] Remove trimming loop from `_generate` and `_agenerate`
 - [x] Remove `message_content` and stop-check from `_stream` and `_astream`
 - [x] Update `docs/REFACTORING.md` (checkbox + dedicated section)
+
+### 2.13. `TYPE_CHECKING` Block
+- [x] Remove `TYPE_CHECKING` and conditional `import gigachat.models as gm` from `gigachat.py`
+- [x] Use top-level `import gigachat.models as gm` (no circular import; types used in annotations only)
+- [x] Update `docs/REFACTORING.md` (checkbox)

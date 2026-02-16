@@ -10,7 +10,6 @@ import warnings
 from mimetypes import guess_extension
 from operator import itemgetter
 from typing import (
-    TYPE_CHECKING,
     Any,
     AsyncIterator,
     Callable,
@@ -27,6 +26,7 @@ from typing import (
 )
 from uuid import uuid4
 
+import gigachat.models as gm
 from langchain_core.callbacks import (
     AsyncCallbackManagerForLLMRun,
     CallbackManagerForLLMRun,
@@ -74,9 +74,6 @@ from langchain_gigachat.utils.function_calling import (
     convert_to_gigachat_function,
     convert_to_gigachat_tool,
 )
-
-if TYPE_CHECKING:
-    import gigachat.models as gm
 
 logger = logging.getLogger(__name__)
 
