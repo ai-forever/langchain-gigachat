@@ -269,7 +269,7 @@
 Agreed upon during the refactoring review meeting. Each item will be expanded with a full Problem/Solution/Verification writeup in a dedicated section as work begins (per the Workflow section above).
 
 - [x] **2.1. Mixin for Chat and Embeddings** — Reduce code duplication between `GigaChat` and `GigaChatEmbeddings` by extracting shared logic (client init, auth, config) into a mixin or shared base class. Also add missing `lc_secrets` to `GigaChatEmbeddings` (currently absent — credentials can leak during serialization).
-- [ ] **2.2. Base64 Image Handling** — Implement proper caching with eviction (current `_cached_images` dict has no eviction, risk of overflow). Also fix `_cached_images` from class attribute to per-instance private attr (currently shared across all instances — multi-tenant risk).
+- [x] **2.2. Base64 Image Handling** — Implement proper caching with eviction and per-instance cache. See dedicated section below.
 - [ ] **2.3. Multimodal File Upload** — Support audio, document (and possibly video) input upload. Extend `get_text_and_images_from_content()` to handle new content block types beyond `text`/`image_url`. Verify compatibility with LangChain content blocks.
 - [x] **2.4. Format Instructions Mode** — **Breaking change approved**: remove `with_structured_output(method="format_instructions")` from public API. Rationale: issue #40 is solved via `function_calling` JSON/Pydantic schema support, while `format_instructions` remains legacy prompt-based behavior with weak schema guarantees and extra maintenance cost. Migration: use `method="function_calling"` (preferred) or `method="json_mode"` where applicable.
 - [x] **2.5. LangChain Legacy (LCL) Chains Review** — Full review of all legacy LangChain chain patterns in the code. Remove where possible. Includes reviewing `bind_functions` (legacy path) — docstring mentions "auto" but implementation only supports force-by-name.
@@ -286,6 +286,15 @@ Agreed upon during the refactoring review meeting. Each item will be expanded wi
 - [ ] **2.16. CI Refactoring** — Review tests (remove unnecessary, add missing), assess coverage (~70%), decide on expansion. VCR tests — not now.
 - [ ] **2.17. `get_file` Naming and API Surface Cleanup** — `_BaseGigaChat.get_file/aget_file` actually calls SDK `get_image/aget_image` (downloads file content, not metadata). Rename or document clearly. Also consider wrapping additional SDK-only file endpoints (`GET /files`, `DELETE /files/{id}`) if useful.
 - [x] **2.18. Expose SDK Connection Settings** — `max_retries`, `max_connections`, `retry_backoff_factor`, `retry_on_status_codes` are now exposed as explicit fields on `_GigaChatClientMixin` (shared by `GigaChat` and `GigaChatEmbeddings`). See dedicated section below.
+
+## Base64 Image Handling (2.2)
+
+- **Problem**: `_cached_images` was a class-level dict (shared across all `GigaChat` instances — multi-tenant risk) with no eviction (unbounded growth, memory overflow risk).
+- **Solution**:
+  - **Per-instance cache**: Replaced `_cached_images: Dict[str, str] = {}` with `PrivateAttr(default_factory=dict)` so each instance has its own cache.
+  - **Eviction**: Introduced `DEFAULT_IMAGE_CACHE_MAX_SIZE = 1000` and `_set_cached_image()`; when the cache is full, the oldest entry is removed (FIFO) before adding a new one. `_upload_images` and `_aupload_images` call `_set_cached_image()` instead of assigning directly.
+- **Verification**: `uv run ruff check`, `uv run pytest` (including `test_ai_upload_image_per_instance_cache`, `test_ai_upload_image_cache_eviction`).
+- **Status**: Completed.
 
 ## Remove `trim_content_to_stop_sequence`
 

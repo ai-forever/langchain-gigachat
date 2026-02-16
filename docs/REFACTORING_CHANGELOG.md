@@ -125,6 +125,14 @@
   - [x] `uv run pytest` — 82 passed, 79% coverage
   - [x] `_client.py` — 100% coverage
 
+### 2.2. Base64 Image Handling
+- [x] Make `_cached_images` per-instance via `PrivateAttr(default_factory=dict)` in `GigaChat` (fixes multi-tenant risk: cache no longer shared across instances)
+- [x] Add eviction: cap cache at `DEFAULT_IMAGE_CACHE_MAX_SIZE` (1000), FIFO eviction when full via `_set_cached_image()`
+- [x] Add unit tests
+  - [x] `test_ai_upload_image_per_instance_cache` — two instances have independent caches
+  - [x] `test_ai_upload_image_cache_eviction` — when at max size, oldest entry is evicted (FIFO)
+- [x] Verification: `uv run ruff check`, `uv run pytest` (all image-upload tests pass)
+
 ### 2.4. Format Instructions Mode
 - [x] Remove `method="format_instructions"` from `GigaChat.with_structured_output()` public API
   - [x] Remove legacy prompt-injection branch in `chat_models/gigachat.py`

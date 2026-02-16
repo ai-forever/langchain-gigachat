@@ -66,7 +66,7 @@ from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResu
 from langchain_core.runnables import Runnable, RunnableMap, RunnablePassthrough
 from langchain_core.tools import BaseTool
 from langchain_core.utils.pydantic import is_basemodel_subclass, pre_init
-from pydantic import BaseModel
+from pydantic import BaseModel, PrivateAttr
 from typing_extensions import override
 
 from langchain_gigachat.chat_models.base_gigachat import _BaseGigaChat
@@ -84,6 +84,8 @@ VIDEO_SEARCH_REGEX = re.compile(
     r'<video\scover="(?P<cover_UUID>.+?)"\ssrc="(?P<UUID>.+?)"\sfuse="true"/>(?P<postfix>.+)?'  # noqa
 )
 BASE64_DATA_REGEX = re.compile(r"data:(.+);(.+),(.+)")
+
+DEFAULT_IMAGE_CACHE_MAX_SIZE = 1000
 
 
 def _validate_content(content: Any) -> Any:
@@ -333,11 +335,8 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
     GigaChat API doesn't support 'any', so by default it raises an error.
     """
     allow_any_tool_choice_fallback: bool = False
-    """ 
-    Dict with cached images, with key as hashed 
-    base-64 image to File ID on GigaChat API 
-    """
-    _cached_images: Dict[str, str] = {}
+
+    _cached_images: Dict[str, str] = PrivateAttr(default_factory=dict)
 
     @pre_init
     def validate_environment(cls, values: Dict) -> Dict:
@@ -348,6 +347,12 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 "Use instead GigaChat.upload_file method for uploading images"
             )
         return values
+
+    def _set_cached_image(self, hashed: str, file_id: str) -> None:
+        """Store file_id for hashed image; evict oldest entry if at capacity."""
+        if len(self._cached_images) >= DEFAULT_IMAGE_CACHE_MAX_SIZE:
+            self._cached_images.pop(next(iter(self._cached_images)))
+        self._cached_images[hashed] = file_id
 
     async def _aupload_images(self, messages: List[BaseMessage]) -> None:
         for message in messages:
@@ -377,7 +382,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                                     base64.b64decode(image_str),
                                 )
                             )
-                            self._cached_images[hashed] = file.id_
+                            self._set_cached_image(hashed, file.id_)
 
     def _upload_images(self, messages: List[BaseMessage]) -> None:
         for message in messages:
@@ -407,8 +412,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                                     base64.b64decode(image_str),
                                 )
                             )
-
-                            self._cached_images[hashed] = file.id_
+                            self._set_cached_image(hashed, file.id_)
 
     def _build_payload(self, messages: List[BaseMessage], **kwargs: Any) -> gm.Chat:
         from gigachat.models import Chat

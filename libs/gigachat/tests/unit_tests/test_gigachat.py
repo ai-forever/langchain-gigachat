@@ -1,7 +1,7 @@
 import base64
 import hashlib
 from typing import Any, AsyncGenerator, Iterable, List, Tuple
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from gigachat.models import (
@@ -615,6 +615,51 @@ async def test_ai_aupload_image_disabled_stream(
         pass
     assert len(llm._cached_images.keys()) == 0
     assert patch_gigachat_aupload_file.call_count == 0
+
+
+def test_ai_upload_image_per_instance_cache(
+    patch_gigachat_upload_file: MagicMock, upload_images_dialog: UploadDialog
+) -> None:
+    """Two GigaChat instances have independent image caches (no cross-tenant)."""
+    llm1 = GigaChat(auto_upload_images=True)
+    llm2 = GigaChat(auto_upload_images=True)
+    dialog, hashed_1, hashed_2 = upload_images_dialog
+    llm1.invoke(dialog)
+    assert len(llm1._cached_images) == 2
+    assert hashed_1 in llm1._cached_images and hashed_2 in llm1._cached_images
+    assert len(llm2._cached_images) == 0
+    llm2.invoke(dialog)
+    assert len(llm2._cached_images) == 2
+    assert llm1._cached_images is not llm2._cached_images
+
+
+def test_ai_upload_image_cache_eviction(
+    patch_gigachat_upload_file: MagicMock,
+) -> None:
+    """When cache is at max size, adding a new image evicts oldest entry (FIFO)."""
+    with patch(
+        "langchain_gigachat.chat_models.gigachat.DEFAULT_IMAGE_CACHE_MAX_SIZE",
+        2,
+    ):
+        llm = GigaChat(auto_upload_images=True)
+        img_a = f"data:image/png;base64,{base64.b64encode(b'aaa').decode()}"
+        img_b = f"data:image/png;base64,{base64.b64encode(b'bbb').decode()}"
+        img_c = f"data:image/png;base64,{base64.b64encode(b'ccc').decode()}"
+        hash_a = hashlib.sha256(img_a.encode()).hexdigest()
+        hash_b = hashlib.sha256(img_b.encode()).hexdigest()
+        hash_c = hashlib.sha256(img_c.encode()).hexdigest()
+        msg_a = [{"type": "image_url", "image_url": {"url": img_a}}]
+        msg_b = [{"type": "image_url", "image_url": {"url": img_b}}]
+        msg_c = [{"type": "image_url", "image_url": {"url": img_c}}]
+        llm.invoke([HumanMessage(content=msg_a)])
+        assert len(llm._cached_images) == 1 and hash_a in llm._cached_images
+        llm.invoke([HumanMessage(content=msg_b)])
+        assert len(llm._cached_images) == 2
+        assert hash_a in llm._cached_images and hash_b in llm._cached_images
+        llm.invoke([HumanMessage(content=msg_c)])
+        assert len(llm._cached_images) == 2
+        assert hash_a not in llm._cached_images
+        assert hash_b in llm._cached_images and hash_c in llm._cached_images
 
 
 def test__convert_message_with_attachments_to_dict_system(
