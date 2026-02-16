@@ -282,25 +282,6 @@ def _convert_delta_to_message_chunk(
         return default_class(content=content)  # type: ignore[call-arg]
 
 
-def trim_content_to_stop_sequence(
-    content: str, stop_sequence: Optional[List[str]]
-) -> Union[str, bool]:
-    """
-    Обрезаем строку к стоп слову.
-    Если стоп слово нашлось в строке возвращаем обрезанную строку.
-    Если нет, то возвращаем False
-    """
-    if stop_sequence is None:
-        return False
-    for stop_w in stop_sequence:
-        try:
-            index = content.index(stop_w)
-            return content[:index]
-        except ValueError:
-            pass
-    return False
-
-
 class GigaChat(_BaseGigaChat, BaseChatModel):
     """
     LangChain chat model for GigaChat API.
@@ -521,14 +502,6 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         self._upload_images(messages)
         payload = self._build_payload(messages, **kwargs)
         response = self._client.chat(payload)
-        for choice in response.choices:
-            trimmed_content = trim_content_to_stop_sequence(
-                choice.message.content, stop
-            )
-            if isinstance(trimmed_content, str):
-                choice.message.content = trimmed_content
-                break
-
         return self._create_chat_result(response)
 
     @override
@@ -550,14 +523,6 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         await self._aupload_images(messages)
         payload = self._build_payload(messages, **kwargs)
         response = await self._client.achat(payload)
-        for choice in response.choices:
-            trimmed_content = trim_content_to_stop_sequence(
-                choice.message.content, stop
-            )
-            if isinstance(trimmed_content, str):
-                choice.message.content = trimmed_content
-                break
-
         return self._create_chat_result(response)
 
     @override
@@ -570,7 +535,6 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
     ) -> Iterator[ChatGenerationChunk]:
         self._upload_images(messages)
         payload = self._build_payload(messages, **kwargs)
-        message_content = ""
 
         first_chunk = True
         for chunk_d in self._client.stream(payload):
@@ -584,9 +548,6 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
 
             choice = chunk["choices"][0]
             content = choice.get("delta", {}).get("content", {})
-            message_content += content
-            if trim_content_to_stop_sequence(message_content, stop):
-                return
             chunk_m = _convert_delta_to_message_chunk(choice["delta"], AIMessageChunk)
             usage_metadata = None
             if chunk.get("usage"):
@@ -628,7 +589,6 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
     ) -> AsyncIterator[ChatGenerationChunk]:
         await self._aupload_images(messages)
         payload = self._build_payload(messages, **kwargs)
-        message_content = ""
         first_chunk = True
 
         async for chunk_d in self._client.astream(payload):
@@ -642,9 +602,6 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
 
             choice = chunk["choices"][0]
             content = choice.get("delta", {}).get("content", {})
-            message_content += content
-            if trim_content_to_stop_sequence(message_content, stop):
-                return
             chunk_m = _convert_delta_to_message_chunk(choice["delta"], AIMessageChunk)
             usage_metadata = None
             if chunk.get("usage"):

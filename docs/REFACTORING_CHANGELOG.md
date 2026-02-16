@@ -180,3 +180,9 @@
   - [x] `uv run ruff format --check` — passed
   - [x] `uv run mypy` — passed
   - [x] `uv run pytest` — 51 passed, 70% coverage (100% on `_client.py`)
+
+### 2.11. Remove `trim_content_to_stop_sequence`
+- [x] Remove `trim_content_to_stop_sequence()` from `gigachat.py`
+- [x] Remove trimming loop from `_generate` and `_agenerate`
+- [x] Remove `message_content` and stop-check from `_stream` and `_astream`
+- [x] Update `docs/REFACTORING.md` (checkbox + dedicated section)

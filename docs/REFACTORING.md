@@ -278,7 +278,7 @@ Agreed upon during the refactoring review meeting. Each item will be expanded wi
 - [x] **2.8. `giga_tool` Decorator Revision** — Review extra functionality (`return_schema`, `few_shot_examples`) over standard `@tool`. If replaceable by LangChain extras — remove. If removed: rewrite examples, document as **breaking change**.
 - [x] **2.9. Embeddings Batch Settings** — API natively handles batches (`input` accepts `List[string]`). Removed custom `MAX_BATCH_SIZE_CHARS` / `MAX_BATCH_SIZE_PARTS` logic. See dedicated section below.
 - [ ] **2.10. Rewrite README.md** — Full rewrite following `gigachat` package README style. Fix known mismatch: RU README references `giga.get_token()` which is SDK-only, not wrapped. *Blocked: do after refactoring is complete.*
-- [ ] **2.11. Remove `trim_content_to_stop_sequence`** — Fully remove the function and all call sites (`_generate`, `_agenerate`, `_stream`, `_astream`). Stop sequence handling should be API-side.
+- [x] **2.11. Remove `trim_content_to_stop_sequence`** — Fully remove the function and all call sites (`_generate`, `_agenerate`, `_stream`, `_astream`). Stop sequence handling should be API-side. See dedicated section below.
 - [ ] **2.12. `x_headers` Audit** — Map all places where `x_headers` are set/consumed (`response_metadata`, `generation_info`, `message.id`). Decide on refactoring or documentation.
 - [ ] **2.13. `TYPE_CHECKING` Block** — Remove conditional `TYPE_CHECKING` import in `gigachat.py` or confirm it is necessary.
 - [ ] **2.14. LangChain 1.0 New Mechanisms** — Test compatibility with content blocks, `create_agent`, middleware. Additionally review: multi-tool calling support (currently only `tool_calls[0]` is forwarded), `ToolMessage` role mapping (`role="function"` — check if API supports a proper tool role), and SDK exception translation to LangChain exception types.
@@ -286,6 +286,14 @@ Agreed upon during the refactoring review meeting. Each item will be expanded wi
 - [ ] **2.16. CI Refactoring** — Review tests (remove unnecessary, add missing), assess coverage (~70%), decide on expansion. VCR tests — not now.
 - [ ] **2.17. `get_file` Naming and API Surface Cleanup** — `_BaseGigaChat.get_file/aget_file` actually calls SDK `get_image/aget_image` (downloads file content, not metadata). Rename or document clearly. Also consider wrapping additional SDK-only file endpoints (`GET /files`, `DELETE /files/{id}`) if useful.
 - [x] **2.18. Expose SDK Connection Settings** — `max_retries`, `max_connections`, `retry_backoff_factor`, `retry_on_status_codes` are now exposed as explicit fields on `_GigaChatClientMixin` (shared by `GigaChat` and `GigaChatEmbeddings`). See dedicated section below.
+
+## Remove `trim_content_to_stop_sequence`
+
+- **Done**: Function and all call sites removed from `langchain_gigachat/chat_models/gigachat.py`.
+  - Deleted `trim_content_to_stop_sequence()` helper.
+  - `_generate` / `_agenerate`: no longer trim `choice.message.content` by stop sequences; response is passed through as returned by the API.
+  - `_stream` / `_astream`: removed `message_content` accumulation and early return when a stop sequence was found in the stream.
+- **Rationale**: Stop sequence handling is delegated to the API (payload already includes `stop` via `_build_payload`); client-side trimming was redundant and duplicated logic.
 
 ## Remove `format_instructions` Structured Output Mode
 
