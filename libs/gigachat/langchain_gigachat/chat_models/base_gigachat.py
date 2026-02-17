@@ -27,6 +27,11 @@ class _BaseGigaChat(_GigaChatClientMixin):
     """The penalty applied to repeated tokens."""
     update_interval: Optional[float] = None
     """Minimum interval in seconds that elapses between sending tokens."""
+    reasoning_effort: Optional[str] = None
+    """
+    Reasoning effort for reasoning-capable models (e.g. GigaChat-2-Reasoning).
+    When set, the API may return reasoning_content in the assistant message.
+    """
 
     @property
     def _llm_type(self) -> str:
@@ -49,6 +54,7 @@ class _BaseGigaChat(_GigaChatClientMixin):
             "max_tokens": self.max_tokens,
             "top_p": self.top_p,
             "repetition_penalty": self.repetition_penalty,
+            "reasoning_effort": self.reasoning_effort,
         }
 
     def tokens_count(

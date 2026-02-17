@@ -433,3 +433,14 @@ Agreed upon during the refactoring review meeting. Each item will be expanded wi
 ### Status
 
 - Completed: audit documented; shared helper `_build_stream_chunk()` added; `_stream` and `_astream` refactored to use it.
+
+## Support reasoning_effort and reasoning_content (GigaChat reasoning models)
+
+- **Goal**: Allow using GigaChat reasoning-capable models (e.g. GigaChat-2-Reasoning) from langchain-gigachat: send `reasoning_effort` in the request and receive `reasoning_content` in the assistant message.
+- **Upstream**: The `gigachat` SDK supports `Chat(messages=..., model="GigaChat-2-Reasoning", reasoning_effort="medium")` and returns `reasoning_content` on the assistant message in `ChatCompletion.choices[].message`.
+- **Solution**:
+  - **Request**: Added optional `reasoning_effort: Optional[str] = None` to `_BaseGigaChat` (`base_gigachat.py`). When set, it is included in the payload in `_build_payload()` (`gigachat.py`) so the GigaChat API receives it.
+  - **Response**: In `_convert_dict_to_message()`, for assistant messages, `reasoning_content` is read from the message (via `getattr(message, "reasoning_content", None)` for SDK compatibility) and stored in `AIMessage.additional_kwargs["reasoning_content"]`. The user can read it as `message.additional_kwargs.get("reasoning_content")`.
+  - **Streaming**: In `_convert_delta_to_message_chunk()`, if the stream delta contains `reasoning_content`, it is passed into the chunk’s `additional_kwargs` so streamed responses also expose reasoning when the API sends it.
+- **Usage**: `llm = GigaChat(model="GigaChat-2-Reasoning", reasoning_effort="medium")` then `msg = llm.invoke([HumanMessage(content="...")])`; reasoning text is in `msg.content` (if reflected in content) or in `msg.additional_kwargs.get("reasoning_content")`.
+- **Status**: Implemented.

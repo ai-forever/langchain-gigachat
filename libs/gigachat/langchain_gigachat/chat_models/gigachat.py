@@ -127,6 +127,9 @@ def _convert_dict_to_message(message: gm.Messages) -> BaseMessage:
             additional_kwargs["cover_uuid"] = match.group("cover_UUID")
             additional_kwargs["video_uuid"] = match.group("UUID")
             additional_kwargs["postfix_message"] = match.group("postfix")
+    reasoning_content = getattr(message, "reasoning_content", None)
+    if reasoning_content is not None:
+        additional_kwargs["reasoning_content"] = reasoning_content
     if message.role == MessagesRole.SYSTEM:
         return SystemMessage(content=message.content)
     elif message.role == MessagesRole.USER:
@@ -247,6 +250,8 @@ def _convert_delta_to_message_chunk(
             ]
     if _dict.get("functions_state_id"):
         additional_kwargs["functions_state_id"] = _dict["functions_state_id"]
+    if _dict.get("reasoning_content") is not None:
+        additional_kwargs["reasoning_content"] = _dict["reasoning_content"]
     match = IMAGE_SEARCH_REGEX.search(content)
     if match:
         additional_kwargs["image_uuid"] = match.group("UUID")
@@ -326,6 +331,9 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             tool_choice='any' to 'auto'. By default, 'any' raises an error
             because GigaChat API doesn't support it. Set to True to silently
             convert to 'auto' (may cause unpredictable agent behavior).
+        reasoning_effort: Reasoning effort for reasoning-capable models
+            (e.g. GigaChat-2-Reasoning). When set, the API may return
+            reasoning_content in the assistant message (see additional_kwargs).
     """
 
     """ Auto-upload Base-64 images. Not for production usage! """
@@ -441,6 +449,8 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             "update_interval": self.update_interval,
             **kwargs,
         }
+        if self.reasoning_effort is not None:
+            payload_dict["reasoning_effort"] = self.reasoning_effort
 
         payload = Chat.model_validate(payload_dict)
 
