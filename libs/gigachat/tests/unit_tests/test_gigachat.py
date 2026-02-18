@@ -683,7 +683,7 @@ def test__convert_message_with_attachments_no_cache_to_dict_system(
 
 def test_get_text_and_images_from_content_audio_url_giga_id() -> None:
     """audio_url with giga_id is collected into attachments."""
-    content = [
+    content: list[str | dict[str, Any]] = [
         {"type": "text", "text": "Listen"},
         {"type": "audio_url", "audio_url": {"giga_id": "audio-123"}},
     ]
@@ -694,7 +694,7 @@ def test_get_text_and_images_from_content_audio_url_giga_id() -> None:
 
 def test_get_text_and_images_from_content_document_url_giga_id() -> None:
     """document_url with giga_id is collected into attachments."""
-    content = [
+    content: list[str | dict[str, Any]] = [
         {"type": "text", "text": "Read"},
         {"type": "document_url", "document_url": {"giga_id": "doc-456"}},
     ]
@@ -706,7 +706,7 @@ def test_get_text_and_images_from_content_document_url_giga_id() -> None:
 def test_get_text_and_images_from_content_audio_url_cached() -> None:
     """audio_url with data URL resolved from cache."""
     url = "data:audio/mp3;base64,YWJj"
-    content = [{"type": "audio_url", "audio_url": {"url": url}}]
+    content: list[str | dict[str, Any]] = [{"type": "audio_url", "audio_url": {"url": url}}]
     hashed = hashlib.sha256(url.encode()).hexdigest()
     cache = {hashed: "file-id-789"}
     text, attachments = get_text_and_images_from_content(content, cache)
@@ -716,7 +716,7 @@ def test_get_text_and_images_from_content_audio_url_cached() -> None:
 
 def test_get_text_and_images_from_content_mixed_attachments() -> None:
     """Mixed text, image/audio/document_url yield correct text and attachments."""
-    content = [
+    content: list[str | dict[str, Any]] = [
         {"type": "text", "text": "Summary"},
         {"type": "image_url", "image_url": {"giga_id": "img-1"}},
         {"type": "audio_url", "audio_url": {"giga_id": "aud-1"}},
@@ -729,7 +729,7 @@ def test_get_text_and_images_from_content_mixed_attachments() -> None:
 
 def test_get_text_and_images_from_content_standard_blocks() -> None:
     """Standard LangChain content_blocks (image/audio/file + file_id) are supported."""
-    content = [
+    content: list[str | dict[str, Any]] = [
         {"type": "text", "text": "Describe"},
         {"type": "image", "file_id": "giga-img-1"},
         {"type": "audio", "file_id": "giga-aud-1"},
