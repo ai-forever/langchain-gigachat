@@ -85,7 +85,33 @@ VIDEO_SEARCH_REGEX = re.compile(
 )
 BASE64_DATA_REGEX = re.compile(r"data:(.+);(.+),(.+)")
 
+# GigaChat-supported MIME types where mimetypes.guess_extension returns None
+# https://developers.sber.ru/docs/ru/gigachat/api/reference/rest/post-file
+MIME_EXTENSION_FALLBACK: Dict[str, str] = {
+    "audio/mp3": ".mp3",
+    "audio/mp4": ".mp4",
+    "audio/x-m4a": ".m4a",
+    "audio/x-wav": ".wav",
+    "audio/wave": ".wav",
+    "audio/wav": ".wav",
+    "audio/x-pn-wav": ".wav",
+    "audio/webm": ".weba",
+    "audio/x-ogg": ".ogg",
+    "audio/opus": ".opus",
+    "application/epub": ".epub",
+    "application/pptx": ".pptx",
+    "application/ppt": ".ppt",
+}
+
 DEFAULT_IMAGE_CACHE_MAX_SIZE = 1000
+
+ATTACHMENT_BLOCK_KEYS = ("image_url", "audio_url", "document_url")
+
+
+def _extension_for_mime(mime: str) -> Optional[str]:
+    """Return file extension (with dot) for MIME type, or None."""
+    ext = guess_extension(mime.split(";")[0].strip())
+    return ext or MIME_EXTENSION_FALLBACK.get(mime.split(";")[0].strip(), ".bin")
 
 
 def _validate_content(content: Any) -> Any:
@@ -151,6 +177,12 @@ def _convert_dict_to_message(message: gm.Messages) -> BaseMessage:
 def get_text_and_images_from_content(
     content: list[Union[str, dict]], cached_images: Dict[str, str]
 ) -> Tuple[str, List[str]]:
+    """Extract text and attachment IDs from LangChain content blocks.
+
+    Supports block types: text, image_url, audio_url, document_url.
+    For image_url/audio_url/document_url: use giga_id if present, else
+    resolve from cache by hash of url (e.g. data URL after upload).
+    """
     text_parts = []
     attachments = []
     for content_part in content:
@@ -159,16 +191,18 @@ def get_text_and_images_from_content(
         elif isinstance(content_part, dict):
             if content_part.get("type") == "text":
                 text_parts.append(content_part["text"])
-            elif content_part.get("type") == "image_url":
-                image_data = content_part["image_url"]
-                if not isinstance(image_data, dict):
+            elif content_part.get("type") in ("image_url", "audio_url", "document_url"):
+                block_key = content_part["type"]
+                block_data = content_part.get(block_key)
+                if not isinstance(block_data, dict):
                     continue
-                if "giga_id" in content_part["image_url"]:
-                    attachments.append(content_part["image_url"].get("giga_id"))
-                image_url = content_part["image_url"].get("url")
-                hashed = hashlib.sha256(image_url.encode()).hexdigest()
-                if hashed in cached_images:
-                    attachments.append(cached_images[hashed])
+                if block_data.get("giga_id"):
+                    attachments.append(block_data["giga_id"])
+                url = block_data.get("url")
+                if url:
+                    hashed = hashlib.sha256(url.encode()).hexdigest()
+                    if hashed in cached_images:
+                        attachments.append(cached_images[hashed])
     return " ".join(text_parts), attachments
 
 
@@ -326,7 +360,8 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         repetition_penalty: The penalty applied to repeated tokens.
         update_interval: Minimum interval in seconds that elapses between
             sending tokens.
-        auto_upload_images: Auto-upload Base-64 images. Not for production usage.
+        auto_upload_attachments: Auto-upload Base-64 content for image_url,
+            audio_url, and document_url blocks. Not for production usage.
         allow_any_tool_choice_fallback: Allow automatic fallback from
             tool_choice='any' to 'auto'. By default, 'any' raises an error
             because GigaChat API doesn't support it. Set to True to silently
@@ -336,8 +371,8 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             reasoning_content in the assistant message (see additional_kwargs).
     """
 
-    """ Auto-upload Base-64 images. Not for production usage! """
-    auto_upload_images: bool = False
+    """Auto-upload Base-64 image/audio/document blocks. Not for production usage."""
+    auto_upload_attachments: bool = False
     """
     Allow automatic fallback from tool_choice='any' to 'auto'.
     GigaChat API doesn't support 'any', so by default it raises an error.
@@ -348,79 +383,97 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
 
     @pre_init
     def validate_environment(cls, values: Dict) -> Dict:
-        if values.get("auto_upload_images"):
+        if values.get("auto_upload_attachments"):
             logger.warning(
-                "`auto_upload_images` is experiment option. "
+                "`auto_upload_attachments` is experiment option. "
                 "Please, don't use it on production. "
-                "Use instead GigaChat.upload_file method for uploading images"
+                "Use instead GigaChat.upload_file for uploading files."
             )
         return values
 
     def _set_cached_image(self, hashed: str, file_id: str) -> None:
-        """Store file_id for hashed image; evict oldest entry if at capacity."""
+        """Store file_id for hashed content url; evict oldest entry if at capacity."""
         if len(self._cached_images) >= DEFAULT_IMAGE_CACHE_MAX_SIZE:
             self._cached_images.pop(next(iter(self._cached_images)))
         self._cached_images[hashed] = file_id
 
-    async def _aupload_images(self, messages: List[BaseMessage]) -> None:
-        for message in messages:
-            if isinstance(message.content, list):
-                for content_part in message.content:
-                    if not isinstance(content_part, dict):
-                        continue
-                    if content_part.get("type") == "image_url":
-                        image_url = content_part["image_url"]["url"]
-                        matches = BASE64_DATA_REGEX.search(image_url)
-                        if matches and not self.auto_upload_images:
-                            logger.warning(
-                                "You trying to send base-64 images, "
-                                "but parameter `auto_upload_images` is not True. "
-                                "Set it to True. "
-                            )
-                        if not matches or not self.auto_upload_images:
-                            continue
-                        hashed = hashlib.sha256(image_url.encode()).hexdigest()
-                        if hashed not in self._cached_images:
-                            extension, type_, image_str = matches.groups()
-                            if type_ != "base64":
-                                continue
-                            file = await self.aupload_file(
-                                (
-                                    f"{uuid4()}{guess_extension(extension)}",
-                                    base64.b64decode(image_str),
-                                )
-                            )
-                            self._set_cached_image(hashed, file.id_)
+    def _should_upload_block(
+        self, block_type: str, url: str
+    ) -> Tuple[bool, Optional[re.Match[str]]]:
+        """Return (should_upload, data_url_match)."""
+        matches = BASE64_DATA_REGEX.search(url)
+        if not matches:
+            return False, None
+        if block_type not in ATTACHMENT_BLOCK_KEYS:
+            return False, None
+        if not self.auto_upload_attachments:
+            if block_type == "image_url":
+                logger.warning(
+                    "Base-64 image in message but `auto_upload_attachments` is False. "
+                    "Set it to True or upload via GigaChat.upload_file."
+                )
+            return False, None
+        return True, matches
 
-    def _upload_images(self, messages: List[BaseMessage]) -> None:
+    async def _aupload_attachments(self, messages: List[BaseMessage]) -> None:
         for message in messages:
-            if isinstance(message.content, list):
-                for content_part in message.content:
-                    if not isinstance(content_part, dict):
-                        continue
-                    if content_part.get("type") == "image_url":
-                        image_url = content_part["image_url"]["url"]
-                        matches = BASE64_DATA_REGEX.search(image_url)
-                        if matches and not self.auto_upload_images:
-                            logger.warning(
-                                "You trying to send base-64 images, "
-                                "but parameter `auto_upload_images` is not True. "
-                                "Set it to True. "
-                            )
-                        if not matches or not self.auto_upload_images:
-                            continue
-                        hashed = hashlib.sha256(image_url.encode()).hexdigest()
-                        if hashed not in self._cached_images:
-                            extension, type_, image_str = matches.groups()
-                            if type_ != "base64":
-                                continue
-                            file = self.upload_file(
-                                (
-                                    f"{uuid4()}{guess_extension(extension)}",
-                                    base64.b64decode(image_str),
-                                )
-                            )
-                            self._set_cached_image(hashed, file.id_)
+            if not isinstance(message.content, list):
+                continue
+            for content_part in message.content:
+                if not isinstance(content_part, dict):
+                    continue
+                block_type = content_part.get("type")
+                if block_type not in ATTACHMENT_BLOCK_KEYS:
+                    continue
+                block_data = content_part.get(block_type)
+                if not isinstance(block_data, dict):
+                    continue
+                url = block_data.get("url")
+                if not url:
+                    continue
+                should_upload, matches = self._should_upload_block(block_type, url)
+                if not should_upload or not matches:
+                    continue
+                hashed = hashlib.sha256(url.encode()).hexdigest()
+                if hashed in self._cached_images:
+                    continue
+                mime, encoding, data_b64 = matches.groups()
+                if encoding != "base64":
+                    continue
+                ext = _extension_for_mime(mime) or ".bin"
+                file = await self.aupload_file(
+                    (f"{uuid4()}{ext}", base64.b64decode(data_b64))
+                )
+                self._set_cached_image(hashed, file.id_)
+
+    def _upload_attachments(self, messages: List[BaseMessage]) -> None:
+        for message in messages:
+            if not isinstance(message.content, list):
+                continue
+            for content_part in message.content:
+                if not isinstance(content_part, dict):
+                    continue
+                block_type = content_part.get("type")
+                if block_type not in ATTACHMENT_BLOCK_KEYS:
+                    continue
+                block_data = content_part.get(block_type, {})
+                if not isinstance(block_data, dict):
+                    continue
+                url = block_data.get("url")
+                if not url:
+                    continue
+                should_upload, matches = self._should_upload_block(block_type, url)
+                if not should_upload or not matches:
+                    continue
+                hashed = hashlib.sha256(url.encode()).hexdigest()
+                if hashed in self._cached_images:
+                    continue
+                mime, encoding, data_b64 = matches.groups()
+                if encoding != "base64":
+                    continue
+                ext = _extension_for_mime(mime) or ".bin"
+                file = self.upload_file((f"{uuid4()}{ext}", base64.b64decode(data_b64)))
+                self._set_cached_image(hashed, file.id_)
 
     def _build_payload(self, messages: List[BaseMessage], **kwargs: Any) -> gm.Chat:
         from gigachat.models import Chat
@@ -553,7 +606,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             )
             return generate_from_stream(stream_iter)
 
-        self._upload_images(messages)
+        self._upload_attachments(messages)
         payload = self._build_payload(messages, **kwargs)
         response = self._client.chat(payload)
         return self._create_chat_result(response)
@@ -574,7 +627,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             )
             return await agenerate_from_stream(stream_iter)
 
-        await self._aupload_images(messages)
+        await self._aupload_attachments(messages)
         payload = self._build_payload(messages, **kwargs)
         response = await self._client.achat(payload)
         return self._create_chat_result(response)
@@ -587,7 +640,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         run_manager: Optional[CallbackManagerForLLMRun] = None,
         **kwargs: Any,
     ) -> Iterator[ChatGenerationChunk]:
-        self._upload_images(messages)
+        self._upload_attachments(messages)
         payload = self._build_payload(messages, **kwargs)
         first_chunk = True
 
@@ -612,7 +665,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         run_manager: Optional[AsyncCallbackManagerForLLMRun] = None,
         **kwargs: Any,
     ) -> AsyncIterator[ChatGenerationChunk]:
-        await self._aupload_images(messages)
+        await self._aupload_attachments(messages)
         payload = self._build_payload(messages, **kwargs)
         first_chunk = True
 

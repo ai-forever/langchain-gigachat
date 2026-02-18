@@ -270,7 +270,7 @@ Agreed upon during the refactoring review meeting. Each item will be expanded wi
 
 - [x] **2.1. Mixin for Chat and Embeddings** — Reduce code duplication between `GigaChat` and `GigaChatEmbeddings` by extracting shared logic (client init, auth, config) into a mixin or shared base class. Also add missing `lc_secrets` to `GigaChatEmbeddings` (currently absent — credentials can leak during serialization).
 - [x] **2.2. Base64 Image Handling** — Implement proper caching with eviction and per-instance cache. See dedicated section below.
-- [ ] **2.3. Multimodal File Upload** — Support audio, document (and possibly video) input upload. Extend `get_text_and_images_from_content()` to handle new content block types beyond `text`/`image_url`. Verify compatibility with LangChain content blocks.
+- [x] **2.3. Multimodal File Upload** — Support audio, document (and possibly video) input upload. Extend `get_text_and_images_from_content()` to handle new content block types beyond `text`/`image_url`. Verify compatibility with LangChain content blocks. See dedicated section below.
 - [x] **2.4. Format Instructions Mode** — **Breaking change approved**: remove `with_structured_output(method="format_instructions")` from public API. Rationale: issue #40 is solved via `function_calling` JSON/Pydantic schema support, while `format_instructions` remains legacy prompt-based behavior with weak schema guarantees and extra maintenance cost. Migration: use `method="function_calling"` (preferred) or `method="json_mode"` where applicable.
 - [x] **2.5. LangChain Legacy (LCL) Chains Review** — Full review of all legacy LangChain chain patterns in the code. Remove where possible. Includes reviewing `bind_functions` (legacy path) — docstring mentions "auto" but implementation only supports force-by-name.
 - [x] **2.6. Register on models.dev** — Add GigaChat models to [models.dev](https://models.dev).
@@ -286,6 +286,17 @@ Agreed upon during the refactoring review meeting. Each item will be expanded wi
 - [ ] **2.16. CI Refactoring** — Review tests (remove unnecessary, add missing), assess coverage (~70%), decide on expansion. VCR tests — not now.
 - [ ] **2.17. `get_file` Naming and API Surface Cleanup** — `_BaseGigaChat.get_file/aget_file` actually calls SDK `get_image/aget_image` (downloads file content, not metadata). Rename or document clearly. Also consider wrapping additional SDK-only file endpoints (`GET /files`, `DELETE /files/{id}`) if useful.
 - [x] **2.18. Expose SDK Connection Settings** — `max_retries`, `max_connections`, `retry_backoff_factor`, `retry_on_status_codes` are now exposed as explicit fields on `_GigaChatClientMixin` (shared by `GigaChat` and `GigaChatEmbeddings`). See dedicated section below.
+
+## Multimodal File Upload (2.3)
+
+- **Problem**: Only `text` and `image_url` content blocks were supported. GigaChat API supports text documents, images, and audio (see [POST /file](https://developers.sber.ru/docs/ru/gigachat/api/reference/rest/post-file)); file IDs are passed in `attachments` for chat.
+- **Solution**:
+  - **Content blocks**: Extended `get_text_and_images_from_content()` to handle `audio_url` and `document_url` with the same pattern as `image_url`: `{"type": "audio_url", "audio_url": {"url": "...", "giga_id": "..."}}` and `document_url` analogously. All resolved IDs are collected into a single `attachments` list (API does not distinguish type).
+  - **Cache**: Reuse existing `_cached_images` (hash of URL → file id) for all attachment types so that uploaded audio/document data URLs are also cached.
+  - **Upload**: Renamed `_upload_images` / `_aupload_images` to `_upload_attachments` / `_aupload_attachments`. Single flag `auto_upload_attachments` (default False) controls auto-upload for all data-URL blocks: `image_url`, `audio_url`, `document_url`. (Removed redundant `auto_upload_images`; use `auto_upload_attachments` for images too.) Upload uses existing `upload_file()`; MIME → extension mapping added for GigaChat-supported types (e.g. `audio/mp3` → `.mp3`, `application/epub` → `.epub`) where `mimetypes.guess_extension` returns None.
+  - **Video**: Not implemented; API doc lists only text, image, and audio (mp4 is under audio MIME).
+- **Verification**: `uv run ruff check`, `uv run pytest` (including `test_get_text_and_images_from_content_*`, `test_convert_message_to_dict_with_audio_and_document_attachments`, `test_auto_upload_attachments_*`).
+- **Status**: Completed.
 
 ## Base64 Image Handling (2.2)
 

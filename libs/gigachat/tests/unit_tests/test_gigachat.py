@@ -34,6 +34,7 @@ from langchain_gigachat.chat_models.gigachat import (
     GigaChat,
     _convert_dict_to_message,
     _convert_message_to_dict,
+    get_text_and_images_from_content,
 )
 from langchain_gigachat.tools.giga_tool import FewShotExamples, giga_tool
 
@@ -522,7 +523,7 @@ def test_ai_message_json_serialization(patch_gigachat: None) -> None:
 def test_ai_upload_image(
     patch_gigachat_upload_file: MagicMock, upload_images_dialog: UploadDialog
 ) -> None:
-    llm = GigaChat(auto_upload_images=True)
+    llm = GigaChat(auto_upload_attachments=True)
     dialog, hashed_1, hashed_2 = upload_images_dialog
     llm.invoke(dialog)
     assert len(llm._cached_images.keys()) == 2
@@ -536,7 +537,7 @@ def test_ai_upload_image(
 async def test_ai_aupload_image(
     patch_gigachat_aupload_file: MagicMock, upload_images_dialog: UploadDialog
 ) -> None:
-    llm = GigaChat(auto_upload_images=True)
+    llm = GigaChat(auto_upload_attachments=True)
     dialog, hashed_1, hashed_2 = upload_images_dialog
     await llm.ainvoke(dialog)
     assert len(llm._cached_images.keys()) == 2
@@ -550,7 +551,7 @@ async def test_ai_aupload_image(
 def test_ai_upload_image_stream(
     patch_gigachat_upload_file: MagicMock, upload_images_dialog: UploadDialog
 ) -> None:
-    llm = GigaChat(auto_upload_images=True)
+    llm = GigaChat(auto_upload_attachments=True)
     dialog, hashed_1, hashed_2 = upload_images_dialog
     list(llm.stream(dialog))
     assert len(llm._cached_images.keys()) == 2
@@ -564,7 +565,7 @@ def test_ai_upload_image_stream(
 async def test_ai_aupload_image_stream(
     patch_gigachat_aupload_file: MagicMock, upload_images_dialog: UploadDialog
 ) -> None:
-    llm = GigaChat(auto_upload_images=True)
+    llm = GigaChat(auto_upload_attachments=True)
     dialog, hashed_1, hashed_2 = upload_images_dialog
     async for _ in llm.astream(dialog):
         pass
@@ -621,8 +622,8 @@ def test_ai_upload_image_per_instance_cache(
     patch_gigachat_upload_file: MagicMock, upload_images_dialog: UploadDialog
 ) -> None:
     """Two GigaChat instances have independent image caches (no cross-tenant)."""
-    llm1 = GigaChat(auto_upload_images=True)
-    llm2 = GigaChat(auto_upload_images=True)
+    llm1 = GigaChat(auto_upload_attachments=True)
+    llm2 = GigaChat(auto_upload_attachments=True)
     dialog, hashed_1, hashed_2 = upload_images_dialog
     llm1.invoke(dialog)
     assert len(llm1._cached_images) == 2
@@ -641,7 +642,7 @@ def test_ai_upload_image_cache_eviction(
         "langchain_gigachat.chat_models.gigachat.DEFAULT_IMAGE_CACHE_MAX_SIZE",
         2,
     ):
-        llm = GigaChat(auto_upload_images=True)
+        llm = GigaChat(auto_upload_attachments=True)
         img_a = f"data:image/png;base64,{base64.b64encode(b'aaa').decode()}"
         img_b = f"data:image/png;base64,{base64.b64encode(b'bbb').decode()}"
         img_c = f"data:image/png;base64,{base64.b64encode(b'ccc').decode()}"
@@ -678,6 +679,98 @@ def test__convert_message_with_attachments_no_cache_to_dict_system(
     dialog, hashed_1, hashed_2 = upload_images_dialog
     actual = _convert_message_to_dict(dialog[0])
     assert actual == excepted
+
+
+def test_get_text_and_images_from_content_audio_url_giga_id() -> None:
+    """audio_url with giga_id is collected into attachments."""
+    content = [
+        {"type": "text", "text": "Listen"},
+        {"type": "audio_url", "audio_url": {"giga_id": "audio-123"}},
+    ]
+    text, attachments = get_text_and_images_from_content(content, {})
+    assert text == "Listen"
+    assert attachments == ["audio-123"]
+
+
+def test_get_text_and_images_from_content_document_url_giga_id() -> None:
+    """document_url with giga_id is collected into attachments."""
+    content = [
+        {"type": "text", "text": "Read"},
+        {"type": "document_url", "document_url": {"giga_id": "doc-456"}},
+    ]
+    text, attachments = get_text_and_images_from_content(content, {})
+    assert text == "Read"
+    assert attachments == ["doc-456"]
+
+
+def test_get_text_and_images_from_content_audio_url_cached() -> None:
+    """audio_url with data URL resolved from cache."""
+    url = "data:audio/mp3;base64,YWJj"
+    content = [{"type": "audio_url", "audio_url": {"url": url}}]
+    hashed = hashlib.sha256(url.encode()).hexdigest()
+    cache = {hashed: "file-id-789"}
+    text, attachments = get_text_and_images_from_content(content, cache)
+    assert text == ""
+    assert attachments == ["file-id-789"]
+
+
+def test_get_text_and_images_from_content_mixed_attachments() -> None:
+    """Mixed text, image/audio/document_url yield correct text and attachments."""
+    content = [
+        {"type": "text", "text": "Summary"},
+        {"type": "image_url", "image_url": {"giga_id": "img-1"}},
+        {"type": "audio_url", "audio_url": {"giga_id": "aud-1"}},
+        {"type": "document_url", "document_url": {"giga_id": "doc-1"}},
+    ]
+    text, attachments = get_text_and_images_from_content(content, {})
+    assert text == "Summary"
+    assert attachments == ["img-1", "aud-1", "doc-1"]
+
+
+def test_convert_message_to_dict_with_audio_and_document_attachments() -> None:
+    """HumanMessage with audio/document_url (giga_id) gets attachments in payload."""
+    msg = HumanMessage(
+        content=[
+            {"type": "text", "text": "Process this"},
+            {"type": "audio_url", "audio_url": {"giga_id": "a1"}},
+            {"type": "document_url", "document_url": {"giga_id": "d1"}},
+        ]
+    )
+    actual = _convert_message_to_dict(msg)
+    assert actual.role == MessagesRole.USER
+    assert actual.content == "Process this"
+    assert actual.attachments == ["a1", "d1"]
+
+
+def test_auto_upload_attachments_audio_url(
+    patch_gigachat_upload_file: MagicMock,
+) -> None:
+    """With auto_upload_attachments=True, audio_url data URL is uploaded and cached."""
+    audio_data = "data:audio/mp3;base64," + base64.b64encode(b"audio bytes").decode()
+    msg = HumanMessage(
+        content=[{"type": "audio_url", "audio_url": {"url": audio_data}}]
+    )
+    llm = GigaChat(auto_upload_attachments=True)
+    llm.invoke([msg])
+    assert patch_gigachat_upload_file.call_count == 1
+    hashed = hashlib.sha256(audio_data.encode()).hexdigest()
+    assert hashed in llm._cached_images
+    assert llm._cached_images[hashed] == "0"
+
+
+async def test_auto_upload_attachments_document_url(
+    patch_gigachat_aupload_file: MagicMock,
+) -> None:
+    """With auto_upload_attachments=True, document_url data URL is uploaded/cached."""
+    doc_data = "data:application/pdf;base64," + base64.b64encode(b"pdf bytes").decode()
+    msg = HumanMessage(
+        content=[{"type": "document_url", "document_url": {"url": doc_data}}]
+    )
+    llm = GigaChat(auto_upload_attachments=True)
+    await llm.ainvoke([msg])
+    assert patch_gigachat_aupload_file.call_count == 1
+    hashed = hashlib.sha256(doc_data.encode()).hexdigest()
+    assert hashed in llm._cached_images
 
 
 class PersonTool(BaseModel):
