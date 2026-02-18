@@ -706,7 +706,9 @@ def test_get_text_and_images_from_content_document_url_giga_id() -> None:
 def test_get_text_and_images_from_content_audio_url_cached() -> None:
     """audio_url with data URL resolved from cache."""
     url = "data:audio/mp3;base64,YWJj"
-    content: list[str | dict[str, Any]] = [{"type": "audio_url", "audio_url": {"url": url}}]
+    content: list[str | dict[str, Any]] = [
+        {"type": "audio_url", "audio_url": {"url": url}}
+    ]
     hashed = hashlib.sha256(url.encode()).hexdigest()
     cache = {hashed: "file-id-789"}
     text, attachments = get_text_and_images_from_content(content, cache)
