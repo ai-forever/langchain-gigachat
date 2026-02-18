@@ -727,6 +727,19 @@ def test_get_text_and_images_from_content_mixed_attachments() -> None:
     assert attachments == ["img-1", "aud-1", "doc-1"]
 
 
+def test_get_text_and_images_from_content_standard_blocks() -> None:
+    """Standard LangChain content_blocks (image/audio/file + file_id) are supported."""
+    content = [
+        {"type": "text", "text": "Describe"},
+        {"type": "image", "file_id": "giga-img-1"},
+        {"type": "audio", "file_id": "giga-aud-1"},
+        {"type": "file", "file_id": "giga-doc-1"},
+    ]
+    text, attachments = get_text_and_images_from_content(content, {})
+    assert text == "Describe"
+    assert attachments == ["giga-img-1", "giga-aud-1", "giga-doc-1"]
+
+
 def test_convert_message_to_dict_with_audio_and_document_attachments() -> None:
     """HumanMessage with audio/document_url (giga_id) gets attachments in payload."""
     msg = HumanMessage(

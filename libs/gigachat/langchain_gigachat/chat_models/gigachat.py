@@ -179,9 +179,16 @@ def get_text_and_images_from_content(
 ) -> Tuple[str, List[str]]:
     """Extract text and attachment IDs from LangChain content blocks.
 
-    Supports block types: text, image_url, audio_url, document_url.
-    For image_url/audio_url/document_url: use giga_id if present, else
-    resolve from cache by hash of url (e.g. data URL after upload).
+    Supports two formats:
+
+    1) Provider-native (OpenAI-style): type in ("image_url", "audio_url",
+       "document_url") with nested block key and "giga_id" or "url" (cache).
+    2) Standard LangChain content_blocks: type in ("image", "audio", "file") with
+       top-level "file_id" (GigaChat file id) or "url" (resolved via cache).
+
+    Use standard blocks (e.g. content_blocks=[{"type": "image", "file_id": "id"}])
+    so that message.content_blocks displays typed blocks; both formats are
+    accepted for API payload building.
     """
     text_parts = []
     attachments = []
@@ -189,16 +196,25 @@ def get_text_and_images_from_content(
         if isinstance(content_part, str):
             text_parts.append(content_part)
         elif isinstance(content_part, dict):
-            if content_part.get("type") == "text":
-                text_parts.append(content_part["text"])
-            elif content_part.get("type") in ("image_url", "audio_url", "document_url"):
-                block_key = content_part["type"]
+            block_type = content_part.get("type")
+            if block_type == "text":
+                text_parts.append(content_part.get("text", ""))
+            elif block_type in ("image_url", "audio_url", "document_url"):
+                block_key = block_type
                 block_data = content_part.get(block_key)
                 if not isinstance(block_data, dict):
                     continue
                 if block_data.get("giga_id"):
                     attachments.append(block_data["giga_id"])
                 url = block_data.get("url")
+                if url:
+                    hashed = hashlib.sha256(url.encode()).hexdigest()
+                    if hashed in cached_images:
+                        attachments.append(cached_images[hashed])
+            elif block_type in ("image", "audio", "file"):
+                if content_part.get("file_id"):
+                    attachments.append(content_part["file_id"])
+                url = content_part.get("url")
                 if url:
                     hashed = hashlib.sha256(url.encode()).hexdigest()
                     if hashed in cached_images:
