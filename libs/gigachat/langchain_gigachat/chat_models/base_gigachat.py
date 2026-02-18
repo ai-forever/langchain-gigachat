@@ -102,8 +102,34 @@ class _BaseGigaChat(_GigaChatClientMixin):
     ) -> gm.UploadedFile:
         return await self._client.aupload_file(file, purpose)
 
-    def get_file(self, file_id: str) -> gm.Image:
+    def get_file(self, file_id: str) -> gm.UploadedFile:
+        """Return file metadata by ID (SDK get_file)."""
+        return self._client.get_file(file_id)
+
+    async def aget_file(self, file_id: str) -> gm.UploadedFile:
+        """Return file metadata by ID (async, SDK aget_file)."""
+        return await self._client.aget_file(file_id)
+
+    def get_file_content(self, file_id: str) -> gm.Image:
+        """Download file content (base64) by ID. Uses SDK get_image."""
         return self._client.get_image(file_id)
 
-    async def aget_file(self, file_id: str) -> gm.Image:
+    async def aget_file_content(self, file_id: str) -> gm.Image:
+        """Download file content (base64) by ID (async, SDK aget_image)."""
         return await self._client.aget_image(file_id)
+
+    def list_files(self) -> gm.UploadedFiles:
+        """Return list of uploaded files (SDK get_files, GET /files)."""
+        return self._client.get_files()
+
+    async def alist_files(self) -> gm.UploadedFiles:
+        """Return list of uploaded files (async, SDK aget_files)."""
+        return await self._client.aget_files()
+
+    def delete_file(self, file_id: str) -> gm.DeletedFile:
+        """Delete a file by ID (SDK delete_file, DELETE /files/{{id}})."""
+        return self._client.delete_file(file_id)
+
+    async def adelete_file(self, file_id: str) -> gm.DeletedFile:
+        """Delete a file by ID (async, SDK adelete_file)."""
+        return await self._client.adelete_file(file_id)

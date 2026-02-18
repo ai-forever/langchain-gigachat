@@ -284,7 +284,7 @@ Agreed upon during the refactoring review meeting. Each item will be expanded wi
 - [ ] **2.14. LangChain 1.0 New Mechanisms** — Test compatibility with content blocks, `create_agent`, middleware. Additionally review: multi-tool calling support (currently only `tool_calls[0]` is forwarded), `ToolMessage` role mapping (`role="function"` — check if API supports a proper tool role), and SDK exception translation to LangChain exception types.
 - [ ] **2.15. CI/Contribution Documentation** — Create or rewrite CI docs, contribution guide, and other developer docs following LangChain upstream conventions.
 - [ ] **2.16. CI Refactoring** — Review tests (remove unnecessary, add missing), assess coverage (~70%), decide on expansion. VCR tests — not now.
-- [ ] **2.17. `get_file` Naming and API Surface Cleanup** — `_BaseGigaChat.get_file/aget_file` actually calls SDK `get_image/aget_image` (downloads file content, not metadata). Rename or document clearly. Also consider wrapping additional SDK-only file endpoints (`GET /files`, `DELETE /files/{id}`) if useful.
+- [x] **2.17. `get_file` Naming and API Surface Cleanup** — `_BaseGigaChat.get_file/aget_file` actually calls SDK `get_image/aget_image` (downloads file content, not metadata). Rename or document clearly. Also consider wrapping additional SDK-only file endpoints (`GET /files`, `DELETE /files/{id}`) if useful.
 - [x] **2.18. Expose SDK Connection Settings** — `max_retries`, `max_connections`, `retry_backoff_factor`, `retry_on_status_codes` are now exposed as explicit fields on `_GigaChatClientMixin` (shared by `GigaChat` and `GigaChatEmbeddings`). See dedicated section below.
 
 ## Multimodal File Upload (2.3)
@@ -461,3 +461,13 @@ Agreed upon during the refactoring review meeting. Each item will be expanded wi
   - **Streaming**: In `_convert_delta_to_message_chunk()`, if the stream delta contains `reasoning_content`, it is passed into the chunk’s `additional_kwargs` so streamed responses also expose reasoning when the API sends it.
 - **Usage**: `llm = GigaChat(model="GigaChat-2-Reasoning", reasoning_effort="medium")` then `msg = llm.invoke([HumanMessage(content="...")])`; reasoning text is in `msg.content` (if reflected in content) or in `msg.additional_kwargs.get("reasoning_content")`.
 - **Status**: Implemented.
+
+## File API Cleanup (2.17)
+
+- **Problem**: `_BaseGigaChat.get_file` / `aget_file` delegated to SDK `get_image` / `aget_image` and returned file **content** (base64, `gm.Image`), while the name suggested generic "file" and the SDK already has `get_file` returning **metadata** (`gm.UploadedFile`). The API surface did not expose SDK endpoints for listing files (GET /files) or deleting a file (DELETE /files/{id}).
+- **Solution**:
+  - **Naming and semantics**: Aligned with the SDK. `get_file` / `aget_file` now return **file metadata** (`gm.UploadedFile`) via SDK `get_file` / `aget_file`. New methods `get_file_content` / `aget_file_content` return **file content** (base64, `gm.Image`) via SDK `get_image` / `aget_image`.
+  - **New methods**: Added `list_files` / `alist_files` (SDK `get_files` / `aget_files`, GET /files) returning `gm.UploadedFiles`; `delete_file` / `adelete_file` (SDK `delete_file` / `adelete_file`, DELETE /files/{id}) returning `gm.DeletedFile`.
+  - **Breaking change**: Code that used `llm.get_file(file_id)` to obtain content (e.g. `llm.get_file(id).content`) must switch to `llm.get_file_content(file_id).content`. Code that needs only metadata can use `llm.get_file(file_id)` (now returns `UploadedFile`).
+- **Verification**: `uv run ruff check`, `uv run mypy`, `uv run pytest`. Updated `libs/gigachat/tmp/content-blocks-testing.ipynb` to use `get_file_content` where content is required.
+- **Status**: Completed.

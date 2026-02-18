@@ -199,3 +199,9 @@
 - [x] Remove `TYPE_CHECKING` and conditional `import gigachat.models as gm` from `gigachat.py`
 - [x] Use top-level `import gigachat.models as gm` (no circular import; types used in annotations only)
 - [x] Update `docs/REFACTORING.md` (checkbox)
+
+### 2.17. `get_file` Naming and API Surface Cleanup
+- [x] Align `get_file`/`aget_file` with SDK: now return file metadata (`gm.UploadedFile`) via SDK `get_file`/`aget_file`
+- [x] Add `get_file_content`/`aget_file_content` for file content (base64, `gm.Image`) via SDK `get_image`/`aget_image`
+- [x] Add `list_files`/`alist_files` (GET /files), `delete_file`/`adelete_file` (DELETE /files/{id})
+- [x] Document in `docs/REFACTORING.md` (checkbox + "File API Cleanup (2.17)" section)
