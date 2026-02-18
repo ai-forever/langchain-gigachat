@@ -217,7 +217,6 @@ def _convert_message_to_dict(
         kwargs["content"] = content
     elif isinstance(message, FunctionMessage):
         kwargs["role"] = MessagesRole.FUNCTION
-        # TODO Switch to using 'result' field in future GigaChat models
         kwargs["content"] = _validate_content(content)
     elif isinstance(message, ToolMessage):
         kwargs["role"] = MessagesRole.FUNCTION
