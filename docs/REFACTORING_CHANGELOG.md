@@ -70,7 +70,7 @@
   - [x] Rewrite `.github/workflows/_lint.yml` to use `astral-sh/setup-uv@v5`
   - [x] Rewrite `.github/workflows/_test.yml` to use `astral-sh/setup-uv@v5`
   - [x] Update `.github/workflows/check_diffs.yml`: remove `POETRY_VERSION` env
-  - [x] Update test matrix: Python 3.9-3.13 + 3.14 (experimental)
+  - [x] Update test matrix: Python 3.10-3.13 + 3.14 (experimental)
   - [x] Delete `.github/actions/poetry_setup/` custom action
 - [x] Lock file transition
   - [x] Delete `poetry.lock`

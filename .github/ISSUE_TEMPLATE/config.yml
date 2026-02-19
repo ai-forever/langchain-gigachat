@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 📚 LangChain Documentation
+    url: https://python.langchain.com/docs/
+    about: LangChain Python documentation and guides
+  - name: 📚 GigaChat API
+    url: https://developers.sber.ru/docs/ru/gigachat/api/main
+    about: Official GigaChat API documentation
+  - name: 🔗 GigaChat SDK (gigachat)
+    url: https://github.com/ai-forever/gigachat
+    about: Underlying GigaChat Python SDK
