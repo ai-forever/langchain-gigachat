@@ -205,3 +205,20 @@
 - [x] Add `get_file_content`/`aget_file_content` for file content (base64, `gm.Image`) via SDK `get_image`/`aget_image`
 - [x] Add `list_files`/`alist_files` (GET /files), `delete_file`/`adelete_file` (DELETE /files/{id})
 - [x] Document in `docs/REFACTORING.md` (checkbox + "File API Cleanup (2.17)" section)
+
+### 2.14. Function/Tool Message Handling Fixes (partial)
+- [x] Forward `FunctionMessage.name` to `gm.Messages.name` in `_convert_message_to_dict()`
+  - [x] `kwargs["name"] = message.name` always set (field is required in `FunctionMessage`)
+  - [x] Fixes silent bug: every `FunctionMessage` was sent to the API without a function name
+- [x] Forward `ToolMessage.name` to `gm.Messages.name` in `_convert_message_to_dict()`
+  - [x] `kwargs["name"] = message.name` set when `message.name` is truthy (field is optional in `ToolMessage`)
+  - [x] When name is absent `gm.Messages.name` stays `None`; API returns an explicit error instead of silently corrupting the payload
+- [x] Raise `ValueError` when `AIMessage.tool_calls` contains more than one entry
+  - [x] GigaChat API does not support parallel function calls in one turn
+  - [x] Previously only `tool_calls[0]` was forwarded; remaining calls were silently dropped, corrupting conversation history
+  - [x] Explicit error surfaces the API limitation at conversion time, consistent with `tool_choice='any'` handling
+- [x] Update tests
+  - [x] Fix `test__convert_message_to_dict_function` — add `name="func"` to expected `Messages` (revealed pre-existing bug)
+  - [x] Add `test__convert_message_to_dict_tool_message_with_name` — name is forwarded when set
+  - [x] Add `test__convert_message_to_dict_tool_message_without_name` — name stays `None` when absent
+- [x] Verification: `uv run ruff check` — passed; `uv run pytest` — 57 passed

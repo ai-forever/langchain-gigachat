@@ -281,7 +281,7 @@ Agreed upon during the refactoring review meeting. Each item will be expanded wi
 - [x] **2.11. Remove `trim_content_to_stop_sequence`** — Fully remove the function and all call sites (`_generate`, `_agenerate`, `_stream`, `_astream`). Stop sequence handling should be API-side. See dedicated section below.
 - [x] **2.12. `x_headers` Audit** — Map all places where `x_headers` are set/consumed (`response_metadata`, `generation_info`, `message.id`). Decide on refactoring or documentation.
 - [x] **2.13. `TYPE_CHECKING` Block** — Remove conditional `TYPE_CHECKING` import in `gigachat.py` or confirm it is necessary.
-- [ ] **2.14. LangChain 1.0 New Mechanisms** — Test compatibility with content blocks, `create_agent`, middleware. Additionally review: multi-tool calling support (currently only `tool_calls[0]` is forwarded), `ToolMessage` role mapping (`role="function"` — check if API supports a proper tool role), and SDK exception translation to LangChain exception types.
+- [ ] **2.14. LangChain 1.0 New Mechanisms** — Test compatibility with content blocks, `create_agent`, middleware. Additionally review: ~~multi-tool calling support (currently only `tool_calls[0]` is forwarded)~~ (done: raises `ValueError`), ~~`ToolMessage`/`FunctionMessage` name forwarding~~ (done), `ToolMessage` role mapping (`role="function"` — check if API supports a proper tool role), and SDK exception translation to LangChain exception types.
 - [x] **2.15. CI/Contribution Documentation** — Create or rewrite CI docs, contribution guide, and other developer docs following LangChain upstream conventions.
 - [ ] **2.16. CI Refactoring** — Review tests (remove unnecessary, add missing), assess coverage (~70%), decide on expansion. VCR tests — not now.
 - [x] **2.17. `get_file` Naming and API Surface Cleanup** — `_BaseGigaChat.get_file/aget_file` actually calls SDK `get_image/aget_image` (downloads file content, not metadata). Rename or document clearly. Also consider wrapping additional SDK-only file endpoints (`GET /files`, `DELETE /files/{id}`) if useful.
@@ -482,3 +482,93 @@ Agreed upon during the refactoring review meeting. Each item will be expanded wi
   - **Breaking change**: Code that used `llm.get_file(file_id)` to obtain content (e.g. `llm.get_file(id).content`) must switch to `llm.get_file_content(file_id).content`. Code that needs only metadata can use `llm.get_file(file_id)` (now returns `UploadedFile`).
 - **Verification**: `uv run ruff check`, `uv run mypy`, `uv run pytest`. Updated `libs/gigachat/tmp/content-blocks-testing.ipynb` to use `get_file_content` where content is required.
 - **Status**: Completed.
+
+---
+
+## Function/Tool Message Handling Fixes (2.14, partial)
+
+- **Problem**: Three silent bugs in `_convert_message_to_dict()` caused incorrect API payloads without raising any error:
+  1. **`FunctionMessage.name` never forwarded** — `gm.Messages.name` was left `None` even though
+     `FunctionMessage.name` is a required field in LangChain and the GigaChat API documents `name`
+     as *"Required if role is 'function'"*. Every `FunctionMessage` was sent to the API without a
+     function name, which could cause the model to misidentify or ignore the function result.
+  2. **`ToolMessage.name` never forwarded** — same issue as above for the modern LangChain 1.x
+     message type. `ToolMessage.name` is optional (`Optional[str]`), but when set (which happens
+     automatically in LangChain agents) it was silently discarded.
+  3. **Multiple `tool_calls` silently dropped** — when an `AIMessage` contained more than one
+     `tool_calls` entry (parallel tool calling), only `tool_calls[0]` was forwarded to the API and
+     the rest were silently lost. The GigaChat API does not support parallel function calls in one
+     turn, so the correct behaviour is an explicit error rather than silent data loss.
+- **Solution**:
+  - `FunctionMessage`: added `kwargs["name"] = message.name`. The field is always present and
+    required on the LangChain side, so it is always forwarded.
+  - `ToolMessage`: added `kwargs["name"] = message.name` guarded by `if message.name`. When the
+    name is absent (the field is optional in LangChain), `gm.Messages.name` stays `None` and the
+    API can return its own error — explicit API feedback is better than silent wrong behaviour.
+  - `AIMessage` with multiple `tool_calls`: raises `ValueError` with a clear message explaining the
+    API limitation and instructing the caller to use one tool call per turn.
+- **Why explicit error over silent conversion for multiple tool_calls**:
+  - Silently forwarding only `tool_calls[0]` means the model receives a function result for one
+    tool but the conversation history contains no record of the other calls — the context becomes
+    corrupted and later turns may behave unpredictably.
+  - An immediate `ValueError` surfaces the problem at the point of conversion, making it easy to
+    diagnose. This follows the same "fail loudly" principle used for `tool_choice='any'`.
+- **Tests**:
+  - Updated `test__convert_message_to_dict_function` — added `name="func"` to `Messages` expected
+    value (was `None`, revealing the pre-existing bug).
+  - Added `test__convert_message_to_dict_tool_message_with_name` — verifies `name` is forwarded.
+  - Added `test__convert_message_to_dict_tool_message_without_name` — verifies `name` stays `None`
+    when `ToolMessage.name` is not set.
+- **Verification**:
+  - `uv run ruff check` — passed
+  - `uv run pytest` — 57 passed
+- **Status**: Completed (partial 2.14 — remaining sub-items: content blocks compatibility,
+  `create_agent`, middleware, SDK exception translation).
+
+---
+
+## Breaking Changes
+
+Consolidated list for release notes. Each entry links to the section where it is fully described.
+
+### Removed APIs
+
+| What | Was | Now | Migration |
+|------|-----|-----|-----------|
+| `GigaChat(verbose=True)` | Logged requests/responses | Field removed | Use Python `logging` at `DEBUG` level; see [Remove `verbose` Parameter](#remove-verbose-parameter) |
+| `llm.predict("text")` | Returned `str` | Method removed (LangChain 1.x) | `llm.invoke("text").content` |
+| `await llm.apredict("text")` | Returned `str` | Method removed (LangChain 1.x) | `(await llm.ainvoke("text")).content` |
+| `_BaseGigaChat(profanity=True)` | Deprecated alias | Field removed | Use `profanity_check=True` |
+| `GigaChatEmbeddings(one_by_one_mode=True)` | Processed texts one-by-one | Field removed | API handles batching natively; no replacement needed |
+| `GigaChatEmbeddings(_debug_delay=...)` | Debug delay between requests | Field removed | No replacement |
+| `with_structured_output(method="format_instructions")` | Prompt-injection structured output | `ValueError` | Use `method="function_calling"` (preferred) or `method="json_mode"`; see [Remove `format_instructions`](#remove-format_instructions-structured-output-mode) |
+| `langchain_gigachat.output_parsers.gigachat_functions` | Legacy output parsers module | Module deleted | Use `PydanticToolsParser` / `JsonOutputKeyToolsParser` from `langchain_core` |
+| `langchain_gigachat.tools.load_prompt` | Legacy prompt-loading module | Module deleted | No replacement; was not part of public API |
+| `GigaChat(auto_upload_images=True)` | Auto-upload images only | Field removed | Use `auto_upload_attachments=True` (covers images, audio, documents) |
+
+### Changed Behaviour
+
+| What | Before | After | Details |
+|------|--------|-------|---------|
+| `tool_choice="any"` in `bind_tools()` | Silently converted to `"auto"` | Raises `ValueError` | Set `allow_any_tool_choice_fallback=True` to restore old behaviour with a warning; see [LangChain Core 1.x Support](#langchain-core-1x-support-branch-lc1-support) |
+| Multiple `tool_calls` in `AIMessage` | First call forwarded, rest silently dropped | Raises `ValueError` | Use one tool call per turn; GigaChat API does not support parallel function calls |
+| `get_file(file_id)` return type | `gm.Image` (file content, base64) | `gm.UploadedFile` (metadata) | Use `get_file_content(file_id)` to download content; see [File API Cleanup](#file-api-cleanup-217) |
+| `gigachat` dependency | `^0.1.41.post1` | `>=0.2.0,<0.3` | Upstream breaking change; Pydantic V2 required |
+| `langchain-core` dependency | `>=0.3,<1` | `>=1,<2` | LangChain 1.x is now required |
+| Python version | `>=3.9` | `>=3.10` | LangChain 1.x minimum |
+
+### Known Regressions (to fix before release)
+
+*None at present.*
+
+---
+
+## Pre-release Checklist
+
+Steps required before merging `lc1-support` branch and publishing to PyPI.
+
+- [ ] **Rename package**: `libs/gigachat/pyproject.toml` — change `name = "langchain-gigachat-lc1"` back to `name = "langchain-gigachat"`. Also update the self-dependency in `[dependency-groups] dev`.
+- [ ] **Bump version**: update `version` in `libs/gigachat/pyproject.toml` to the next release (e.g. `0.4.0`). Remove the `b4` pre-release suffix.
+- [ ] **Coordinate with `gigachat` release**: ensure `gigachat>=0.2.0,<0.3` is published on PyPI and the git-URL dependency (if any) is replaced with the PyPI constraint.
+- [ ] **Run full verification**: `uv run ruff check . && uv run ruff format --check . && uv run mypy langchain_gigachat && uv run pytest`.
+- [ ] **Update CHANGELOG / release notes** if maintained.
