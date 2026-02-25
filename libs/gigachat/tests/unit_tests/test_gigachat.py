@@ -258,11 +258,37 @@ def test__convert_message_to_dict_ai() -> None:
 def test__convert_message_to_dict_function(pairs: Any) -> None:
     """Checks if string, that was not JSON was converted to JSON"""
     message = FunctionMessage(content=pairs[0], id="1", name="func")
-    expected = Messages(id=None, role=MessagesRole.FUNCTION, content=pairs[1])
+    expected = Messages(
+        id=None, role=MessagesRole.FUNCTION, content=pairs[1], name="func"
+    )
 
     actual = _convert_message_to_dict(message)
 
     assert actual == expected
+
+
+def test__convert_message_to_dict_tool_message_with_name() -> None:
+    """ToolMessage with name forwards it to gm.Messages.name."""
+    from langchain_core.messages import ToolMessage
+
+    message = ToolMessage(content="result", tool_call_id="call-1", name="my_tool")
+    actual = _convert_message_to_dict(message)
+
+    assert actual.role == MessagesRole.FUNCTION
+    assert actual.name == "my_tool"
+    assert actual.content == '"result"'  # _validate_content wraps non-JSON strings
+
+
+def test__convert_message_to_dict_tool_message_without_name() -> None:
+    """ToolMessage without name leaves gm.Messages.name as None."""
+    from langchain_core.messages import ToolMessage
+
+    message = ToolMessage(content="result", tool_call_id="call-1")
+    actual = _convert_message_to_dict(message)
+
+    assert actual.role == MessagesRole.FUNCTION
+    assert actual.name is None
+    assert actual.content == '"result"'  # _validate_content wraps non-JSON strings
 
 
 @pytest.mark.parametrize(

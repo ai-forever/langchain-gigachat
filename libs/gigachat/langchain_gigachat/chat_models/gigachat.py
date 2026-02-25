@@ -253,6 +253,13 @@ def _convert_message_to_dict(
         kwargs["content"] = content
     elif isinstance(message, AIMessage):
         if tool_calls := getattr(message, "tool_calls", None):
+            if len(tool_calls) > 1:
+                raise ValueError(
+                    "GigaChat API does not support multiple tool calls in a single "
+                    "message. Received an AIMessage with "
+                    f"{len(tool_calls)} tool_calls. "
+                    "Use a single tool call per turn."
+                )
             function_call = copy.deepcopy(tool_calls[0])
 
             if "args" in function_call:
@@ -267,9 +274,12 @@ def _convert_message_to_dict(
         kwargs["content"] = content
     elif isinstance(message, FunctionMessage):
         kwargs["role"] = MessagesRole.FUNCTION
+        kwargs["name"] = message.name
         kwargs["content"] = _validate_content(content)
     elif isinstance(message, ToolMessage):
         kwargs["role"] = MessagesRole.FUNCTION
+        if message.name:
+            kwargs["name"] = message.name
         kwargs["content"] = _validate_content(content)
     else:
         raise TypeError(f"Got unknown type {message}")
