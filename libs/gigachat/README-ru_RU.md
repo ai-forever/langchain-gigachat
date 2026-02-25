@@ -2,8 +2,10 @@
 
 [![GitHub Release](https://img.shields.io/github/v/release/ai-forever/langchain-gigachat?style=flat-square)](https://github.com/ai-forever/langchain-gigachat/releases)
 [![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/ai-forever/langchain-gigachat/check_diffs.yml?style=flat-square)](https://github.com/ai-forever/langchain-gigachat/actions/workflows/check_diffs.yml)
+[![PyPI - Version](https://img.shields.io/pypi/v/langchain-gigachat?label=PyPI&style=flat-square)](https://pypi.org/project/langchain-gigachat/#history)
+[![PyPI - Python Version](https://img.shields.io/pypi/pyversions/langchain-gigachat?style=flat-square)](https://pypi.org/project/langchain-gigachat/)
 [![GitHub License](https://img.shields.io/github/license/ai-forever/langchain-gigachat?style=flat-square)](https://opensource.org/license/MIT)
-[![GitHub Downloads (all assets, all releases)](https://img.shields.io/pypi/dm/langchain-gigachat?style=flat-square?style=flat-square)](https://pypistats.org/packages/langchain-gigachat)
+[![GitHub Downloads (all assets, all releases)](https://img.shields.io/pypi/dm/langchain-gigachat?style=flat-square)](https://pypistats.org/packages/langchain-gigachat)
 [![GitHub Repo stars](https://img.shields.io/github/stars/ai-forever/langchain-gigachat?style=flat-square)](https://star-history.com/#ai-forever/langchain-gigachat)
 [![GitHub Open Issues](https://img.shields.io/github/issues-raw/ai-forever/langchain-gigachat)](https://github.com/ai-forever/langchain-gigachat/issues)
 
@@ -13,150 +15,197 @@
 
 # langchain-gigachat
 
-Библиотека `langchain-gigachat` позволяет использовать нейросетевые модели GigaChat при разработке LLM-приложений с помощью фреймворков LangChain и LangGraph.
+Библиотека `langchain-gigachat` — интеграция [GigaChat](https://giga.chat/) с LangChain и LangGraph (чат-модель, эмбеддинги, tool/function calling, вложения).
 
 Библиотека входит в набор решений [GigaChain](https://github.com/ai-forever/gigachain).
 
-## Требования
+## Быстрая установка
 
-Для работы с библиотекой и обмена сообщениями с моделями GigaChat понадобятся:
-
-* Python версии 3.9 и выше;
-* [сертификат НУЦ Минцифры](https://developers.sber.ru/docs/ru/gigachat/certificates);
-* [ключ авторизации](https://developers.sber.ru/docs/ru/gigachat/quickstart/ind-using-api#poluchenie-avtorizatsionnyh-dannyh) GigaChat API.
-
-> [!NOTE]
-> Вы также можете использовать другие [способы авторизации](#способы-авторизации).
-
-## Установка
-
-Для установки библиотеки используйте менеджер пакетов pip:
-
-```sh
+```bash
 pip install -U langchain-gigachat
 ```
 
+## 🤔 Что это?
+
+Пакет предоставляет:
+
+- **Чат-модель**: `langchain_gigachat.GigaChat` (sync/async, streaming, tool calling, structured output)
+- **Эмбеддинги**: `langchain_gigachat.GigaChatEmbeddings`
+- **Хелпер для tools**: `langchain_gigachat.tools.giga_tool.giga_tool` (расширение LangChain `@tool` для возможностей GigaChat)
+- **Вложения**: загрузка файлов и отправка как `content_blocks` (картинки/аудио/документы)
+
+## Требования
+
+- Python **3.10+**
+- Доступ к GigaChat API (ключ авторизации, access token или другой поддерживаемый способ)
+- TLS/корневой сертификат (рекомендуется). Если в вашей среде требуется свой bundle, укажите `GIGACHAT_CA_BUNDLE_FILE` / `ca_bundle_file`.
+
+Полезные ссылки:
+
+- [README GigaChat Python SDK](https://github.com/ai-forever/gigachat/blob/main/README.md)
+- [Документация GigaChat API](https://developers.sber.ru/docs/ru/gigachat)
+- [Сертификаты (НУЦ Минцифры)](https://developers.sber.ru/docs/ru/gigachat/certificates)
+- [Как получить ключ авторизации](https://developers.sber.ru/docs/ru/gigachat/quickstart/ind-using-api#poluchenie-avtorizatsionnyh-dannyh)
+
 ## Быстрый старт
 
-### Запрос на генерацию
+### Чат
 
-Пример запроса на генерацию:
+```python
+from langchain_gigachat import GigaChat
 
-```py
-from langchain_gigachat.chat_models import GigaChat
+llm = GigaChat(
+    credentials="ВАШ_КЛЮЧ_АВТОРИЗАЦИИ",
+    verify_ssl_certs=False,  # только для разработки (лучше настроить CA bundle)
+)
 
-giga = GigaChat(
-    # Для авторизации запросов используйте ключ, полученный в проекте GigaChat API
-    credentials="ваш_ключ_авторизации",
+msg = llm.invoke("Привет, GigaChat!")
+print(msg.content)
+```
+
+### Стриминг
+
+```python
+from langchain_gigachat import GigaChat
+
+llm = GigaChat(credentials="ВАШ_КЛЮЧ_АВТОРИЗАЦИИ", verify_ssl_certs=False)
+
+for chunk in llm.stream("Напиши короткое четверостишие про программирование"):
+    print(chunk.content, end="", flush=True)
+print()
+```
+
+### Async
+
+```python
+import asyncio
+
+from langchain_gigachat import GigaChat
+
+
+async def main() -> None:
+    llm = GigaChat(credentials="ВАШ_КЛЮЧ_АВТОРИЗАЦИИ", verify_ssl_certs=False)
+    msg = await llm.ainvoke("Объясни квантовые вычисления простыми словами.")
+    print(msg.content)
+
+
+asyncio.run(main())
+```
+
+### Эмбеддинги
+
+```python
+from langchain_gigachat import GigaChatEmbeddings
+
+emb = GigaChatEmbeddings(
+    credentials="ВАШ_КЛЮЧ_АВТОРИЗАЦИИ",
     verify_ssl_certs=False,
+    model="Embeddings",
 )
 
-print(giga.invoke("Hello, world!"))
+vector = emb.embed_query("Привет!")
+print(len(vector))
 ```
 
-### Создание эмбеддингов
+## Tool / Function calling
 
-Пример создания векторного представления текста:
+Используйте `giga_tool` (аналог LangChain `@tool` с дополнительными полями, которые поддерживает GigaChat).
 
-```py
-from langchain_gigachat.embeddings import GigaChatEmbeddings
+```python
+from langchain_gigachat import GigaChat
+from langchain_gigachat.tools.giga_tool import giga_tool
 
-embeddings = GigaChatEmbeddings(credentials="ключ_авторизации", verify_ssl_certs=False)
-result = embeddings.embed_documents(texts=["Привет!"])
-print(result)
+
+@giga_tool
+def get_weather(city: str) -> str:
+    """Вернуть погоду для города."""
+    return f"{city}: солнечно"
+
+
+llm = GigaChat(credentials="ВАШ_КЛЮЧ_АВТОРИЗАЦИИ", verify_ssl_certs=False)
+llm_with_tools = llm.bind_tools([get_weather], tool_choice="auto")
+
+msg = llm_with_tools.invoke("Какая погода в Токио?")
+print(msg.tool_calls)
 ```
 
-## Параметры объекта GigaChat
+Примечания:
 
-В таблице описаны параметры, которые можно передать при инициализации объекта GigaChat:
+- `tool_choice="any"` **не поддерживается** API GigaChat. Используйте `"auto"`, `"none"` или конкретное имя tool. Если вы получаете `"any"` из внешнего кода, можно создать `GigaChat(..., allow_any_tool_choice_fallback=True)`, чтобы автоматически преобразовывать `"any"` → `"auto"`.
 
-| Параметр           | Обязательный | Описание                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| ------------------ | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `credentials`      | да           | Ключ авторизации для обмена сообщениями с GigaChat API.<br />Ключ авторизации содержит информацию о версии API, к которой выполняются запросы. Если вы используете версию API для ИП или юрлиц, укажите это явно в параметре `scope`                                                                                                                                                                                                                                                                                                                   |
-| `verify_ssl_certs` | нет          | Отключение проверки ssl-сертификатов.<br /><br />Для обращения к GigaChat API нужно [установить корневой сертификат НУЦ Минцифры](#установка-корневого-сертификата-нуц-минцифры).<br /><br />Используйте параметр ответственно, так как отключение проверки сертификатов снижает безопасность обмена данными                                                                                                                                                                                                                                                                                                                                                                                           |
-| `scope`            | нет          | Версия API, к которой будет выполнен запрос. По умолчанию запросы передаются в версию для физических лиц. Возможные значения:<ul><li>`GIGACHAT_API_PERS` — версия API для физических лиц;</li><li>`GIGACHAT_API_B2B` — версия API для ИП и юрлиц при работе по предоплате.</li><li>`GIGACHAT_API_CORP` — версия API для ИП и юрлиц при работе по постоплате.</li></ul>                                                                                                                                                                                 |
-| `model`            | нет          | необязательный параметр, в котором можно явно задать [модель GigaChat](https://developers.sber.ru/docs/ru/gigachat/models). Вы можете посмотреть список доступных моделей с помощью метода `get_models()`, который выполняет запрос [`GET /models`](https://developers.sber.ru/docs/ru/gigachat/api/reference#get-models).<br /><br />Стоимость запросов к разным моделям отличается. Подробную информацию о тарификации запросов к той или иной модели вы ищите в [официальной документации](https://developers.sber.ru/docs/ru/gigachat/api/tariffs) |
-| `base_url`         | нет          | Адрес API. По умолчанию запросы отправляются по адресу `https://gigachat.devices.sberbank.ru/api/v1/`, но если вы хотите использовать [модели в раннем доступе](https://developers.sber.ru/docs/ru/gigachat/models/preview-models), укажите адрес `https://gigachat-preview.devices.sberbank.ru/api/v1`                                                                                                                                                                                                                                                |
+## Structured output
 
-> [!TIP]
-> Чтобы не указывать параметры при каждой инициализации, задайте их в [переменных окружения](#настройка-переменных-окружения).
+```python
+from pydantic import BaseModel, Field
 
-## Способы авторизации
+from langchain_gigachat import GigaChat
 
-Для авторизации запросов, кроме ключа, полученного в личном кабинете, вы можете использовать:
 
-* имя пользователя и пароль для доступа к сервису;
-* сертификаты TLS;
-* токен доступа (access token), полученный в обмен на ключ авторизации в запросе [`POST /api/v2/oauth`](https://developers.sber.ru/docs/ru/gigachat/api/reference/rest/post-token).
+class Answer(BaseModel):
+    """Структурированный ответ."""
 
-Для этого передайте соответствующие параметры при инициализации.
+    text: str = Field(description="Ответ")
+    confidence: float = Field(ge=0, le=1, description="Уверенность 0..1")
 
-Пример авторизации с помощью логина и пароля:
 
-```py
-giga = GigaChat(
-    base_url="https://gigachat.devices.sberbank.ru/api/v1",
-    user="имя_пользоваеля",
-    password="пароль",
+llm = GigaChat(credentials="ВАШ_КЛЮЧ_АВТОРИЗАЦИИ", verify_ssl_certs=False)
+chain = llm.with_structured_output(Answer)
+parsed = chain.invoke("Ответь коротко и добавь уверенность.")
+print(parsed)
+```
+
+Также можно использовать JSON mode: `llm.with_structured_output(Answer, method="json_mode")`.
+
+## Вложения (картинки/аудио/документы)
+
+Загрузите файл через Files API и передайте его как стандартное вложение LangChain (`content_blocks`).
+
+```python
+from langchain_core.messages import HumanMessage
+
+from langchain_gigachat import GigaChat
+
+llm = GigaChat(credentials="ВАШ_КЛЮЧ_АВТОРИЗАЦИИ", verify_ssl_certs=False)
+
+with open("image.png", "rb") as f:
+    uploaded = llm.upload_file(("image.png", f.read()))
+
+msg = HumanMessage(
+    content_blocks=[
+        {"type": "text", "text": "Опиши картинку."},
+        {"type": "image", "file_id": uploaded.id_},
+    ]
 )
+
+reply = llm.invoke([msg])
+print(reply.content)
 ```
 
-Авторизация с помощью сертификатов по протоколу TLS (mTLS):
+## Конфигурация
 
-```py
-giga = GigaChat(
-    base_url="https://gigachat.devices.sberbank.ru/api/v1",
-    ca_bundle_file="certs/ca.pem",  # chain_pem.txt
-    cert_file="certs/tls.pem",  # published_pem.txt
-    key_file="certs/tls.key",
-    key_file_password="123456",
-    ssl_context=context # optional ssl.SSLContext instance
-)
-```
+Параметры можно передавать в `GigaChat(...)` / `GigaChatEmbeddings(...)` напрямую или через переменные окружения с префиксом `GIGACHAT_`.
 
-Авторизация с помощью токена доступа:
+Примечания:
 
-```py
-giga = GigaChat(
-    access_token="ваш_токен_доступа",
-)
-```
+- Если вы передаёте Base64 data URL в блоках `image_url` / `audio_url` / `document_url`, можно включить `auto_upload_attachments=True`, чтобы автоматически загружать такие вложения. Это **не рекомендуется для production**; предпочтительнее явно вызывать `upload_file(...)`.
+- Повторы запросов (retry) делает `gigachat` SDK (`max_retries`, `retry_backoff_factor`, `retry_on_status_codes`). Не включайте retries одновременно в SDK и в LangChain (например, `.with_retry()`), иначе число попыток перемножится.
 
-> [!NOTE]
-> Токен действителен в течение 30 минут.
-> При использовании такого способа авторизации, в приложении нужно реализовать механизм обновления токена.
+Часто используемые переменные:
 
-### Предварительная авторизация
+| Переменная | Значение |
+|---|---|
+| `GIGACHAT_CREDENTIALS` | Ключ/credentials (OAuth) |
+| `GIGACHAT_ACCESS_TOKEN` | Готовый access token (JWT) |
+| `GIGACHAT_SCOPE` | Scope (`GIGACHAT_API_PERS`, `GIGACHAT_API_B2B`, `GIGACHAT_API_CORP`) |
+| `GIGACHAT_BASE_URL` | Base URL API |
+| `GIGACHAT_VERIFY_SSL_CERTS` | Включить/выключить проверку TLS |
+| `GIGACHAT_CA_BUNDLE_FILE` | Путь к CA bundle |
 
-По умолчанию, библиотека GigaChat получает токен доступа при первом запросе к API.
+## 📖 Документация
 
-Если вам нужно получить токен и авторизоваться до выполнения запроса, инициализируйте объект GigaChat и вызовите метод `get_token()`.
+- **Исходники**: `langchain_gigachat/`
+- **GigaChat SDK**: [README](https://github.com/ai-forever/gigachat/blob/main/README.md)
 
-```py
-giga = GigaChat(
-    base_url="https://gigachat.devices.sberbank.ru/api/v1",
-    user="имя_пользователя",
-    password="пароль",
-)
-giga.get_token()
-```
+## 💁 Участие в разработке
 
-## Настройка переменных окружения
-
-Чтобы задать параметры с помощью переменных окружения, в названии переменной используйте префикс `GIGACHAT_`.
-
-Пример переменных окружения, которые задают ключ авторизации, версию API и отключают проверку сертификатов.
-
-```sh
-export GIGACHAT_CREDENTIALS=...
-export GIGACHAT_SCOPE=...
-export GIGACHAT_VERIFY_SSL_CERTS=False
-```
-
-Пример переменных окружения, которые задают адрес API, имя пользователя и пароль.
-
-```sh
-export GIGACHAT_BASE_URL=https://gigachat.devices.sberbank.ru/api/v1
-export GIGACHAT_USER=...
-export GIGACHAT_PASSWORD=...
-```
+См. [`CONTRIBUTING.md`](../../CONTRIBUTING.md). Разработка ведётся в `libs/gigachat` (команды: `uv sync`, затем `make lint_package` / `make test`).

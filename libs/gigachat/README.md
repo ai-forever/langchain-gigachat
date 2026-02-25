@@ -130,7 +130,6 @@ print(msg.tool_calls)
 Notes:
 
 - `tool_choice="any"` is **not supported** by the GigaChat API. Use `"auto"`, `"none"`, or a specific tool name. If you must accept `"any"` from upstream code, set `allow_any_tool_choice_fallback=True` in `GigaChat(...)` to convert it to `"auto"`.
-- For richer tool schemas, you can attach `return_schema` and `few_shot_examples` to a tool (see `examples/with_gigachat_extras_example.py`).
 
 ## Structured output
 
