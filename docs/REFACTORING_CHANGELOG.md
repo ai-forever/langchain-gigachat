@@ -219,3 +219,10 @@
   - [x] Add `test__convert_message_to_dict_tool_message_with_name` — name is forwarded when set
   - [x] Add `test__convert_message_to_dict_tool_message_without_name` — name stays `None` when absent
 - [x] Verification: `uv run ruff check` — passed; `uv run pytest` — 57 passed
+
+### Cleanup `_convert_any_typed_dicts_to_pydantic` in `function_calling.py`
+- [x] Replace `_parse_google_docstring` local copy with import from `langchain_core.utils.function_calling`
+- [x] Use `get_type_hints(typed_dict, include_extras=True)` with fallback (PEP 649 / Python 3.14+ compat, synced with upstream langchain-core)
+- [x] Remove dead `else: pass` branch; change `elif` to `if` for docstring description override
+- [x] Add docstring to `_convert_any_typed_dicts_to_pydantic`
+- [x] Verification: `uv run ruff check` — passed; `uv run pytest` — 35 passed

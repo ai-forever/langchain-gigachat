@@ -18,10 +18,11 @@ from typing import (
 from langchain_core.tools import BaseTool, Tool
 from langchain_core.utils.function_calling import (
     FunctionDescription,
+    _parse_google_docstring,
     is_basemodel_subclass,
 )
 from langchain_core.utils.json_schema import dereference_refs
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, create_model
 from typing_extensions import get_args, get_origin, is_typeddict
 
 
@@ -36,7 +37,7 @@ class GigaFunctionDescription(FunctionDescription):
 
 SCHEMA_DO_NOT_SUPPORT_MESSAGE = """Incorrect function schema!
 {schema}
-GigaChat currently do not support these typings: 
+GigaChat currently do not support these typings:
 Union[X, Y, ...]"""
 
 
@@ -104,8 +105,13 @@ def _is_optional(field: type) -> bool:
 def _convert_any_typed_dicts_to_pydantic(
     type_: type, *, visited: dict, depth: int = 0
 ) -> type:
-    from pydantic import Field, create_model
+    """Recursively convert TypedDict types to Pydantic BaseModel.
 
+    Pydantic models are required for JSON Schema generation via
+    ``model_json_schema()``.  TypedDict classes lack this method, so every
+    TypedDict encountered in the type tree (including nested generics like
+    ``List[MyTypedDict]``) is replaced with a dynamically created BaseModel.
+    """
     if type_ in visited:
         return visited[type_]
     elif depth >= _MAX_TYPED_DICT_RECURSION:
@@ -113,7 +119,10 @@ def _convert_any_typed_dicts_to_pydantic(
     elif is_typeddict(type_):
         typed_dict = type_
         docstring = inspect.getdoc(typed_dict)
-        annotations_ = typed_dict.__annotations__
+        try:
+            annotations_ = get_type_hints(typed_dict, include_extras=True)
+        except Exception:
+            annotations_ = typed_dict.__annotations__
         description, arg_descriptions = _parse_google_docstring(
             docstring, list(annotations_)
         )
@@ -134,10 +143,8 @@ def _convert_any_typed_dicts_to_pydantic(
                         f"type {type(field_desc)}."
                     )
                     raise ValueError(msg)
-                elif arg_desc := arg_descriptions.get(arg):
+                if arg_desc := arg_descriptions.get(arg):
                     field_kwargs["description"] = arg_desc
-                else:
-                    pass
                 fields[arg] = (new_arg_type, Field(**field_kwargs))
             else:
                 new_arg_type = _convert_any_typed_dicts_to_pydantic(
@@ -155,7 +162,7 @@ def _convert_any_typed_dicts_to_pydantic(
         visited[typed_dict] = model
         return model
     elif (origin := get_origin(type_)) and (type_args := get_args(type_)):
-        subscriptable_origin = _py_38_safe_origin(origin)
+        subscriptable_origin = _subscriptable_origin(origin)
         type_args = tuple(
             _convert_any_typed_dicts_to_pydantic(arg, depth=depth + 1, visited=visited)
             for arg in type_args  # type: ignore[index]
@@ -165,7 +172,14 @@ def _convert_any_typed_dicts_to_pydantic(
         return type_
 
 
-def _py_38_safe_origin(origin: type) -> type:
+def _subscriptable_origin(origin: type) -> type:
+    """Map a runtime generic origin to a subscriptable typing equivalent.
+
+    ``typing.get_origin()`` returns raw objects (``collections.abc.Sequence``,
+    ``types.UnionType``, etc.) that cannot be subscripted with ``[...]``.
+    This function replaces them with subscriptable counterparts from ``typing``
+    so that ``origin[type_args]`` works when rebuilding generic types.
+    """
     origin_union_type_map: dict[type, Any] = (
         {types.UnionType: Union} if hasattr(types, "UnionType") else {}
     )
@@ -182,60 +196,6 @@ def _py_38_safe_origin(origin: type) -> type:
         **origin_union_type_map,
     }
     return cast(type, origin_map.get(origin, origin))
-
-
-def _parse_google_docstring(
-    docstring: Optional[str],
-    args: list[str],
-    *,
-    error_on_invalid_docstring: bool = False,
-) -> tuple[str, dict]:
-    """Parse the function and argument descriptions from the docstring of a function.
-
-    Assumes the function docstring follows Google Python style guide.
-    """
-    if docstring:
-        docstring_blocks = docstring.split("\n\n")
-        if error_on_invalid_docstring:
-            filtered_annotations = {
-                arg for arg in args if arg not in ("run_manager", "callbacks", "return")
-            }
-            if filtered_annotations and (
-                len(docstring_blocks) < 2 or not docstring_blocks[1].startswith("Args:")
-            ):
-                msg = "Found invalid Google-Style docstring."
-                raise ValueError(msg)
-        descriptors = []
-        args_block = None
-        past_descriptors = False
-        for block in docstring_blocks:
-            if block.startswith("Args:"):
-                args_block = block
-                break
-            elif block.startswith(("Returns:", "Example:")):
-                # Don't break in case Args come after
-                past_descriptors = True
-            elif not past_descriptors:
-                descriptors.append(block)
-            else:
-                continue
-        description = " ".join(descriptors)
-    else:
-        if error_on_invalid_docstring:
-            msg = "Found invalid Google-Style docstring."
-            raise ValueError(msg)
-        description = ""
-        args_block = None
-    arg_descriptions = {}
-    if args_block:
-        arg = None
-        for line in args_block.split("\n")[1:]:
-            if ":" in line:
-                arg, desc = line.split(":", maxsplit=1)
-                arg_descriptions[arg.strip()] = desc.strip()
-            elif arg:
-                arg_descriptions[arg.strip()] += " " + line.strip()
-    return description, arg_descriptions
 
 
 def _model_to_schema(model: Union[type[BaseModel], dict[str, Any]]) -> dict:
