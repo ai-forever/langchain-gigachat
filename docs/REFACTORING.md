@@ -28,7 +28,6 @@
 ## Workflow
 
 ### Progress Tracking
-- Refer to `docs/TODO.md` for current status of refactoring tasks.
 - Tasks are grouped by issue.
 - Only analyzed and approved issues are added to the active plan.
 - **Chronological Order**: All sections (issues) must be listed in chronological ascending order (oldest first). New tasks should always be added at the end.
@@ -38,7 +37,6 @@
 2. After implementation, summarize results.
 3. After solving each issue:
    - Add detailed information about the solution (why and how) to this file.
-   - Update `docs/TODO.md` to reflect detailed implemented steps.
    - Update `docs/REFACTORING_CHANGELOG.md` when any refactoring item is marked as completed.
 
 ---

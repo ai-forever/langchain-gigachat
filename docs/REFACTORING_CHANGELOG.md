@@ -4,7 +4,6 @@
 - [x] Initial setup
   - [x] Create `AGENTS.md` documentation
   - [x] Create `docs/REFACTORING.md` documentation
-  - [x] Create `docs/TODO.md` documentation
 
 ## Pydantic V2 Migration
 - [x] Migrate `function_calling.py` from Pydantic V1 to V2
@@ -47,7 +46,6 @@
   - [x] Run `pytest` to verify no test regressions
 - [x] Documentation
   - [x] Move content from `docs/V1_MIGRATION.md` to `docs/REFACTORING.md`
-  - [x] Add checklist to `docs/TODO.md`
   - [x] Delete `docs/V1_MIGRATION.md`
 
 ## Poetry to uv Migration
@@ -77,7 +75,6 @@
   - [x] Generate `uv.lock` with `uv lock`
 - [x] Update documentation
   - [x] Update `AGENTS.md`: change setup/run commands to uv
-  - [x] Update `docs/TODO.md` and `docs/REFACTORING.md`
 - [x] Verification
   - [x] Run `uv sync` to install dependencies
   - [x] Run `uv run ruff check` — passed
