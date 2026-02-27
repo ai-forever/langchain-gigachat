@@ -34,17 +34,13 @@ def test_fix_schema_allof_single() -> None:
 
 
 def test_fix_schema_allof_multiple_raises() -> None:
-    schema: Dict[str, Any] = {
-        "allOf": [{"type": "string"}, {"type": "integer"}]
-    }
+    schema: Dict[str, Any] = {"allOf": [{"type": "string"}, {"type": "integer"}]}
     with pytest.raises(IncorrectSchemaException):
         gigachat_fix_schema(schema)
 
 
 def test_fix_schema_anyof_multiple_raises() -> None:
-    schema: Dict[str, Any] = {
-        "anyOf": [{"type": "string"}, {"type": "integer"}]
-    }
+    schema: Dict[str, Any] = {"anyOf": [{"type": "string"}, {"type": "integer"}]}
     with pytest.raises(IncorrectSchemaException):
         gigachat_fix_schema(schema)
 
@@ -175,6 +171,7 @@ def test_convert_return_schema_dict() -> None:
 def test_convert_return_schema_pydantic() -> None:
     class R(BaseModel):
         """Return desc"""
+
         val: int = Field(description="value")
 
     result = _convert_return_schema(R)

@@ -1,6 +1,5 @@
 """Tests for _convert_dict_to_message / _convert_message_to_dict edge cases."""
 
-
 import pytest
 from gigachat.models import FunctionCall, Messages, MessagesRole
 from langchain_core.messages import AIMessage, FunctionMessage, HumanMessage
@@ -173,9 +172,7 @@ def test_convert_message_to_dict_single_tool_call() -> None:
 def test_convert_message_to_dict_ai_with_additional_function_call() -> None:
     msg = AIMessage(
         content="",
-        additional_kwargs={
-            "function_call": {"name": "calc", "arguments": {"n": 5}}
-        },
+        additional_kwargs={"function_call": {"name": "calc", "arguments": {"n": 5}}},
     )
     result = _convert_message_to_dict(msg)
     assert result.function_call.name == "calc"

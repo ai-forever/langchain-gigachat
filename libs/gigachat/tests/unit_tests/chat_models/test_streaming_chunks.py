@@ -64,9 +64,7 @@ def test_delta_assistant_default_class_takes_priority() -> None:
 
 
 def test_delta_default_class_fallback() -> None:
-    chunk = _convert_delta_to_message_chunk(
-        {"content": "text"}, HumanMessageChunk
-    )
+    chunk = _convert_delta_to_message_chunk({"content": "text"}, HumanMessageChunk)
     assert isinstance(chunk, HumanMessageChunk)
 
 
@@ -171,9 +169,7 @@ def gigachat_instance(mocker: MockerFixture) -> GigaChat:
 
 def test_build_stream_chunk_first_chunk(gigachat_instance: GigaChat) -> None:
     raw_chunk: Dict[str, Any] = {
-        "choices": [
-            {"delta": {"role": "assistant", "content": "hi"}, "index": 0}
-        ],
+        "choices": [{"delta": {"role": "assistant", "content": "hi"}, "index": 0}],
         "created": 123,
         "model": "GigaChat:v1",
         "object": "chat.completion",
@@ -189,16 +185,12 @@ def test_build_stream_chunk_first_chunk(gigachat_instance: GigaChat) -> None:
 
 def test_build_stream_chunk_not_first_chunk(gigachat_instance: GigaChat) -> None:
     raw_chunk: Dict[str, Any] = {
-        "choices": [
-            {"delta": {"role": "assistant", "content": "more"}, "index": 0}
-        ],
+        "choices": [{"delta": {"role": "assistant", "content": "more"}, "index": 0}],
         "created": 123,
         "model": "GigaChat:v1",
         "object": "chat.completion",
     }
-    _, gen_info, _ = gigachat_instance._build_stream_chunk(
-        raw_chunk, first_chunk=False
-    )
+    _, gen_info, _ = gigachat_instance._build_stream_chunk(raw_chunk, first_chunk=False)
     assert "x_headers" not in gen_info
 
 
@@ -215,18 +207,14 @@ def test_build_stream_chunk_with_finish_reason(gigachat_instance: GigaChat) -> N
         "model": "GigaChat:v1",
         "object": "chat.completion",
     }
-    _, gen_info, _ = gigachat_instance._build_stream_chunk(
-        raw_chunk, first_chunk=False
-    )
+    _, gen_info, _ = gigachat_instance._build_stream_chunk(raw_chunk, first_chunk=False)
     assert gen_info["finish_reason"] == "stop"
     assert gen_info["model_name"] == "GigaChat:v1"
 
 
 def test_build_stream_chunk_with_usage(gigachat_instance: GigaChat) -> None:
     raw_chunk: Dict[str, Any] = {
-        "choices": [
-            {"delta": {"role": "assistant", "content": ""}, "index": 0}
-        ],
+        "choices": [{"delta": {"role": "assistant", "content": ""}, "index": 0}],
         "created": 123,
         "model": "GigaChat:v1",
         "object": "chat.completion",
@@ -237,9 +225,7 @@ def test_build_stream_chunk_with_usage(gigachat_instance: GigaChat) -> None:
             "precached_prompt_tokens": 5,
         },
     }
-    chunk_m, _, _ = gigachat_instance._build_stream_chunk(
-        raw_chunk, first_chunk=False
-    )
+    chunk_m, _, _ = gigachat_instance._build_stream_chunk(raw_chunk, first_chunk=False)
     assert isinstance(chunk_m, AIMessageChunk)
     assert chunk_m.usage_metadata is not None
     assert chunk_m.usage_metadata["input_tokens"] == 10

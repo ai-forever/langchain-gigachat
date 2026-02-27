@@ -60,9 +60,7 @@ def test_embed_query_without_prefix(patch_gigachat_embeddings: MagicMock) -> Non
     emb = GigaChatEmbeddings()
     result = emb.embed_query("test query")
     assert result == [0.1, 0.2, 0.3]
-    patch_gigachat_embeddings.embeddings.assert_called_once_with(
-        texts=["test query"]
-    )
+    patch_gigachat_embeddings.embeddings.assert_called_once_with(texts=["test query"])
 
 
 def test_embed_query_with_prefix(patch_gigachat_embeddings: MagicMock) -> None:
@@ -70,9 +68,7 @@ def test_embed_query_with_prefix(patch_gigachat_embeddings: MagicMock) -> None:
     result = emb.embed_query("test query")
     assert result == [0.1, 0.2, 0.3]
     expected_text = emb.prefix_query + "test query"
-    patch_gigachat_embeddings.embeddings.assert_called_once_with(
-        texts=[expected_text]
-    )
+    patch_gigachat_embeddings.embeddings.assert_called_once_with(texts=[expected_text])
 
 
 @pytest.mark.asyncio()
