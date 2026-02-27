@@ -74,6 +74,7 @@ def test_giga_tool_coroutine() -> None:
         return f"Hello {name}"
 
     assert agreet.name == "agreet"
+    assert isinstance(agreet, GigaStructuredTool)
     assert agreet.coroutine is not None
 
 

@@ -140,10 +140,10 @@ def _create_giga_tool_factory(
     return_schema: Optional[type[BaseModel]] = None,
     few_shot_examples: FewShotExamples = None,
     **kwargs: Any,
-) -> Callable[[Union[Callable[..., Any], Runnable]], BaseTool]:
+) -> Callable[[Union[Callable[..., Any], Runnable]], GigaBaseTool]:
     """Build a factory that turns a callable or Runnable into a GigaChat tool."""
 
-    def _make_tool(dec_func: Union[Callable[..., Any], Runnable]) -> BaseTool:
+    def _make_tool(dec_func: Union[Callable[..., Any], Runnable]) -> GigaBaseTool:
         if isinstance(dec_func, Runnable):
             runnable_input_schema = dec_func.input_schema
             if runnable_input_schema.model_json_schema().get("type") != "object":
@@ -223,7 +223,7 @@ def giga_tool(
     return_schema: Optional[type[BaseModel]] = None,
     few_shot_examples: FewShotExamples = None,
     **kwargs: Any,
-) -> Callable[[Union[Callable[..., Any], Runnable]], BaseTool]: ...
+) -> Callable[[Union[Callable[..., Any], Runnable]], GigaBaseTool]: ...
 
 
 @overload
@@ -240,7 +240,41 @@ def giga_tool(
     return_schema: Optional[type[BaseModel]] = None,
     few_shot_examples: FewShotExamples = None,
     **kwargs: Any,
-) -> BaseTool: ...
+) -> GigaBaseTool: ...
+
+
+@overload
+def giga_tool(
+    name_or_callable: str,
+    runnable: None = None,
+    *args: Any,
+    return_direct: bool = False,
+    args_schema: Union[type[BaseModel], dict[str, Any], None] = None,
+    infer_schema: bool = True,
+    response_format: Literal["content", "content_and_artifact"] = "content",
+    parse_docstring: bool = False,
+    error_on_invalid_docstring: bool = True,
+    return_schema: Optional[type[BaseModel]] = None,
+    few_shot_examples: FewShotExamples = None,
+    **kwargs: Any,
+) -> Callable[[Union[Callable[..., Any], Runnable]], GigaBaseTool]: ...
+
+
+@overload
+def giga_tool(
+    name_or_callable: str,
+    runnable: Runnable,
+    *args: Any,
+    return_direct: bool = False,
+    args_schema: Union[type[BaseModel], dict[str, Any], None] = None,
+    infer_schema: bool = True,
+    response_format: Literal["content", "content_and_artifact"] = "content",
+    parse_docstring: bool = False,
+    error_on_invalid_docstring: bool = True,
+    return_schema: Optional[type[BaseModel]] = None,
+    few_shot_examples: FewShotExamples = None,
+    **kwargs: Any,
+) -> GigaBaseTool: ...
 
 
 def giga_tool(
@@ -256,7 +290,7 @@ def giga_tool(
     return_schema: Optional[type[BaseModel]] = None,
     few_shot_examples: FewShotExamples = None,
     **kwargs: Any,
-) -> Union[BaseTool, Callable[[Union[Callable[..., Any], Runnable]], BaseTool]]:
+) -> Union[GigaBaseTool, Callable[[Union[Callable[..., Any], Runnable]], GigaBaseTool]]:
     """Create a GigaChat tool from a function or Runnable (same as @tool).
 
     Supports:
@@ -304,7 +338,7 @@ def giga_tool(
             f"Got {type(name_or_callable)}."
         )
 
-    def _partial(f: Union[Callable[..., Any], Runnable]) -> BaseTool:
+    def _partial(f: Union[Callable[..., Any], Runnable]) -> GigaBaseTool:
         name = (
             f.get_name() if isinstance(f, Runnable) else getattr(f, "__name__", "tool")
         )

@@ -92,7 +92,9 @@ def test_delta_with_function_call() -> None:
     assert chunk.additional_kwargs["function_call"]["name"] == "my_tool"
     assert len(chunk.tool_call_chunks) == 1
     assert chunk.tool_call_chunks[0]["name"] == "my_tool"
-    assert json.loads(chunk.tool_call_chunks[0]["args"]) == {"a": 1}
+    args = chunk.tool_call_chunks[0]["args"]
+    assert args is not None
+    assert json.loads(args) == {"a": 1}
 
 
 def test_delta_function_call_name_none() -> None:
