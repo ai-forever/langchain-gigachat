@@ -34,7 +34,7 @@ def test_convert_dict_to_message_function_call_dict() -> None:
         id=None,
         role=MessagesRole.ASSISTANT,
         content="",
-        function_call={"name": "my_tool", "arguments": {"x": 2}},
+        function_call={"name": "my_tool", "arguments": {"x": 2}},  # type: ignore[arg-type]
     )
     result = _convert_dict_to_message(msg)
     assert isinstance(result, AIMessage)
@@ -160,6 +160,7 @@ def test_convert_message_to_dict_single_tool_call() -> None:
     )
     result = _convert_message_to_dict(msg)
     assert result.role == MessagesRole.ASSISTANT
+    assert result.function_call is not None
     assert result.function_call.name == "my_tool"
     assert result.function_call.arguments == {"x": 1}
 
@@ -175,6 +176,7 @@ def test_convert_message_to_dict_ai_with_additional_function_call() -> None:
         additional_kwargs={"function_call": {"name": "calc", "arguments": {"n": 5}}},
     )
     result = _convert_message_to_dict(msg)
+    assert result.function_call is not None
     assert result.function_call.name == "calc"
     assert result.function_call.arguments == {"n": 5}
 
