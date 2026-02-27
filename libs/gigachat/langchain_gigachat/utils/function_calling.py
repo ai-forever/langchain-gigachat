@@ -66,7 +66,7 @@ def gigachat_fix_schema(schema: Any, prev_key: str = "") -> Any:
                 outer_description = schema.get("description")
                 obj_out = {**obj_out, **obj}
                 if outer_description:
-                    # Внешнее описания приоритетнее внутреннего для ref
+                    # Outer description takes priority over inner one for ref
                     obj_out["description"] = outer_description
             if k == "anyOf":
                 if len(v) > 1:
