@@ -865,7 +865,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             elif isinstance(tool_choice, bool) and tool_choice:
                 if not formatted_tools:
                     raise ValueError("tool_choice can not be bool if tools are empty")
-                tool_choice = {"name": formatted_tools[0]["name"]}
+                tool_choice = {"name": formatted_tools[0]["function"]["name"]}
             elif isinstance(tool_choice, dict):
                 pass
             else:
