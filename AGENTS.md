@@ -31,7 +31,7 @@ LangChain integration package for GigaChat LLM.
 - Avoid unnecessary comments
 
 ## Refactoring
-See `docs/TODO.md` for task status and `docs/REFACTORING.md` for detailed analysis and solutions.
+See `docs/REFACTORING.md` for detailed analysis and solutions.
 Update these docs after solving each issue.
 
 ## Key Considerations

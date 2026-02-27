@@ -66,7 +66,7 @@ def gigachat_fix_schema(schema: Any, prev_key: str = "") -> Any:
                 outer_description = schema.get("description")
                 obj_out = {**obj_out, **obj}
                 if outer_description:
-                    # Внешнее описания приоритетнее внутреннего для ref
+                    # Outer description takes priority over inner one for ref
                     obj_out["description"] = outer_description
             if k == "anyOf":
                 if len(v) > 1:
@@ -286,7 +286,6 @@ def format_tool_to_gigachat_function(tool: BaseTool) -> GigaFunctionDescription:
         tool_schema = tool.tool_call_schema
 
     if hasattr(tool, "return_schema") and tool.return_schema:
-        # return_schema = _convert_return_schema(tool.return_schema)
         return_schema = tool.return_schema
     else:
         return_schema = None
