@@ -286,7 +286,6 @@ def format_tool_to_gigachat_function(tool: BaseTool) -> GigaFunctionDescription:
         tool_schema = tool.tool_call_schema
 
     if hasattr(tool, "return_schema") and tool.return_schema:
-        # return_schema = _convert_return_schema(tool.return_schema)
         return_schema = tool.return_schema
     else:
         return_schema = None

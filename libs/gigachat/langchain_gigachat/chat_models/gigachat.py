@@ -396,13 +396,13 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             reasoning_content in the assistant message (see additional_kwargs).
     """
 
-    """Auto-upload Base-64 image/audio/document blocks. Not for production usage."""
     auto_upload_attachments: bool = False
+    """Auto-upload Base-64 image/audio/document blocks. Not for production usage."""
+    allow_any_tool_choice_fallback: bool = False
     """
     Allow automatic fallback from tool_choice='any' to 'auto'.
     GigaChat API doesn't support 'any', so by default it raises an error.
     """
-    allow_any_tool_choice_fallback: bool = False
 
     _cached_images: Dict[str, str] = PrivateAttr(default_factory=dict)
 
