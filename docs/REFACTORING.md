@@ -279,7 +279,7 @@ Agreed upon during the refactoring review meeting. Each item will be expanded wi
 - [x] **2.11. Remove `trim_content_to_stop_sequence`** — Fully remove the function and all call sites (`_generate`, `_agenerate`, `_stream`, `_astream`). Stop sequence handling should be API-side. See dedicated section below.
 - [x] **2.12. `x_headers` Audit** — Map all places where `x_headers` are set/consumed (`response_metadata`, `generation_info`, `message.id`). Decide on refactoring or documentation.
 - [x] **2.13. `TYPE_CHECKING` Block** — Remove conditional `TYPE_CHECKING` import in `gigachat.py` or confirm it is necessary.
-- [ ] **2.14. LangChain 1.0 New Mechanisms** — Test compatibility with content blocks, `create_agent`, middleware. Additionally review: ~~multi-tool calling support (currently only `tool_calls[0]` is forwarded)~~ (done: raises `ValueError`), ~~`ToolMessage`/`FunctionMessage` name forwarding~~ (done), `ToolMessage` role mapping (`role="function"` — check if API supports a proper tool role), and SDK exception translation to LangChain exception types.
+- [ ] **2.14. LangChain 1.0 New Mechanisms** — Test compatibility with content blocks, `create_agent`, middleware. Additionally review: ~~multi-tool calling support (currently only `tool_calls[0]` is forwarded)~~ (done: raises `ValueError`), ~~`ToolMessage`/`FunctionMessage` name forwarding~~ (done), ~~`ToolMessage` role mapping (`role="function"`)~~ (accepted for current `FunctionCall` bridge; revisit after upstream native `tool_calls` support), and SDK exception translation to LangChain exception types.
 - [x] **2.15. CI/Contribution Documentation** — Create or rewrite CI docs, contribution guide, and other developer docs following LangChain upstream conventions.
 - [ ] **2.16. CI Refactoring** — Review tests (remove unnecessary, add missing), assess coverage (~70%), decide on expansion. VCR tests — not now.
 - [x] **2.17. `get_file` Naming and API Surface Cleanup** — `_BaseGigaChat.get_file/aget_file` actually calls SDK `get_image/aget_image` (downloads file content, not metadata). Rename or document clearly. Also consider wrapping additional SDK-only file endpoints (`GET /files`, `DELETE /files/{id}`) if useful.
@@ -522,6 +522,53 @@ Agreed upon during the refactoring review meeting. Each item will be expanded wi
   - `uv run pytest` — 57 passed
 - **Status**: Completed (partial 2.14 — remaining sub-items: content blocks compatibility,
   `create_agent`, middleware, SDK exception translation).
+
+## FunctionCall vs ToolCall Migration Strategy
+
+- **Problem**: During LangChain Core 1.x refactoring, we need to decide whether to replace
+  `FunctionCall` with `ToolCall` immediately, or keep compatibility with the current GigaChat API
+  contract.
+- **Current State**:
+  - Public LangChain-facing API is already tool-oriented:
+    - `GigaChat.bind_tools(...)` is supported and covered by unit tests.
+    - Incoming provider `function_call` payloads are mapped to `AIMessage.tool_calls` and
+      `tool_call_chunks` for streaming.
+    - README examples use `bind_tools(...)` and `msg.tool_calls`.
+  - Provider/SDK-facing API remains function-oriented:
+    - Request payload still uses `functions` + `function_call`.
+    - `gigachat` SDK models expose `FunctionCall`/`function_call` and do not provide native
+      `tool_calls` transport fields.
+- **Analysis**:
+  - This is an intentional adapter architecture: modern LangChain surface on top of a legacy
+    provider protocol.
+  - A forced end-to-end migration now would mostly add translation complexity without runtime
+    benefit, because downstream API semantics are still `function_call`.
+  - Existing guardrails already fail loudly for known provider limitations:
+    - multiple `tool_calls` in one assistant message raise `ValueError`;
+    - unsupported `tool_choice="any"` raises by default (or falls back to `auto` only with
+      explicit opt-in).
+- **Risks**:
+  - **If we keep the bridge (current approach)**:
+    - Moderate maintenance overhead for conversion logic.
+    - Requires ongoing parity tests between `tool_calls` (LangChain) and `function_call`
+      (provider payload).
+  - **If we force immediate migration**:
+    - High regression risk in payload compatibility with GigaChat API.
+    - Potential breakage for users relying on legacy `bind_functions` behavior.
+    - No real feature gain until upstream introduces native `tools/tool_choice/tool_calls`.
+- **Decision / Solution**:
+  - Keep the current dual-layer compatibility model for now:
+    - **Canonical external API**: `bind_tools` + `AIMessage.tool_calls`.
+    - **Internal transport**: map to provider `function_call` until upstream changes.
+    - **Tool result role mapping**: keep `ToolMessage` mapped to provider `role="function"` while the transport layer remains function-oriented.
+  - Treat `bind_functions` as legacy compatibility surface (maintained, but not preferred in docs).
+  - Revisit migration only when `gigachat` SDK/API ships first-class `tool_calls` transport.
+- **Why this is not urgent**:
+  - User-facing LangChain ergonomics are already aligned with modern tool-calling patterns.
+  - Immediate full migration would be mostly cosmetic at the transport layer and introduces
+    unnecessary risk.
+- **Status**: Accepted; no urgent migration required. Keep under periodic review and trigger
+  transition when upstream API contract changes.
 
 ---
 

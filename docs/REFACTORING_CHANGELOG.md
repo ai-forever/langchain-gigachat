@@ -129,6 +129,19 @@
   - [x] `test_ai_upload_image_per_instance_cache` — two instances have independent caches
   - [x] `test_ai_upload_image_cache_eviction` — when at max size, oldest entry is evicted (FIFO)
 - [x] Verification: `uv run ruff check`, `uv run pytest` (all image-upload tests pass)
+- [ ] TODO hardening follow-up (non-blocking)
+  - [ ] Consider adding cache TTL and/or explicit cache clear API
+  - [ ] Consider hashing decoded bytes instead of full data URL for cache key normalization (improves cache hit rate for semantically identical `data:` payloads with different prefixes/formatting)
+
+### 2.3. Multimodal File Upload
+- [x] Extend content block handling beyond image-only flow
+  - [x] Support provider-native blocks: `image_url`, `audio_url`, `document_url`
+  - [x] Support standard LangChain blocks: `image`, `audio`, `file` with `file_id`
+- [x] Replace legacy image-only auto-upload flow
+  - [x] Remove `auto_upload_images` in favor of `auto_upload_attachments`
+  - [x] Reuse upload/cache flow for image/audio/document data URLs
+- [x] Add MIME extension fallback mapping for supported GigaChat attachment types
+- [x] Verification: `uv run ruff check`, `uv run pytest` (attachment parsing and auto-upload tests pass)
 
 ### 2.4. Format Instructions Mode
 - [x] Remove `method="format_instructions"` from `GigaChat.with_structured_output()` public API
@@ -219,6 +232,12 @@
   - [x] Add `test__convert_message_to_dict_tool_message_with_name` — name is forwarded when set
   - [x] Add `test__convert_message_to_dict_tool_message_without_name` — name stays `None` when absent
 - [x] Verification: `uv run ruff check` — passed; `uv run pytest` — 57 passed
+- [x] Decision alignment with FunctionCall bridge
+  - [x] Keep `ToolMessage -> role="function"` mapping as the accepted compatibility strategy
+  - [x] Revisit only after upstream GigaChat API/SDK introduces native `tool_calls` transport
+- [ ] TODO (remaining scope for 2.14)
+  - [ ] Review SDK exception translation to LangChain exception types
+  - [ ] Validate compatibility with `create_agent`, middleware, and modern content blocks
 
 ### Cleanup `_convert_any_typed_dicts_to_pydantic` in `function_calling.py`
 - [x] Replace `_parse_google_docstring` local copy with import from `langchain_core.utils.function_calling`
@@ -226,3 +245,17 @@
 - [x] Remove dead `else: pass` branch; change `elif` to `if` for docstring description override
 - [x] Add docstring to `_convert_any_typed_dicts_to_pydantic`
 - [x] Verification: `uv run ruff check` — passed; `uv run pytest` — 35 passed
+
+### 2.12. `x_headers` Audit
+- [x] Document where `x_headers` are set/used (`message.id`, `llm_output`, streaming metadata)
+- [x] Add shared stream helper to centralize header propagation behavior
+- [x] Keep non-stream behavior explicit (headers in `llm_output`, request id in message id)
+
+### Support reasoning models (`reasoning_effort` / `reasoning_content`)
+- [x] Add `reasoning_effort` request parameter to `_BaseGigaChat`
+- [x] Include `reasoning_effort` in payload building when configured
+- [x] Surface `reasoning_content` in assistant messages (`additional_kwargs`) for sync and stream paths
+
+### Upstream SDK privacy/logging follow-up (external)
+- [ ] Track upstream hardening for raw SSE parser error logs
+  - [ ] Prefer truncation/redaction of raw payload in SDK parse-error logging
