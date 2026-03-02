@@ -125,12 +125,10 @@ def _validate_content(content: Any) -> Any:
 
 
 def _convert_dict_to_message(message: gm.Messages) -> BaseMessage:
-    from gigachat.models import FunctionCall, MessagesRole
-
     additional_kwargs: Dict = {}
     tool_calls = []
     if function_call := message.function_call:
-        if isinstance(function_call, FunctionCall):
+        if isinstance(function_call, gm.FunctionCall):
             additional_kwargs["function_call"] = dict(function_call)
         elif isinstance(function_call, dict):
             additional_kwargs["function_call"] = function_call
@@ -156,17 +154,17 @@ def _convert_dict_to_message(message: gm.Messages) -> BaseMessage:
     reasoning_content = getattr(message, "reasoning_content", None)
     if reasoning_content is not None:
         additional_kwargs["reasoning_content"] = reasoning_content
-    if message.role == MessagesRole.SYSTEM:
+    if message.role == gm.MessagesRole.SYSTEM:
         return SystemMessage(content=message.content)
-    elif message.role == MessagesRole.USER:
+    elif message.role == gm.MessagesRole.USER:
         return HumanMessage(content=message.content)
-    elif message.role == MessagesRole.ASSISTANT:
+    elif message.role == gm.MessagesRole.ASSISTANT:
         return AIMessage(
             content=message.content,
             additional_kwargs=additional_kwargs,
             tool_calls=tool_calls,
         )
-    elif message.role == MessagesRole.FUNCTION:
+    elif message.role == gm.MessagesRole.FUNCTION:
         return FunctionMessage(
             name=message.name or "", content=_validate_content(message.content)
         )
@@ -225,8 +223,6 @@ def get_text_and_images_from_content(
 def _convert_message_to_dict(
     message: BaseMessage, cached_images: Optional[Dict[str, str]] = None
 ) -> gm.Messages:
-    from gigachat.models import Messages, MessagesRole
-
     kwargs = {}
     if cached_images is None:
         cached_images = {}
@@ -244,10 +240,10 @@ def _convert_message_to_dict(
         kwargs["functions_state_id"] = functions_state_id
 
     if isinstance(message, SystemMessage):
-        kwargs["role"] = MessagesRole.SYSTEM
+        kwargs["role"] = gm.MessagesRole.SYSTEM
         kwargs["content"] = content
     elif isinstance(message, HumanMessage):
-        kwargs["role"] = MessagesRole.USER
+        kwargs["role"] = gm.MessagesRole.USER
         if attachments:
             kwargs["attachments"] = attachments
         kwargs["content"] = content
@@ -266,24 +262,24 @@ def _convert_message_to_dict(
                 function_call["arguments"] = function_call.pop("args")
         else:
             function_call = message.additional_kwargs.get("function_call", None)
-        kwargs["role"] = MessagesRole.ASSISTANT
+        kwargs["role"] = gm.MessagesRole.ASSISTANT
         kwargs["content"] = content
         kwargs["function_call"] = function_call
     elif isinstance(message, ChatMessage):
         kwargs["role"] = message.role
         kwargs["content"] = content
     elif isinstance(message, FunctionMessage):
-        kwargs["role"] = MessagesRole.FUNCTION
+        kwargs["role"] = gm.MessagesRole.FUNCTION
         kwargs["name"] = message.name
         kwargs["content"] = _validate_content(content)
     elif isinstance(message, ToolMessage):
-        kwargs["role"] = MessagesRole.FUNCTION
+        kwargs["role"] = gm.MessagesRole.FUNCTION
         if message.name:
             kwargs["name"] = message.name
         kwargs["content"] = _validate_content(content)
     else:
         raise TypeError(f"Got unknown type {message}")
-    return Messages(**kwargs)
+    return gm.Messages(**kwargs)
 
 
 def _convert_delta_to_message_chunk(
@@ -501,8 +497,6 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 self._set_cached_image(hashed, file.id_)
 
     def _build_payload(self, messages: List[BaseMessage], **kwargs: Any) -> gm.Chat:
-        from gigachat.models import Chat
-
         messages_dicts = [
             _convert_message_to_dict(m, self._cached_images) for m in messages
         ]
@@ -530,7 +524,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         if self.reasoning_effort is not None:
             payload_dict["reasoning_effort"] = self.reasoning_effort
 
-        payload = Chat.model_validate(payload_dict)
+        payload = gm.Chat.model_validate(payload_dict)
 
         return payload
 
