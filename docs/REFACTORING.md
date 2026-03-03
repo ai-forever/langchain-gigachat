@@ -620,8 +620,8 @@ Consolidated list for release notes. Each entry links to the section where it is
 
 Steps required before merging `lc1-support` branch and publishing to PyPI.
 
-- [ ] **Rename package**: `libs/gigachat/pyproject.toml` — change `name = "langchain-gigachat-lc1"` back to `name = "langchain-gigachat"`. Also update the self-dependency in `[dependency-groups] dev`.
-- [ ] **Bump version**: update `version` in `libs/gigachat/pyproject.toml` to the next release (e.g. `0.4.0`). Remove the `b4` pre-release suffix.
+- [x] **Rename package**: `libs/gigachat/pyproject.toml` — changed `name = "langchain-gigachat-lc1"` back to `name = "langchain-gigachat"`. Removed self-dependency and stale `[tool.uv.sources]`.
+- [x] **Bump version**: updated `version` in `libs/gigachat/pyproject.toml` to `0.4.0`.
 - [ ] **Coordinate with `gigachat` release**: ensure `gigachat>=0.2.0,<0.3` is published on PyPI and the git-URL dependency (if any) is replaced with the PyPI constraint.
 - [ ] **Run full verification**: `uv run ruff check . && uv run ruff format --check . && uv run mypy langchain_gigachat && uv run pytest`.
 - [ ] **Update CHANGELOG / release notes** if maintained.

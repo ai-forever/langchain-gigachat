@@ -1,6 +1,6 @@
 [project]
-name = "langchain-gigachat-lc1"
-version = "0.4.0b5"
+name = "langchain-gigachat"
+version = "0.4.0"
 description = "An integration package connecting GigaChat and LangChain"
 authors = []
 readme = "README.md"
@@ -25,7 +25,6 @@ dev = [
   "pytest-mock>=3.14.0,<4",
   "ruff>=0.7.0,<1",
   "pre-commit>=4.0.1,<5",
-  "langchain-gigachat-lc1",
 ]
 
 [build-system]
@@ -67,5 +66,3 @@ filterwarnings = [
 [tool.coverage.run]
 omit = ["tests/*"]
 
-[tool.uv.sources]
-langchain-gigachat-lc1 = { workspace = true }
