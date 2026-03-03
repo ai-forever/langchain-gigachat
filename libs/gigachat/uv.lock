@@ -405,7 +405,6 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "langchain-gigachat" },
     { name = "mypy" },
     { name = "pre-commit" },
     { name = "pytest" },
@@ -424,7 +423,6 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "langchain-gigachat" },
     { name = "mypy", specifier = ">=1.13.0,<2" },
     { name = "pre-commit", specifier = ">=4.0.1,<5" },
     { name = "pytest", specifier = ">=8.3.3,<9" },
