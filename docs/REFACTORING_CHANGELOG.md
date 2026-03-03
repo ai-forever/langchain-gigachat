@@ -181,6 +181,19 @@
   - [x] `uv run mypy` — passed
   - [x] `uv run pytest` — 83 passed, 79% coverage
 
+### 2.10. Rewrite README.md
+- [ ] First iteration completed and submitted for review; finalization pending review feedback
+  - [x] README rewritten to follow `gigachat` package style
+  - [x] Known mismatch fixed: removed/updated SDK-only `giga.get_token()` reference from package docs
+  - [ ] Final pass after review comments (wording/examples consistency)
+
+### 2.16. CI Refactoring
+- [x] Review tests and CI scope
+  - [x] Reviewed test suite: removed outdated cases and added missing coverage in active areas
+  - [x] Assessed current coverage and identified expansion priorities
+  - [x] Kept VCR tests out of scope for this iteration (explicitly deferred)
+- [x] Documentation synced in `docs/REFACTORING.md`
+
 ### 2.18. Expose SDK Connection Settings
 - [x] Add `max_retries`, `max_connections`, `retry_backoff_factor`, `retry_on_status_codes` fields to `_GigaChatClientMixin` in `_client.py`
   - [x] All fields default to `None` (SDK defaults apply via env vars or `Settings`)

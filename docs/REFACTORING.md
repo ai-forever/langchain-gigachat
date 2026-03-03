@@ -275,13 +275,14 @@ Agreed upon during the refactoring review meeting. Each item will be expanded wi
 - [ ] **2.7. `profiles.py`** — On hold: PR submitted, waiting for review result; no actions for now.
 - [x] **2.8. `giga_tool` Decorator Revision** — Review extra functionality (`return_schema`, `few_shot_examples`) over standard `@tool`. If replaceable by LangChain extras — remove. If removed: rewrite examples, document as **breaking change**.
 - [x] **2.9. Embeddings Batch Settings** — API natively handles batches (`input` accepts `List[string]`). Removed custom `MAX_BATCH_SIZE_CHARS` / `MAX_BATCH_SIZE_PARTS` logic. See dedicated section below.
-- [ ] **2.10. Rewrite README.md** — Full rewrite following `gigachat` package README style. Fix known mismatch: RU README references `giga.get_token()` which is SDK-only, not wrapped. *Blocked: do after refactoring is complete.*
+- [ ] **2.10. Rewrite README.md** — First iteration completed and submitted for review; finalization pending review feedback. The rewrite follows `gigachat` package README style. Known mismatch about SDK-only `giga.get_token()` reference is fixed.
 - [x] **2.11. Remove `trim_content_to_stop_sequence`** — Fully remove the function and all call sites (`_generate`, `_agenerate`, `_stream`, `_astream`). Stop sequence handling should be API-side. See dedicated section below.
 - [x] **2.12. `x_headers` Audit** — Map all places where `x_headers` are set/consumed (`response_metadata`, `generation_info`, `message.id`). Decide on refactoring or documentation.
 - [x] **2.13. `TYPE_CHECKING` Block** — Remove conditional `TYPE_CHECKING` import in `gigachat.py` or confirm it is necessary.
 - [ ] **2.14. LangChain 1.0 New Mechanisms** — Test compatibility with content blocks, `create_agent`, middleware. Additionally review: ~~multi-tool calling support (currently only `tool_calls[0]` is forwarded)~~ (done: raises `ValueError`), ~~`ToolMessage`/`FunctionMessage` name forwarding~~ (done), ~~`ToolMessage` role mapping (`role="function"`)~~ (accepted for current `FunctionCall` bridge; revisit after upstream native `tool_calls` support), and SDK exception translation to LangChain exception types.
+- [ ] **2.19. SDK `FunctionParametersProperty` Schema Stripping** — Upstream bug: SDK Pydantic model silently drops JSON Schema fields (`additionalProperties`, nested `required`, `format`, etc.), causing 422 errors. Fix required in `gigachat` SDK. See [dedicated section](#sdk-functionparameterssproperty-schema-stripping-219) and issues [#55](https://github.com/ai-forever/langchain-gigachat/issues/55), [#59](https://github.com/ai-forever/langchain-gigachat/issues/59).
 - [x] **2.15. CI/Contribution Documentation** — Create or rewrite CI docs, contribution guide, and other developer docs following LangChain upstream conventions.
-- [ ] **2.16. CI Refactoring** — Review tests (remove unnecessary, add missing), assess coverage (~70%), decide on expansion. VCR tests — not now.
+- [x] **2.16. CI Refactoring** — Completed: tests reviewed (obsolete removed, missing added), coverage assessed, and expansion scope documented. VCR tests remain out of scope for now.
 - [x] **2.17. `get_file` Naming and API Surface Cleanup** — `_BaseGigaChat.get_file/aget_file` actually calls SDK `get_image/aget_image` (downloads file content, not metadata). Rename or document clearly. Also consider wrapping additional SDK-only file endpoints (`GET /files`, `DELETE /files/{id}`) if useful.
 - [x] **2.18. Expose SDK Connection Settings** — `max_retries`, `max_connections`, `retry_backoff_factor`, `retry_on_status_codes` are now exposed as explicit fields on `_GigaChatClientMixin` (shared by `GigaChat` and `GigaChatEmbeddings`). See dedicated section below.
 
@@ -569,6 +570,13 @@ Agreed upon during the refactoring review meeting. Each item will be expanded wi
     unnecessary risk.
 - **Status**: Accepted; no urgent migration required. Keep under periodic review and trigger
   transition when upstream API contract changes.
+
+## SDK `FunctionParametersProperty` Schema Stripping (2.19)
+
+- **Problem**: SDK model `FunctionParametersProperty` defines only `type`, `description`, `items`, `enum`, `properties`. Pydantic V2 silently drops all other JSON Schema fields (`additionalProperties`, nested `required`, `format`, `default`, etc.) during `Chat.model_validate()`, causing 422 API errors.
+  - Issues: [#55](https://github.com/ai-forever/langchain-gigachat/issues/55), [#59](https://github.com/ai-forever/langchain-gigachat/issues/59).
+- **Solution**: Add `model_config = ConfigDict(extra="allow")` to `FunctionParametersProperty` in the `gigachat` SDK.
+- **Status**: Not started (upstream SDK fix required).
 
 ---
 
