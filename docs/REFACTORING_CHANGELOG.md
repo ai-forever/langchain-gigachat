@@ -129,9 +129,7 @@
   - [x] `test_ai_upload_image_per_instance_cache` — two instances have independent caches
   - [x] `test_ai_upload_image_cache_eviction` — when at max size, oldest entry is evicted (FIFO)
 - [x] Verification: `uv run ruff check`, `uv run pytest` (all image-upload tests pass)
-- [ ] TODO hardening follow-up (non-blocking)
-  - [ ] Consider adding cache TTL and/or explicit cache clear API
-  - [ ] Consider hashing decoded bytes instead of full data URL for cache key normalization (improves cache hit rate for semantically identical `data:` payloads with different prefixes/formatting)
+- [x] TODO hardening follow-up (non-blocking) — **cancelled**: `auto_upload_attachments` is experimental and explicitly not for production usage (documented in docstring, field help, and runtime warning). Production-grade cache hardening (TTL, key normalization, clear API) is not justified for an experimental feature. Revisit only if the feature is promoted to production-ready.
 
 ### 2.3. Multimodal File Upload
 - [x] Extend content block handling beyond image-only flow
