@@ -248,8 +248,11 @@
 - [x] Decision alignment with FunctionCall bridge
   - [x] Keep `ToolMessage -> role="function"` mapping as the accepted compatibility strategy
   - [x] Revisit only after upstream GigaChat API/SDK introduces native `tool_calls` transport
+- [x] SDK exception translation decision
+  - [x] Audited all SDK call sites — no exceptions silently swallowed or losing context
+  - [x] Decided: keep SDK exceptions as-is (aligned with `langchain-openai` practice; `langchain_core.exceptions` too minimal for meaningful translation)
+  - [x] Documented rationale in `docs/REFACTORING.md` → "SDK Exception Translation Policy"
 - [ ] TODO (remaining scope for 2.14)
-  - [ ] Review SDK exception translation to LangChain exception types
   - [ ] Validate compatibility with `create_agent`, middleware, and modern content blocks
 
 ### Cleanup `_convert_any_typed_dicts_to_pydantic` in `function_calling.py`

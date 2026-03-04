@@ -279,7 +279,7 @@ Agreed upon during the refactoring review meeting. Each item will be expanded wi
 - [x] **2.11. Remove `trim_content_to_stop_sequence`** — Fully remove the function and all call sites (`_generate`, `_agenerate`, `_stream`, `_astream`). Stop sequence handling should be API-side. See dedicated section below.
 - [x] **2.12. `x_headers` Audit** — Map all places where `x_headers` are set/consumed (`response_metadata`, `generation_info`, `message.id`). Decide on refactoring or documentation.
 - [x] **2.13. `TYPE_CHECKING` Block** — Remove conditional `TYPE_CHECKING` import in `gigachat.py` or confirm it is necessary.
-- [ ] **2.14. LangChain 1.0 New Mechanisms** — Test compatibility with content blocks, `create_agent`, middleware. Additionally review: ~~multi-tool calling support (currently only `tool_calls[0]` is forwarded)~~ (done: raises `ValueError`), ~~`ToolMessage`/`FunctionMessage` name forwarding~~ (done), ~~`ToolMessage` role mapping (`role="function"`)~~ (accepted for current `FunctionCall` bridge; revisit after upstream native `tool_calls` support), and SDK exception translation to LangChain exception types.
+- [ ] **2.14. LangChain 1.0 New Mechanisms** — Test compatibility with content blocks, `create_agent`, middleware. Additionally review: ~~multi-tool calling support (currently only `tool_calls[0]` is forwarded)~~ (done: raises `ValueError`), ~~`ToolMessage`/`FunctionMessage` name forwarding~~ (done), ~~`ToolMessage` role mapping (`role="function"`)~~ (accepted for current `FunctionCall` bridge; revisit after upstream native `tool_calls` support), and ~~SDK exception translation to LangChain exception types~~ (decided: keep SDK exceptions as-is; see [dedicated section](#sdk-exception-translation-policy-214-partial)).
 - [ ] **2.19. SDK `FunctionParametersProperty` Schema Stripping** — Upstream bug: SDK Pydantic model silently drops JSON Schema fields (`additionalProperties`, nested `required`, `format`, etc.), causing 422 errors. Fix required in `gigachat` SDK. See [dedicated section](#sdk-functionparameterssproperty-schema-stripping-219) and issues [#55](https://github.com/ai-forever/langchain-gigachat/issues/55), [#59](https://github.com/ai-forever/langchain-gigachat/issues/59).
 - [x] **2.15. CI/Contribution Documentation** — Create or rewrite CI docs, contribution guide, and other developer docs following LangChain upstream conventions.
 - [x] **2.16. CI Refactoring** — Completed: tests reviewed (obsolete removed, missing added), coverage assessed, and expansion scope documented. VCR tests remain out of scope for now.
@@ -570,6 +570,23 @@ Agreed upon during the refactoring review meeting. Each item will be expanded wi
     unnecessary risk.
 - **Status**: Accepted; no urgent migration required. Keep under periodic review and trigger
   transition when upstream API contract changes.
+
+## SDK Exception Translation Policy (2.14, partial)
+
+- **Question**: Should `langchain-gigachat` translate `gigachat` SDK exceptions into LangChain exception types (`LangChainException`, `OutputParserException`)?
+- **Decision**: No. SDK exceptions are propagated to the caller as-is.
+- **Rationale**:
+  - **Aligned with `langchain-openai` practice**: The reference LangChain integration (`langchain-openai`) does not perform systematic translation of `openai` SDK exceptions into LangChain types. Provider exceptions pass through to the user, with only narrow point-fixes where strictly necessary (e.g. `BadRequestError` around structured output). We follow the same pattern.
+  - **`langchain_core.exceptions` is minimal**: LangChain Core provides only `LangChainException` (generic) and `OutputParserException` (parsing). There is no `AuthenticationError`, `RateLimitError`, or `NotFoundError` on the LangChain side. Wrapping rich SDK exceptions into a single generic `LangChainException` would *lose* information, not add it.
+  - **No silent swallowing**: Audit confirmed that all SDK call sites (`chat`, `achat`, `stream`, `astream`, `embeddings`, `aembeddings`, `upload_file`, `get_file`, `delete_file`, etc.) propagate exceptions without `try/except`. Nothing is silently swallowed or loses context.
+  - **Minimal code change**: Adding a translation layer (mapper + wrappers for sync/async/stream) would increase code surface and test burden without tangible user benefit.
+- **What users should catch**:
+  - `gigachat.exceptions.AuthenticationError` — invalid credentials (401).
+  - `gigachat.exceptions.RateLimitError` — rate limit exceeded (429), has `.retry_after` property.
+  - `gigachat.exceptions.ResponseError` — any HTTP error (base class with `.status_code`, `.content`).
+  - `gigachat.exceptions.GigaChatException` — catch-all for all SDK errors.
+- **When to revisit**: If LangChain Core introduces a richer exception hierarchy (e.g. `ModelAuthenticationError`, `ModelRateLimitError` — currently only `ErrorCode` enums exist with no corresponding exception classes), reconsider adding translation at that point.
+- **Status**: Decided — no translation needed. Documented.
 
 ## SDK `FunctionParametersProperty` Schema Stripping (2.19)
 
