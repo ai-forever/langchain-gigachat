@@ -278,5 +278,4 @@
 - [x] Verification: `uv run ruff check` — passed; `uv run pytest` — 198 passed
 
 ### Upstream SDK privacy/logging follow-up (external)
-- [ ] Track upstream hardening for raw SSE parser error logs
-  - [ ] Prefer truncation/redaction of raw payload in SDK parse-error logging
+- [x] Track upstream hardening for raw SSE parser error logs — **cancelled**: low priority, occurs only on SSE parse errors (rare). If needed, address directly in `gigachat` SDK repo (`api/utils.py:parse_chunk`).
