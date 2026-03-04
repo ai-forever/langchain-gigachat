@@ -279,7 +279,7 @@ Agreed upon during the refactoring review meeting. Each item will be expanded wi
 - [x] **2.11. Remove `trim_content_to_stop_sequence`** — Fully remove the function and all call sites (`_generate`, `_agenerate`, `_stream`, `_astream`). Stop sequence handling should be API-side. See dedicated section below.
 - [x] **2.12. `x_headers` Audit** — Map all places where `x_headers` are set/consumed (`response_metadata`, `generation_info`, `message.id`). Decide on refactoring or documentation.
 - [x] **2.13. `TYPE_CHECKING` Block** — Remove conditional `TYPE_CHECKING` import in `gigachat.py` or confirm it is necessary.
-- [ ] **2.14. LangChain 1.0 New Mechanisms** — Test compatibility with content blocks, `create_agent`, middleware. Additionally review: ~~multi-tool calling support (currently only `tool_calls[0]` is forwarded)~~ (done: raises `ValueError`), ~~`ToolMessage`/`FunctionMessage` name forwarding~~ (done), ~~`ToolMessage` role mapping (`role="function"`)~~ (accepted for current `FunctionCall` bridge; revisit after upstream native `tool_calls` support), and ~~SDK exception translation to LangChain exception types~~ (decided: keep SDK exceptions as-is; see [dedicated section](#sdk-exception-translation-policy-214-partial)).
+- [x] **2.14. LangChain 1.0 New Mechanisms** — Test compatibility with content blocks, `create_agent`, middleware. Additionally review: ~~multi-tool calling support (currently only `tool_calls[0]` is forwarded)~~ (done: raises `ValueError`), ~~`ToolMessage`/`FunctionMessage` name forwarding~~ (done), ~~`ToolMessage` role mapping (`role="function"`)~~ (accepted for current `FunctionCall` bridge; revisit after upstream native `tool_calls` support), and ~~SDK exception translation to LangChain exception types~~ (decided: keep SDK exceptions as-is; see [dedicated section](#sdk-exception-translation-policy-214)).
 - [ ] **2.19. SDK `FunctionParametersProperty` Schema Stripping** — Upstream bug: SDK Pydantic model silently drops JSON Schema fields (`additionalProperties`, nested `required`, `format`, etc.), causing 422 errors. Fix required in `gigachat` SDK. See [dedicated section](#sdk-functionparameterssproperty-schema-stripping-219) and issues [#55](https://github.com/ai-forever/langchain-gigachat/issues/55), [#59](https://github.com/ai-forever/langchain-gigachat/issues/59).
 - [x] **2.15. CI/Contribution Documentation** — Create or rewrite CI docs, contribution guide, and other developer docs following LangChain upstream conventions.
 - [x] **2.16. CI Refactoring** — Completed: tests reviewed (obsolete removed, missing added), coverage assessed, and expansion scope documented. VCR tests remain out of scope for now.
@@ -484,7 +484,7 @@ Agreed upon during the refactoring review meeting. Each item will be expanded wi
 
 ---
 
-## Function/Tool Message Handling Fixes (2.14, partial)
+## Function/Tool Message Handling Fixes (2.14)
 
 - **Problem**: Three silent bugs in `_convert_message_to_dict()` caused incorrect API payloads without raising any error:
   1. **`FunctionMessage.name` never forwarded** — `gm.Messages.name` was left `None` even though
@@ -521,8 +521,7 @@ Agreed upon during the refactoring review meeting. Each item will be expanded wi
 - **Verification**:
   - `uv run ruff check` — passed
   - `uv run pytest` — 57 passed
-- **Status**: Completed (partial 2.14 — remaining sub-items: content blocks compatibility,
-  `create_agent`, middleware, SDK exception translation).
+- **Status**: Completed.
 
 ## FunctionCall vs ToolCall Migration Strategy
 
@@ -571,7 +570,7 @@ Agreed upon during the refactoring review meeting. Each item will be expanded wi
 - **Status**: Accepted; no urgent migration required. Keep under periodic review and trigger
   transition when upstream API contract changes.
 
-## SDK Exception Translation Policy (2.14, partial)
+## SDK Exception Translation Policy (2.14)
 
 - **Question**: Should `langchain-gigachat` translate `gigachat` SDK exceptions into LangChain exception types (`LangChainException`, `OutputParserException`)?
 - **Decision**: No. SDK exceptions are propagated to the caller as-is.

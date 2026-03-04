@@ -227,7 +227,7 @@
 - [x] Add `list_files`/`alist_files` (GET /files), `delete_file`/`adelete_file` (DELETE /files/{id})
 - [x] Document in `docs/REFACTORING.md` (checkbox + "File API Cleanup (2.17)" section)
 
-### 2.14. Function/Tool Message Handling Fixes (partial)
+### 2.14. LangChain 1.0 New Mechanisms
 - [x] Forward `FunctionMessage.name` to `gm.Messages.name` in `_convert_message_to_dict()`
   - [x] `kwargs["name"] = message.name` always set (field is required in `FunctionMessage`)
   - [x] Fixes silent bug: every `FunctionMessage` was sent to the API without a function name
@@ -250,8 +250,7 @@
   - [x] Audited all SDK call sites — no exceptions silently swallowed or losing context
   - [x] Decided: keep SDK exceptions as-is (aligned with `langchain-openai` practice; `langchain_core.exceptions` too minimal for meaningful translation)
   - [x] Documented rationale in `docs/REFACTORING.md` → "SDK Exception Translation Policy"
-- [ ] TODO (remaining scope for 2.14)
-  - [ ] Validate compatibility with `create_agent`, middleware, and modern content blocks
+- [x] Validate compatibility with `create_agent`, middleware, and modern content blocks
 
 ### Cleanup `_convert_any_typed_dicts_to_pydantic` in `function_calling.py`
 - [x] Replace `_parse_google_docstring` local copy with import from `langchain_core.utils.function_calling`
