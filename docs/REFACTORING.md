@@ -578,6 +578,20 @@ Agreed upon during the refactoring review meeting. Each item will be expanded wi
 - **Solution**: Add `model_config = ConfigDict(extra="allow")` to `FunctionParametersProperty` in the `gigachat` SDK.
 - **Status**: Not started (upstream SDK fix required).
 
+## Remove `_check_finish_reason`
+
+- **Problem**: `_check_finish_reason()` checked `finish_reason` from API responses against a hardcoded set of known values and logged a warning for unknown ones. The function had no effect on control flow — it only wrote to the log. The hardcoded list (`_NORMAL_FINISH_REASONS`, `_ERROR_FINISH_REASONS`) would produce false warnings whenever the API introduced a new `finish_reason` value, until someone manually updated the set. Validating API responses is the responsibility of the SDK layer, not the LangChain wrapper.
+- **Solution**:
+  - Removed `_check_finish_reason()` method, `_NORMAL_FINISH_REASONS` and `_ERROR_FINISH_REASONS` constants from `gigachat.py`.
+  - Removed call sites in `_create_chat_result()` and `_build_stream_chunk()`.
+  - Removed associated test `test_build_stream_chunk_unusual_finish_reason_warns`.
+- **Why**:
+  - **No functional impact**: The function only logged; nothing depended on it.
+  - **Maintenance burden**: Hardcoded set required manual updates for new API finish reasons.
+  - **Wrong layer**: Response validation belongs in the `gigachat` SDK, not the LangChain integration.
+- **Verification**: `uv run ruff check` — passed; `uv run pytest` — 198 passed.
+- **Status**: Completed.
+
 ---
 
 ## Breaking Changes

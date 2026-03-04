@@ -233,25 +233,3 @@ def test_build_stream_chunk_with_usage(gigachat_instance: GigaChat) -> None:
     assert chunk_m.usage_metadata["input_tokens"] == 10
     assert chunk_m.usage_metadata["output_tokens"] == 20
     assert chunk_m.usage_metadata["total_tokens"] == 30
-
-
-def test_build_stream_chunk_unusual_finish_reason_warns(
-    gigachat_instance: GigaChat, caplog: pytest.LogCaptureFixture
-) -> None:
-    raw_chunk: Dict[str, Any] = {
-        "choices": [
-            {
-                "delta": {"role": "assistant", "content": ""},
-                "index": 0,
-                "finish_reason": "length",
-            }
-        ],
-        "created": 123,
-        "model": "GigaChat:v1",
-        "object": "chat.completion",
-    }
-    import logging
-
-    with caplog.at_level(logging.WARNING):
-        gigachat_instance._build_stream_chunk(raw_chunk, first_chunk=False)
-    assert "length" in caplog.text

@@ -528,10 +528,6 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
 
         return payload
 
-    def _check_finish_reason(self, finish_reason: str | None) -> None:
-        if finish_reason and finish_reason not in {"stop", "function_call"}:
-            logger.warning("Giga generation stopped with reason: %s", finish_reason)
-
     def _create_chat_result(self, response: gm.ChatCompletion) -> ChatResult:
         generations = []
         x_headers = None
@@ -551,7 +547,6 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                     },
                 )
             finish_reason = res.finish_reason
-            self._check_finish_reason(finish_reason)
             gen = ChatGeneration(
                 message=message,
                 generation_info={
@@ -601,7 +596,6 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
 
         generation_info: Dict[str, Any] = {}
         if finish_reason := choice.get("finish_reason"):
-            self._check_finish_reason(finish_reason)
             generation_info["model_name"] = chunk.get("model")
             generation_info["finish_reason"] = finish_reason
         if first_chunk:

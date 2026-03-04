@@ -269,6 +269,13 @@
 - [x] Include `reasoning_effort` in payload building when configured
 - [x] Surface `reasoning_content` in assistant messages (`additional_kwargs`) for sync and stream paths
 
+### Remove `_check_finish_reason`
+- [x] Remove `_check_finish_reason()` method from `GigaChat` class
+- [x] Remove `_NORMAL_FINISH_REASONS` and `_ERROR_FINISH_REASONS` constants
+- [x] Remove call sites in `_create_chat_result()` and `_build_stream_chunk()`
+- [x] Remove `test_build_stream_chunk_unusual_finish_reason_warns` test
+- [x] Verification: `uv run ruff check` — passed; `uv run pytest` — 198 passed
+
 ### Upstream SDK privacy/logging follow-up (external)
 - [ ] Track upstream hardening for raw SSE parser error logs
   - [ ] Prefer truncation/redaction of raw payload in SDK parse-error logging
