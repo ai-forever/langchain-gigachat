@@ -38,3 +38,11 @@ Update these docs after solving each issue.
 - **Upstream Dependency**: The `gigachat` package (v0.2.0+) was significantly refactored. See `gigachat/docs/REFACTORING.md` for details. Changes here must align with upstream.
 - **LangChain Compatibility**: Must remain compatible with `langchain-core ^0.3` (Pydantic V2-native).
 - **Git Branch Dependency**: During refactoring, `gigachat` is installed from git branch (not local path or PyPI). See `docs/REFACTORING.md` → "Dependency Management Strategy" for rationale.
+
+## Cursor Cloud specific instructions
+
+- **Working directory**: All dev commands (`uv sync`, `uv run pytest`, `uv run ruff check .`, etc.) must be run from `libs/gigachat/`, not the repo root.
+- **No services to start**: This is a pure Python library — no servers, databases, or Docker containers are needed.
+- **Standard commands**: See "Setup Commands" section above for lint/test/format/typecheck commands.
+- **Integration tests require API credentials**: Unit tests run without credentials. Integration tests (`make integration_test`) require a valid GigaChat API key passed via `credentials` parameter and are not run by default.
+- **Mocked invocations for testing**: The `GigaChat` client can be instantiated with dummy credentials and invoked with `unittest.mock.patch` on `llm._client` for local testing without network access.
