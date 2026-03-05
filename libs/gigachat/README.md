@@ -6,8 +6,6 @@
 [![License](https://img.shields.io/github/license/ai-forever/langchain-gigachat?style=flat-square)](https://opensource.org/license/MIT)
 [![Downloads](https://img.shields.io/pypi/dm/langchain-gigachat?style=flat-square)](https://pypistats.org/packages/langchain-gigachat)
 
-[English](README.md) | [Русский](README-ru_RU.md)
-
 </div>
 
 # langchain-gigachat
@@ -26,10 +24,15 @@ This library is part of [GigaChain](https://github.com/ai-forever/gigachain) and
   - [Streaming](#streaming)
   - [Async](#async)
   - [Embeddings](#embeddings)
+  - [Reasoning Models](#reasoning-models)
 - [Tool Calling](#tool-calling)
 - [Structured Output](#structured-output)
 - [Attachments](#attachments)
+  - [File Operations](#file-operations)
 - [Configuration](#configuration)
+  - [Constructor Parameters](#constructor-parameters)
+  - [Environment Variables](#environment-variables)
+- [Error Handling](#error-handling)
 - [Related Projects](#related-projects)
 - [Contributing](#contributing)
 - [License](#license)
@@ -40,8 +43,12 @@ This library is part of [GigaChain](https://github.com/ai-forever/gigachain) and
 - **Embeddings** — text vectorization via `GigaChatEmbeddings`
 - **Tool calling** — `giga_tool` decorator with GigaChat-specific extras
 - **Structured output** — Pydantic models and JSON mode
+- **Reasoning models** — `reasoning_effort` for GigaChat-2-Reasoning
 - **Attachments** — images, audio, and documents via the Files API
+- **File operations** — upload, list, retrieve, and delete files
+- **Configurable retry** — exponential backoff via the underlying SDK
 - **Environment-based configuration** — all parameters configurable via `GIGACHAT_` env vars
+- **Fully typed** — Pydantic V2 models with `py.typed` marker
 
 ## Installation
 
@@ -137,6 +144,22 @@ vector = emb.embed_query("Привет!")
 print(len(vector))
 ```
 
+### Reasoning Models
+
+Use `reasoning_effort` with reasoning-capable models (e.g. `GigaChat-2-Reasoning`):
+
+```python
+from langchain_gigachat import GigaChat
+
+llm = GigaChat(model="GigaChat-2-Reasoning", reasoning_effort="high")
+
+msg = llm.invoke("How many r's are in the word 'strawberry'?")
+print(msg.content)
+print(msg.additional_kwargs.get("reasoning_content"))  # model's chain-of-thought
+```
+
+> **Note:** `reasoning_content` is also available during streaming — each `AIMessageChunk` carries it in `additional_kwargs`.
+
 ## Tool Calling
 
 `giga_tool` is a drop-in replacement for LangChain `@tool` with GigaChat-specific extras:
@@ -160,6 +183,8 @@ print(msg.tool_calls)
 ```
 
 > **Note:** `tool_choice="any"` is not supported by the GigaChat API. Use `"auto"`, `"none"`, or a specific tool name. If upstream code passes `"any"`, set `allow_any_tool_choice_fallback=True` to silently convert it to `"auto"`.
+
+> **Note:** GigaChat API does not support parallel tool calls in a single assistant message. If `AIMessage` contains more than one `tool_calls` entry, a `ValueError` is raised.
 
 ## Structured Output
 
@@ -210,22 +235,110 @@ reply = llm.invoke([msg])
 print(reply.content)
 ```
 
+> **Note:** Supported `content_blocks` types: `image`, `audio`, `file`. The pattern is identical for each — only the `type` field differs.
+
 > **Note:** Base64 data URLs in `image_url` / `audio_url` / `document_url` blocks can be auto-uploaded with `auto_upload_attachments=True`, but prefer explicit `upload_file()` in production.
+
+### File Operations
+
+Manage files via the Files API:
+
+```python
+from langchain_gigachat import GigaChat
+
+llm = GigaChat()
+
+# Upload
+with open("document.pdf", "rb") as f:
+    uploaded = llm.upload_file(("document.pdf", f.read()))
+print(f"Uploaded: {uploaded.id_}")
+
+# List
+files = llm.list_files()
+for f in files.data:
+    print(f"{f.id_}: {f.filename}")
+
+# Delete
+llm.delete_file(uploaded.id_)
+```
+
+> **Note:** `get_file()` and `get_file_content()` are also available. All methods have async variants (`aget_file`, etc.).
 
 ## Configuration
 
 All parameters can be passed to `GigaChat(...)` / `GigaChatEmbeddings(...)` directly or via environment variables with the `GIGACHAT_` prefix.
+
+### Constructor Parameters
+
+Most commonly used parameters (all are optional):
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `model` | `str` | `None` | Model name (e.g. `"GigaChat-2"`, `"GigaChat-2-Reasoning"`) |
+| `temperature` | `float` | `None` | Sampling temperature |
+| `max_tokens` | `int` | `None` | Maximum number of tokens to generate |
+| `top_p` | `float` | `None` | Nucleus sampling threshold (0.0–1.0) |
+| `repetition_penalty` | `float` | `None` | Penalty applied to repeated tokens |
+| `reasoning_effort` | `str` | `None` | Reasoning effort for reasoning models |
+| `credentials` | `str` | `None` | OAuth authorization key |
+| `access_token` | `str` | `None` | Pre-obtained JWT token (bypasses OAuth) |
+| `scope` | `str` | `None` | API scope (`GIGACHAT_API_PERS` / `_B2B` / `_CORP`) |
+| `base_url` | `str` | `None` | Custom API endpoint |
+| `verify_ssl_certs` | `bool` | `None` | TLS certificate verification |
+| `ca_bundle_file` | `str` | `None` | Path to CA certificate bundle |
+| `timeout` | `float` | `None` | Request timeout in seconds |
+| `max_retries` | `int` | `None` | Retry attempts for transient errors (SDK default: `0`) |
+| `retry_backoff_factor` | `float` | `None` | Exponential backoff multiplier (SDK default: `0.5`) |
+| `profanity_check` | `bool` | `None` | Enable profanity filtering |
+| `streaming` | `bool` | `False` | Stream results by default |
+| `auto_upload_attachments` | `bool` | `False` | Auto-upload base64 content from `image_url` / `audio_url` / `document_url` blocks |
+| `allow_any_tool_choice_fallback` | `bool` | `False` | Silently convert `tool_choice="any"` to `"auto"` |
+
+For the full list of parameters (auth, SSL/mTLS, retry, flags, etc.), see the [GigaChat SDK README](https://github.com/ai-forever/gigachat#constructor-parameters) — the LangChain wrapper accepts the same constructor arguments.
+
+### Environment Variables
 
 | Variable | Description |
 |---|---|
 | `GIGACHAT_CREDENTIALS` | OAuth credentials (recommended) |
 | `GIGACHAT_ACCESS_TOKEN` | Pre-obtained JWT token |
 | `GIGACHAT_SCOPE` | API scope (`GIGACHAT_API_PERS`, `GIGACHAT_API_B2B`, `GIGACHAT_API_CORP`) |
+| `GIGACHAT_MODEL` | Default model name |
 | `GIGACHAT_BASE_URL` | Custom API endpoint |
+| `GIGACHAT_TIMEOUT` | Request timeout in seconds |
 | `GIGACHAT_VERIFY_SSL_CERTS` | TLS verification on/off |
 | `GIGACHAT_CA_BUNDLE_FILE` | Path to CA bundle |
+| `GIGACHAT_MAX_RETRIES` | Retry attempts for transient errors |
 
-> **Note:** Retries are handled by the underlying `gigachat` SDK (`max_retries`, `retry_backoff_factor`, `retry_on_status_codes`). Don't combine them with LangChain `.with_retry()` — the attempts multiply.
+For the full list of environment variables, see the [GigaChat SDK README](https://github.com/ai-forever/gigachat#environment-variables).
+
+> **Note:** Retries are handled by the underlying `gigachat` SDK. Don't combine them with LangChain `.with_retry()` — the attempts multiply:
+>
+> ```python
+> llm = GigaChat(max_retries=3, retry_backoff_factor=0.5)  # delays: 0.5s, 1s, 2s
+> ```
+
+## Error Handling
+
+SDK exceptions propagate unchanged through the LangChain wrapper (aligned with the `langchain-openai` approach):
+
+```python
+from gigachat.exceptions import AuthenticationError, RateLimitError, GigaChatException
+from langchain_gigachat import GigaChat
+
+llm = GigaChat()
+
+try:
+    llm.invoke("Hello!")
+except AuthenticationError as e:
+    print(f"Authentication failed: {e}")
+except RateLimitError as e:
+    print(f"Rate limited. Retry after {e.retry_after}s")
+except GigaChatException as e:
+    print(f"GigaChat error: {e}")
+```
+
+For the full exception hierarchy and HTTP status code mapping, see the [GigaChat SDK — Error Handling](https://github.com/ai-forever/gigachat#error-handling).
 
 ## Related Projects
 
@@ -246,3 +359,5 @@ make test
 ## License
 
 This project is licensed under the MIT License.
+
+Copyright © 2026 [GigaChain](https://github.com/ai-forever/gigachain)
