@@ -400,7 +400,6 @@ source = { editable = "." }
 dependencies = [
     { name = "gigachat" },
     { name = "langchain-core" },
-    { name = "python-dotenv" },
 ]
 
 [package.dev-dependencies]
@@ -418,7 +417,6 @@ dev = [
 requires-dist = [
     { name = "gigachat", specifier = ">=0.2.0,<0.3" },
     { name = "langchain-core", specifier = ">=1,<2" },
-    { name = "python-dotenv", specifier = ">=1.2.1" },
 ]
 
 [package.metadata.requires-dev]

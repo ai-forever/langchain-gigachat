@@ -9,7 +9,6 @@ requires-python = ">=3.10,<4"
 dependencies = [
     "langchain-core>=1,<2",
     "gigachat>=0.2.0,<0.3",
-    "python-dotenv>=1.2.1",
 ]
 
 [project.urls]

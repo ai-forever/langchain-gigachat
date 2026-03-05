@@ -18,7 +18,7 @@ from typing import (
 from langchain_core.tools import BaseTool, Tool
 from langchain_core.utils.function_calling import (
     FunctionDescription,
-    _parse_google_docstring,
+    _parse_google_docstring,  # no public alternative; see docs/REFACTORING_CHANGELOG.md
     is_basemodel_subclass,
 )
 from langchain_core.utils.json_schema import dereference_refs

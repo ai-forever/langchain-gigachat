@@ -108,7 +108,7 @@ DEFAULT_IMAGE_CACHE_MAX_SIZE = 1000
 ATTACHMENT_BLOCK_KEYS = ("image_url", "audio_url", "document_url")
 
 
-def _extension_for_mime(mime: str) -> Optional[str]:
+def _extension_for_mime(mime: str) -> str:
     """Return file extension (with dot) for MIME type, or None."""
     ext = guess_extension(mime.split(";")[0].strip())
     return ext or MIME_EXTENSION_FALLBACK.get(mime.split(";")[0].strip(), ".bin")

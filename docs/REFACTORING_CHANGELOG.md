@@ -254,6 +254,7 @@
 
 ### Cleanup `_convert_any_typed_dicts_to_pydantic` in `function_calling.py`
 - [x] Replace `_parse_google_docstring` local copy with import from `langchain_core.utils.function_calling`
+  - **Known risk:** `_parse_google_docstring` is a private API (`_`-prefixed) with no public alternative in `langchain-core`. Accepted trade-off: importing from upstream avoids code duplication and keeps bug fixes in sync. The function is stable (used internally by `convert_to_openai_function` / `create_schema_from_function`), and 7 dedicated tests in `test_function_calling_edge_cases.py` act as a canary on dependency upgrades.
 - [x] Use `get_type_hints(typed_dict, include_extras=True)` with fallback (PEP 649 / Python 3.14+ compat, synced with upstream langchain-core)
 - [x] Remove dead `else: pass` branch; change `elif` to `if` for docstring description override
 - [x] Add docstring to `_convert_any_typed_dicts_to_pydantic`
