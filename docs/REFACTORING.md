@@ -280,11 +280,11 @@ Agreed upon during the refactoring review meeting. Each item will be expanded wi
 - [x] **2.12. `x_headers` Audit** — Map all places where `x_headers` are set/consumed (`response_metadata`, `generation_info`, `message.id`). Decide on refactoring or documentation.
 - [x] **2.13. `TYPE_CHECKING` Block** — Remove conditional `TYPE_CHECKING` import in `gigachat.py` or confirm it is necessary.
 - [x] **2.14. LangChain 1.0 New Mechanisms** — Test compatibility with content blocks, `create_agent`, middleware. Additionally review: ~~multi-tool calling support (currently only `tool_calls[0]` is forwarded)~~ (done: raises `ValueError`), ~~`ToolMessage`/`FunctionMessage` name forwarding~~ (done), ~~`ToolMessage` role mapping (`role="function"`)~~ (accepted for current `FunctionCall` bridge; revisit after upstream native `tool_calls` support), and ~~SDK exception translation to LangChain exception types~~ (decided: keep SDK exceptions as-is; see [dedicated section](#sdk-exception-translation-policy-214)).
-- [ ] **2.19. SDK `FunctionParametersProperty` Schema Stripping** — Upstream bug: SDK Pydantic model silently drops JSON Schema fields (`additionalProperties`, nested `required`, `format`, etc.), causing 422 errors. Fix required in `gigachat` SDK. See [dedicated section](#sdk-functionparameterssproperty-schema-stripping-219) and issues [#55](https://github.com/ai-forever/langchain-gigachat/issues/55), [#59](https://github.com/ai-forever/langchain-gigachat/issues/59).
 - [x] **2.15. CI/Contribution Documentation** — Create or rewrite CI docs, contribution guide, and other developer docs following LangChain upstream conventions.
 - [x] **2.16. CI Refactoring** — Completed: tests reviewed (obsolete removed, missing added), coverage assessed, and expansion scope documented. VCR tests remain out of scope for now.
 - [x] **2.17. `get_file` Naming and API Surface Cleanup** — `_BaseGigaChat.get_file/aget_file` actually calls SDK `get_image/aget_image` (downloads file content, not metadata). Rename or document clearly. Also consider wrapping additional SDK-only file endpoints (`GET /files`, `DELETE /files/{id}`) if useful.
 - [x] **2.18. Expose SDK Connection Settings** — `max_retries`, `max_connections`, `retry_backoff_factor`, `retry_on_status_codes` are now exposed as explicit fields on `_GigaChatClientMixin` (shared by `GigaChat` and `GigaChatEmbeddings`). See dedicated section below.
+- [x] **2.19. SDK `FunctionParametersProperty` Schema Stripping** — Implemented local compatibility fix in `function_calling.py`: normalize object schemas to always include `properties` and apply normalization to raw dict tool schemas before sending to API, preventing 422 errors reported in [#55](https://github.com/ai-forever/langchain-gigachat/issues/55) and [#59](https://github.com/ai-forever/langchain-gigachat/issues/59). See [dedicated section](#sdk-functionparameterssproperty-schema-stripping-219).
 
 ## CI/Contribution Documentation (2.15)
 
@@ -591,8 +591,18 @@ Agreed upon during the refactoring review meeting. Each item will be expanded wi
 
 - **Problem**: SDK model `FunctionParametersProperty` defines only `type`, `description`, `items`, `enum`, `properties`. Pydantic V2 silently drops all other JSON Schema fields (`additionalProperties`, nested `required`, `format`, `default`, etc.) during `Chat.model_validate()`, causing 422 API errors.
   - Issues: [#55](https://github.com/ai-forever/langchain-gigachat/issues/55), [#59](https://github.com/ai-forever/langchain-gigachat/issues/59).
-- **Solution**: Add `model_config = ConfigDict(extra="allow")` to `FunctionParametersProperty` in the `gigachat` SDK.
-- **Status**: Not started (upstream SDK fix required).
+- **Solution (implemented in `langchain-gigachat`)**:
+  - Updated `gigachat_fix_schema()` in `utils/function_calling.py` to recursively inject `properties: {}` for every schema node with `type: "object"` that does not define `properties`.
+  - Kept existing JSON Schema fields intact (`additionalProperties`, `items`, etc. are preserved).
+  - Updated `convert_to_gigachat_function()` dict-path handling to always pass raw dict schemas through `gigachat_fix_schema()` before returning them.
+  - Preserved title fallback behavior for unnamed raw schemas (keep `title` only when there is no explicit `name`).
+- **Verification** (unit tests in `tests/unit_tests/utils/test_function_calling.py`):
+  - `test_dict_any_field_has_properties_key`
+  - `test_nested_dict_in_list_has_properties_key`
+  - `test_raw_dict_schema_with_array_and_freeform_object`
+  - `test_raw_dict_schema_title_fallback_behavior`
+- **Status**: Completed (local compatibility mitigation in this repository).  
+  Upstream SDK hardening (`extra="allow"` on `FunctionParametersProperty`) remains desirable but is no longer a blocker for these failure cases.
 
 ## Remove `_check_finish_reason`
 
