@@ -43,7 +43,7 @@ This library is part of [GigaChain](https://github.com/ai-forever/gigachain) and
 - **Embeddings** — text vectorization via `GigaChatEmbeddings`
 - **Tool calling** — `giga_tool` decorator with GigaChat-specific extras
 - **Structured output** — Pydantic models and JSON mode
-- **Reasoning models** — `reasoning_effort` for GigaChat-2-Reasoning
+- **Reasoning models** — `reasoning_effort` for thinking models
 - **Attachments** — images, audio, and documents via the Files API
 - **File operations** — upload, list, retrieve, and delete files
 - **Configurable retry** — exponential backoff via the underlying SDK
@@ -146,12 +146,12 @@ print(len(vector))
 
 ### Reasoning Models
 
-Use `reasoning_effort` with reasoning-capable models (e.g. `GigaChat-2-Reasoning`):
+Use `reasoning_effort` with reasoning-capable models:
 
 ```python
 from langchain_gigachat import GigaChat
 
-llm = GigaChat(model="GigaChat-2-Reasoning", reasoning_effort="high")
+llm = GigaChat(model="GigaChat-2-Max", reasoning_effort="high")
 
 msg = llm.invoke("How many r's are in the word 'strawberry'?")
 print(msg.content)
@@ -274,7 +274,7 @@ Most commonly used parameters (all are optional):
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `model` | `str` | `None` | Model name (e.g. `"GigaChat-2"`, `"GigaChat-2-Reasoning"`) |
+| `model` | `str` | `None` | Model name (e.g. `"GigaChat-2-Max"`, `"GigaChat-2-Pro"`) |
 | `temperature` | `float` | `None` | Sampling temperature |
 | `max_tokens` | `int` | `None` | Maximum number of tokens to generate |
 | `top_p` | `float` | `None` | Nucleus sampling threshold (0.0–1.0) |
@@ -298,19 +298,7 @@ For the full list of parameters (auth, SSL/mTLS, retry, flags, etc.), see the [G
 
 ### Environment Variables
 
-| Variable | Description |
-|---|---|
-| `GIGACHAT_CREDENTIALS` | OAuth credentials (recommended) |
-| `GIGACHAT_ACCESS_TOKEN` | Pre-obtained JWT token |
-| `GIGACHAT_SCOPE` | API scope (`GIGACHAT_API_PERS`, `GIGACHAT_API_B2B`, `GIGACHAT_API_CORP`) |
-| `GIGACHAT_MODEL` | Default model name |
-| `GIGACHAT_BASE_URL` | Custom API endpoint |
-| `GIGACHAT_TIMEOUT` | Request timeout in seconds |
-| `GIGACHAT_VERIFY_SSL_CERTS` | TLS verification on/off |
-| `GIGACHAT_CA_BUNDLE_FILE` | Path to CA bundle |
-| `GIGACHAT_MAX_RETRIES` | Retry attempts for transient errors |
-
-For the full list of environment variables, see the [GigaChat SDK README](https://github.com/ai-forever/gigachat#environment-variables).
+All parameters can be configured via environment variables with the `GIGACHAT_` prefix (e.g. `GIGACHAT_CREDENTIALS`, `GIGACHAT_MODEL`, `GIGACHAT_BASE_URL`). See the [GigaChat SDK README](https://github.com/ai-forever/gigachat#environment-variables) for the full list.
 
 > **Note:** Retries are handled by the underlying `gigachat` SDK. Don't combine them with LangChain `.with_retry()` — the attempts multiply:
 >
