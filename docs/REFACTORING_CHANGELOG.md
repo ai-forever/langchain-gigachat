@@ -210,6 +210,20 @@
   - [x] `uv run mypy` — passed
   - [x] `uv run pytest` — 51 passed, 70% coverage (100% on `_client.py`)
 
+### 2.19. SDK `FunctionParametersProperty` Schema Stripping
+- [x] Add local schema normalization in `utils/function_calling.py` to prevent 422 errors from missing object `properties`
+  - [x] In `gigachat_fix_schema()`, inject `properties: {}` for every `{"type": "object"}` node that lacks `properties`
+  - [x] Preserve existing JSON Schema fields (`additionalProperties`, `items`, etc.)
+- [x] Normalize raw dict tool schemas in `convert_to_gigachat_function()`
+  - [x] Apply `gigachat_fix_schema()` in the dict input branch before returning schema
+  - [x] Keep title fallback behavior only for unnamed schemas (no explicit `name`)
+- [x] Add unit tests in `tests/unit_tests/utils/test_function_calling.py`
+  - [x] `test_dict_any_field_has_properties_key`
+  - [x] `test_nested_dict_in_list_has_properties_key`
+  - [x] `test_raw_dict_schema_with_array_and_freeform_object`
+  - [x] `test_raw_dict_schema_title_fallback_behavior`
+- [x] Scope note: this is a local compatibility mitigation in `langchain-gigachat`; upstream SDK hardening is still desirable but not required for these cases.
+
 ### 2.11. Remove `trim_content_to_stop_sequence`
 - [x] Remove `trim_content_to_stop_sequence()` from `gigachat.py`
 - [x] Remove trimming loop from `_generate` and `_agenerate`

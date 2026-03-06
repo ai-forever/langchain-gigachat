@@ -47,10 +47,10 @@ class IncorrectSchemaException(Exception):
 
 def gigachat_fix_schema(schema: Any, prev_key: str = "") -> Any:
     """
-    GigaChat do not support allOf/anyOf in JSON schema.
-    We need to fix this in case of allOf with one object or
-    in case with optional parameter.
-    In other cases throw exception that we do not support this types of schemas
+    Fix schema incompatibilities between JSON Schema and GigaChat API.
+
+    - GigaChat does not support allOf/anyOf in JSON schema. Collapses allOf
+      with a single element; raises for multi-element Union types.
     """
     if isinstance(schema, dict):
         obj_out: Any = {}
@@ -76,6 +76,12 @@ def gigachat_fix_schema(schema: Any, prev_key: str = "") -> Any:
                 obj_out[k] = gigachat_fix_schema(v, k)
             else:
                 obj_out[k] = v
+
+        # GigaChat requires 'properties' on every object-typed node.
+        # Pydantic omits it for free-form dicts (Dict[str, Any], bare dict…).
+        if obj_out.get("type") == "object" and "properties" not in obj_out:
+            obj_out["properties"] = {}
+
         return obj_out
     elif isinstance(schema, list):
         return [gigachat_fix_schema(el) for el in schema]
@@ -409,7 +415,10 @@ def convert_to_gigachat_function(
     from langchain_core.tools import BaseTool
 
     if isinstance(function, dict):
-        return function
+        fixed = gigachat_fix_schema(function)
+        if "name" not in fixed and "title" in function:
+            fixed["title"] = function["title"]
+        return fixed
     elif isinstance(function, type) and is_basemodel_subclass(function):
         function = cast(Dict, convert_pydantic_to_gigachat_function(function))
     elif isinstance(function, BaseTool):
