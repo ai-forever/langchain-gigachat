@@ -123,7 +123,7 @@
   - [x] `_client.py` — 100% coverage
 
 ### 2.2. Base64 Image Handling
-- [x] Make `_cached_images` per-instance via `PrivateAttr(default_factory=dict)` in `GigaChat` (fixes multi-tenant risk: cache no longer shared across instances)
+- [x] Make `_cached_uploads` (formerly `_cached_images`) per-instance via `PrivateAttr(default_factory=dict)` in `GigaChat` (fixes multi-tenant risk: cache no longer shared across instances)
 - [x] Add eviction: cap cache at `DEFAULT_IMAGE_CACHE_MAX_SIZE` (1000), FIFO eviction when full via `_set_cached_image()`
 - [x] Add unit tests
   - [x] `test_ai_upload_image_per_instance_cache` — two instances have independent caches

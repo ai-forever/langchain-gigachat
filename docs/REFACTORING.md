@@ -308,7 +308,7 @@ Agreed upon during the refactoring review meeting. Each item will be expanded wi
     - **Audio**: `{"type": "audio", "file_id": "giga-file-id"}` or `{"type": "audio", "url": "...", "file_id": "..."}`.
     - **Document**: `{"type": "file", "file_id": "giga-file-id"}` or `{"type": "file", "url": "...", "file_id": "..."}`.
     - Example: `HumanMessage(content_blocks=[{"type": "text", "text": "Опиши вложения."}, {"type": "image", "file_id": "id-1"}, {"type": "audio", "file_id": "id-2"}, {"type": "file", "file_id": "id-3"}])`. The provider-native format (`image_url`/`audio_url`/`document_url` with nested objects) is still accepted; LangChain maps only `image_url` to standard `image` in `content_blocks`, while `audio_url` and `document_url` appear as `non_standard`, so for consistent display use the standard format above.
-  - **Cache**: Reuse existing `_cached_images` (hash of URL → file id) for all attachment types so that uploaded audio/document data URLs are also cached.
+  - **Cache**: Reuse existing `_cached_uploads` (hash of URL → file id) for all attachment types so that uploaded audio/document data URLs are also cached.
   - **Upload**: Renamed `_upload_images` / `_aupload_images` to `_upload_attachments` / `_aupload_attachments`. Single flag `auto_upload_attachments` (default False) controls auto-upload for all data-URL blocks: `image_url`, `audio_url`, `document_url`. (Removed redundant `auto_upload_images`; use `auto_upload_attachments` for images too.) Upload uses existing `upload_file()`; MIME → extension mapping added for GigaChat-supported types (e.g. `audio/mp3` → `.mp3`, `application/epub` → `.epub`) where `mimetypes.guess_extension` returns None.
   - **Video**: Not implemented; API doc lists only text, image, and audio (mp4 is under audio MIME).
 - **Verification**: `uv run ruff check`, `uv run pytest` (including `test_get_text_and_images_from_content_*`, `test_convert_message_to_dict_with_audio_and_document_attachments`, `test_auto_upload_attachments_*`).
@@ -316,9 +316,9 @@ Agreed upon during the refactoring review meeting. Each item will be expanded wi
 
 ## Base64 Image Handling (2.2)
 
-- **Problem**: `_cached_images` was a class-level dict (shared across all `GigaChat` instances — multi-tenant risk) with no eviction (unbounded growth, memory overflow risk).
+- **Problem**: `_cached_uploads` (formerly `_cached_images`) was a class-level dict (shared across all `GigaChat` instances — multi-tenant risk) with no eviction (unbounded growth, memory overflow risk).
 - **Solution**:
-  - **Per-instance cache**: Replaced `_cached_images: Dict[str, str] = {}` with `PrivateAttr(default_factory=dict)` so each instance has its own cache.
+  - **Per-instance cache**: Replaced `_cached_uploads: Dict[str, str] = {}` (formerly `_cached_images`) with `PrivateAttr(default_factory=dict)` so each instance has its own cache.
   - **Eviction**: Introduced `DEFAULT_IMAGE_CACHE_MAX_SIZE = 1000` and `_set_cached_image()`; when the cache is full, the oldest entry is removed (FIFO) before adding a new one. `_upload_images` and `_aupload_images` call `_set_cached_image()` instead of assigning directly.
 - **Verification**: `uv run ruff check`, `uv run pytest` (including `test_ai_upload_image_per_instance_cache`, `test_ai_upload_image_cache_eviction`).
 - **Status**: Completed.
@@ -664,4 +664,4 @@ Steps required before merging `lc1-support` branch and publishing to PyPI.
 - [x] **Bump version**: updated `version` in `libs/gigachat/pyproject.toml` to `0.4.0`.
 - [x] **Coordinate with `gigachat` release**: `gigachat==0.2.0` published on PyPI; dependency switched to `gigachat>=0.2.0,<0.3` in `pyproject.toml`; `uv.lock` resolved from `https://pypi.org/simple`.
 - [x] **Run full verification**: `uv run ruff check . && uv run ruff format --check . && uv run mypy langchain_gigachat && uv run pytest` — 199 passed, 94% coverage.
-- [ ] **Update CHANGELOG / release notes** if maintained.
+- [x] **Update CHANGELOG / release notes** if maintained.
