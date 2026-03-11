@@ -26,6 +26,7 @@ This library is part of [GigaChain](https://github.com/ai-forever/gigachain) and
   - [Embeddings](#embeddings)
   - [Reasoning Models](#reasoning-models)
 - [Tool Calling](#tool-calling)
+  - [Legacy `bind_functions()`](#legacy-bind_functions)
 - [Structured Output](#structured-output)
 - [Attachments](#attachments)
   - [File Operations](#file-operations)
@@ -151,7 +152,7 @@ Use `reasoning_effort` with reasoning-capable models:
 ```python
 from langchain_gigachat import GigaChat
 
-llm = GigaChat(model="GigaChat-2-Max", reasoning_effort="high")
+llm = GigaChat(model="GigaChat-2-Reasoning", reasoning_effort="high")
 
 msg = llm.invoke("How many r's are in the word 'strawberry'?")
 print(msg.content)
@@ -166,7 +167,7 @@ print(msg.additional_kwargs.get("reasoning_content"))  # model's chain-of-though
 
 ```python
 from langchain_gigachat import GigaChat
-from langchain_gigachat.tools.giga_tool import giga_tool
+from langchain_gigachat.tools import giga_tool
 
 
 @giga_tool
@@ -185,6 +186,28 @@ print(msg.tool_calls)
 > **Note:** `tool_choice="any"` is not supported by the GigaChat API. Use `"auto"`, `"none"`, or a specific tool name. If upstream code passes `"any"`, set `allow_any_tool_choice_fallback=True` to silently convert it to `"auto"`.
 
 > **Note:** GigaChat API does not support parallel tool calls in a single assistant message. If `AIMessage` contains more than one `tool_calls` entry, a `ValueError` is raised.
+
+### Legacy `bind_functions()`
+
+For legacy LangChain function-calling flows, `bind_functions()` is still available:
+
+```python
+from langchain_gigachat import GigaChat
+
+
+def get_weather(city: str) -> str:
+    """Get current weather for a city."""
+    return f"{city}: sunny, 22C"
+
+
+llm = GigaChat()
+llm_with_functions = llm.bind_functions(
+    [get_weather],
+    function_call="auto",
+)
+```
+
+Use `bind_tools()` for new code. `bind_functions()` is kept as a compatibility layer over the provider's `function_call` transport and supports `None`, `"auto"`, `"none"`, or a specific function name.
 
 ## Structured Output
 
@@ -262,7 +285,16 @@ for f in files.data:
 llm.delete_file(uploaded.id_)
 ```
 
-> **Note:** `get_file()` and `get_file_content()` are also available. All methods have async variants (`aget_file`, etc.).
+`get_file()` returns file metadata, while `get_file_content()` downloads file content:
+
+```python
+metadata = llm.get_file(uploaded.id_)          # UploadedFile
+content = llm.get_file_content(uploaded.id_)   # Image with base64 payload
+print(metadata.filename)
+print(content.content[:20])
+```
+
+All file methods have async variants (`aget_file`, `aget_file_content`, `alist_files`, `adelete_file`, etc.).
 
 ## Configuration
 

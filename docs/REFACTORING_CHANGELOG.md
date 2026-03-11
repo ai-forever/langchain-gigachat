@@ -180,10 +180,13 @@
   - [x] `uv run pytest` — 83 passed, 79% coverage
 
 ### 2.10. Rewrite README.md
-- [ ] First iteration completed and submitted for review; finalization pending review feedback
+- [x] Finalize README after review feedback
   - [x] README rewritten to follow `gigachat` package style
   - [x] Known mismatch fixed: removed/updated SDK-only `giga.get_token()` reference from package docs
-  - [ ] Final pass after review comments (wording/examples consistency)
+  - [x] Final pass after review comments (wording/examples consistency)
+  - [x] Correct reasoning example to use a reasoning-capable model
+  - [x] Document legacy `bind_functions()` compatibility path
+  - [x] Clarify `get_file()` vs `get_file_content()` semantics in file operations docs
 
 ### 2.16. CI Refactoring
 - [x] Review tests and CI scope

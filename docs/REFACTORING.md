@@ -275,7 +275,7 @@ Agreed upon during the refactoring review meeting. Each item will be expanded wi
 - [ ] **2.7. `profiles.py`** — On hold: PR submitted, waiting for review result; no actions for now.
 - [x] **2.8. `giga_tool` Decorator Revision** — Review extra functionality (`return_schema`, `few_shot_examples`) over standard `@tool`. If replaceable by LangChain extras — remove. If removed: rewrite examples, document as **breaking change**.
 - [x] **2.9. Embeddings Batch Settings** — API natively handles batches (`input` accepts `List[string]`). Removed custom `MAX_BATCH_SIZE_CHARS` / `MAX_BATCH_SIZE_PARTS` logic. See dedicated section below.
-- [ ] **2.10. Rewrite README.md** — First iteration completed and submitted for review; finalization pending review feedback. The rewrite follows `gigachat` package README style. Known mismatch about SDK-only `giga.get_token()` reference is fixed.
+- [x] **2.10. Rewrite README.md** — Finalized. The README now follows the `gigachat` package README style, removes the SDK-only `giga.get_token()` mismatch, documents the current LangChain-facing API surface (`bind_tools`, legacy `bind_functions`, structured output, attachments, file operations), and clarifies `get_file()` vs `get_file_content()` semantics.
 - [x] **2.11. Remove `trim_content_to_stop_sequence`** — Fully remove the function and all call sites (`_generate`, `_agenerate`, `_stream`, `_astream`). Stop sequence handling should be API-side. See dedicated section below.
 - [x] **2.12. `x_headers` Audit** — Map all places where `x_headers` are set/consumed (`response_metadata`, `generation_info`, `message.id`). Decide on refactoring or documentation.
 - [x] **2.13. `TYPE_CHECKING` Block** — Remove conditional `TYPE_CHECKING` import in `gigachat.py` or confirm it is necessary.
@@ -285,6 +285,25 @@ Agreed upon during the refactoring review meeting. Each item will be expanded wi
 - [x] **2.17. `get_file` Naming and API Surface Cleanup** — `_BaseGigaChat.get_file/aget_file` actually calls SDK `get_image/aget_image` (downloads file content, not metadata). Rename or document clearly. Also consider wrapping additional SDK-only file endpoints (`GET /files`, `DELETE /files/{id}`) if useful.
 - [x] **2.18. Expose SDK Connection Settings** — `max_retries`, `max_connections`, `retry_backoff_factor`, `retry_on_status_codes` are now exposed as explicit fields on `_GigaChatClientMixin` (shared by `GigaChat` and `GigaChatEmbeddings`). See dedicated section below.
 - [x] **2.19. SDK `FunctionParametersProperty` Schema Stripping** — Implemented local compatibility fix in `function_calling.py`: normalize object schemas to always include `properties` and apply normalization to raw dict tool schemas before sending to API, preventing 422 errors reported in [#55](https://github.com/ai-forever/langchain-gigachat/issues/55) and [#59](https://github.com/ai-forever/langchain-gigachat/issues/59). See [dedicated section](#sdk-functionparameterssproperty-schema-stripping-219).
+
+## README Rewrite (2.10)
+
+- **Problem**: The initial README rewrite was submitted, but it still needed a final consistency pass after review. The remaining gaps were small but user-visible: some examples used imprecise wording, the reasoning example did not point to a reasoning-specific model, the legacy `bind_functions()` compatibility path was undocumented, and file API documentation did not clearly distinguish metadata retrieval from content download.
+- **Solution**:
+  - **Examples and wording**:
+    - Kept the README in the same concise PyPI-style structure as the upstream `gigachat` package.
+    - Corrected the reasoning example to use a reasoning-capable model (`GigaChat-2-Reasoning`).
+  - **Tool calling coverage**:
+    - Kept `bind_tools()` as the primary documented path for new code.
+    - Added a short `bind_functions()` subsection to document the legacy compatibility API and its supported `function_call` values (`None`, `"auto"`, `"none"`, specific name).
+  - **File API clarity**:
+    - Expanded the file-operations section to explicitly document the split between `get_file()` (metadata) and `get_file_content()` (downloaded base64 content).
+    - Kept the async variants discoverable in the same section.
+  - **Why**:
+    - **Consistency**: README examples now better match the current API and migration docs.
+    - **Discoverability**: Legacy-but-supported APIs are documented without making them the default recommendation.
+    - **Reduced confusion**: Users can now see the metadata/content split in the Files API directly in the README.
+- **Status**: Completed.
 
 ## CI/Contribution Documentation (2.15)
 
