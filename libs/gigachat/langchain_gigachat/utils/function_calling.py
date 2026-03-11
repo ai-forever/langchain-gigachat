@@ -60,7 +60,7 @@ def gigachat_fix_schema(schema: Any, prev_key: str = "") -> Any:
                     obj_out[k] = gigachat_fix_schema(v, k)
                 else:
                     continue
-            if k == "allOf":
+            elif k == "allOf":
                 if len(v) > 1:
                     raise IncorrectSchemaException()
                 obj = gigachat_fix_schema(v[0], k)
@@ -69,7 +69,7 @@ def gigachat_fix_schema(schema: Any, prev_key: str = "") -> Any:
                 if outer_description:
                     # Outer description takes priority over inner one for ref
                     obj_out["description"] = outer_description
-            if k == "anyOf":
+            elif k == "anyOf":
                 if len(v) > 1:
                     raise IncorrectSchemaException()
             elif isinstance(v, (list, dict)):

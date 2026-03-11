@@ -18,6 +18,7 @@ Major release: LangChain Core 1.x, Pydantic V2, multimodal support, and extensiv
 - **Removed `auto_upload_images`** — use `auto_upload_attachments` (covers images, audio, documents).
 - **Removed `GigaChatEmbeddings.one_by_one_mode` and `_debug_delay`** — API handles batching natively.
 - **Removed `output_parsers.gigachat_functions` module** — use `PydanticToolsParser` / `JsonOutputKeyToolsParser` from `langchain_core`.
+- **Removed wrapper-side `stop` support** — `stop=...` is no longer handled by `langchain-gigachat`.
 - **`get_file()` now returns metadata** (`UploadedFile`) instead of content — use `get_file_content()` for binary data.
 - **`tool_choice="any"` now raises `ValueError`** — set `allow_any_tool_choice_fallback=True` for auto-fallback.
 - **Multiple `tool_calls` in one `AIMessage` now raises `ValueError`** — GigaChat API does not support parallel function calls.
@@ -45,7 +46,7 @@ Major release: LangChain Core 1.x, Pydantic V2, multimodal support, and extensiv
 
 ### Removed
 
-- `trim_content_to_stop_sequence()` — stop sequence handling delegated to API.
+- `trim_content_to_stop_sequence()` — wrapper-side stop sequence handling removed.
 - `_check_finish_reason()` — response validation belongs in SDK.
 - `_convert_function_to_dict()`, `_get_type_hints()` — dead code.
 - `tools/load_prompt.py` — legacy module not part of public API.

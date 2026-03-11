@@ -147,6 +147,23 @@ The `langchain_gigachat.tools.load_prompt` module has been deleted.
 
 ## Changed Behaviour
 
+### `stop` support removed
+
+The wrapper no longer implements local stop-sequence handling.
+
+```python
+# Before
+msg = llm.invoke("Hello STOP world", stop=["STOP"])
+
+# After — remove the argument from call sites
+msg = llm.invoke("Hello STOP world")
+```
+
+**Why:** The `stop` behavior was wrapper-specific and is no longer maintained.
+If you previously relied on it, update call sites to stop passing `stop=...`.
+
+---
+
 ### `tool_choice="any"` raises `ValueError`
 
 Previously, `tool_choice="any"` was silently converted to `"auto"`. Now it raises `ValueError` by default.

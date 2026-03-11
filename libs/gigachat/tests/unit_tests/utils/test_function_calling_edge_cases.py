@@ -31,6 +31,7 @@ def test_fix_schema_allof_single() -> None:
     result = gigachat_fix_schema(schema)
     assert result["properties"]["field"]["type"] == "object"
     assert result["properties"]["field"]["description"] == "outer"
+    assert "allOf" not in result["properties"]["field"]
 
 
 def test_fix_schema_allof_multiple_raises() -> None:
