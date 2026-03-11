@@ -109,7 +109,7 @@ ATTACHMENT_BLOCK_KEYS = ("image_url", "audio_url", "document_url")
 
 
 def _extension_for_mime(mime: str) -> str:
-    """Return file extension (with dot) for MIME type, or None."""
+    """Return file extension (with dot) for MIME type, falling back to '.bin'."""
     ext = guess_extension(mime.split(";")[0].strip())
     return ext or MIME_EXTENSION_FALLBACK.get(mime.split(";")[0].strip(), ".bin")
 
@@ -400,7 +400,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
     GigaChat API doesn't support 'any', so by default it raises an error.
     """
 
-    _cached_images: Dict[str, str] = PrivateAttr(default_factory=dict)
+    _cached_uploads: Dict[str, str] = PrivateAttr(default_factory=dict)
 
     @pre_init
     def validate_environment(cls, values: Dict) -> Dict:
@@ -412,11 +412,11 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             )
         return values
 
-    def _set_cached_image(self, hashed: str, file_id: str) -> None:
+    def _set_cached_upload(self, hashed: str, file_id: str) -> None:
         """Store file_id for hashed content url; evict oldest entry if at capacity."""
-        if len(self._cached_images) >= DEFAULT_IMAGE_CACHE_MAX_SIZE:
-            self._cached_images.pop(next(iter(self._cached_images)))
-        self._cached_images[hashed] = file_id
+        if len(self._cached_uploads) >= DEFAULT_IMAGE_CACHE_MAX_SIZE:
+            self._cached_uploads.pop(next(iter(self._cached_uploads)))
+        self._cached_uploads[hashed] = file_id
 
     def _should_upload_block(
         self, block_type: str, url: str
@@ -456,16 +456,16 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 if not should_upload or not matches:
                     continue
                 hashed = hashlib.sha256(url.encode()).hexdigest()
-                if hashed in self._cached_images:
+                if hashed in self._cached_uploads:
                     continue
                 mime, encoding, data_b64 = matches.groups()
                 if encoding != "base64":
                     continue
-                ext = _extension_for_mime(mime) or ".bin"
+                ext = _extension_for_mime(mime)
                 file = await self.aupload_file(
                     (f"{uuid4()}{ext}", base64.b64decode(data_b64))
                 )
-                self._set_cached_image(hashed, file.id_)
+                self._set_cached_upload(hashed, file.id_)
 
     def _upload_attachments(self, messages: List[BaseMessage]) -> None:
         for message in messages:
@@ -487,18 +487,18 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 if not should_upload or not matches:
                     continue
                 hashed = hashlib.sha256(url.encode()).hexdigest()
-                if hashed in self._cached_images:
+                if hashed in self._cached_uploads:
                     continue
                 mime, encoding, data_b64 = matches.groups()
                 if encoding != "base64":
                     continue
-                ext = _extension_for_mime(mime) or ".bin"
+                ext = _extension_for_mime(mime)
                 file = self.upload_file((f"{uuid4()}{ext}", base64.b64decode(data_b64)))
-                self._set_cached_image(hashed, file.id_)
+                self._set_cached_upload(hashed, file.id_)
 
     def _build_payload(self, messages: List[BaseMessage], **kwargs: Any) -> gm.Chat:
         messages_dicts = [
-            _convert_message_to_dict(m, self._cached_images) for m in messages
+            _convert_message_to_dict(m, self._cached_uploads) for m in messages
         ]
         kwargs.pop("messages", None)
 
@@ -573,7 +573,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         Caller is responsible for normalizing the raw chunk to a dict and for callbacks.
         """
         choice = chunk["choices"][0]
-        content = choice.get("delta", {}).get("content", {})
+        content = choice.get("delta", {}).get("content", "")
         chunk_m = _convert_delta_to_message_chunk(choice["delta"], AIMessageChunk)
 
         usage_metadata = None

@@ -233,3 +233,24 @@ def test_build_stream_chunk_with_usage(gigachat_instance: GigaChat) -> None:
     assert chunk_m.usage_metadata["input_tokens"] == 10
     assert chunk_m.usage_metadata["output_tokens"] == 20
     assert chunk_m.usage_metadata["total_tokens"] == 30
+
+
+def test_build_stream_chunk_without_content_uses_empty_string(
+    gigachat_instance: GigaChat,
+) -> None:
+    raw_chunk: Dict[str, Any] = {
+        "choices": [
+            {
+                "delta": {
+                    "role": "assistant",
+                    "function_call": {"name": "my_tool", "arguments": {}},
+                },
+                "index": 0,
+            }
+        ],
+        "created": 123,
+        "model": "GigaChat:v1",
+        "object": "chat.completion",
+    }
+    _, _, content = gigachat_instance._build_stream_chunk(raw_chunk, first_chunk=True)
+    assert content == ""

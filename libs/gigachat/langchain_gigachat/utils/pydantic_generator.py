@@ -14,7 +14,7 @@ class GigaChatJsonSchema(GenerateJsonSchema):
         total: bool,
     ) -> bool:
         """
-        Makers nullable fields not required
+        Make nullable fields not required
         """
         if field["schema"]["type"] == "nullable":
             return False

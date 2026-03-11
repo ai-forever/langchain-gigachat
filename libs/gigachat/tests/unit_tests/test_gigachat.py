@@ -552,12 +552,12 @@ def test_ai_upload_image(
     llm = GigaChat(auto_upload_attachments=True)
     dialog, hashed_1, hashed_2 = upload_images_dialog
     llm.invoke(dialog)
-    assert len(llm._cached_images.keys()) == 2
+    assert len(llm._cached_uploads.keys()) == 2
     assert patch_gigachat_upload_file.call_count == 2
     assert patch_gigachat_upload_file.call_args_list[0][0][0][1] == b"123"
     assert patch_gigachat_upload_file.call_args_list[1][0][0][1] == b"124"
-    assert hashed_1 in llm._cached_images
-    assert hashed_2 in llm._cached_images
+    assert hashed_1 in llm._cached_uploads
+    assert hashed_2 in llm._cached_uploads
 
 
 async def test_ai_aupload_image(
@@ -566,12 +566,12 @@ async def test_ai_aupload_image(
     llm = GigaChat(auto_upload_attachments=True)
     dialog, hashed_1, hashed_2 = upload_images_dialog
     await llm.ainvoke(dialog)
-    assert len(llm._cached_images.keys()) == 2
+    assert len(llm._cached_uploads.keys()) == 2
     assert patch_gigachat_aupload_file.call_count == 2
     assert patch_gigachat_aupload_file.call_args_list[0][0][0][1] == b"123"
     assert patch_gigachat_aupload_file.call_args_list[1][0][0][1] == b"124"
-    assert hashed_1 in llm._cached_images
-    assert hashed_2 in llm._cached_images
+    assert hashed_1 in llm._cached_uploads
+    assert hashed_2 in llm._cached_uploads
 
 
 def test_ai_upload_image_stream(
@@ -580,12 +580,12 @@ def test_ai_upload_image_stream(
     llm = GigaChat(auto_upload_attachments=True)
     dialog, hashed_1, hashed_2 = upload_images_dialog
     list(llm.stream(dialog))
-    assert len(llm._cached_images.keys()) == 2
+    assert len(llm._cached_uploads.keys()) == 2
     assert patch_gigachat_upload_file.call_count == 2
     assert patch_gigachat_upload_file.call_args_list[0][0][0][1] == b"123"
     assert patch_gigachat_upload_file.call_args_list[1][0][0][1] == b"124"
-    assert hashed_1 in llm._cached_images
-    assert hashed_2 in llm._cached_images
+    assert hashed_1 in llm._cached_uploads
+    assert hashed_2 in llm._cached_uploads
 
 
 async def test_ai_aupload_image_stream(
@@ -595,12 +595,12 @@ async def test_ai_aupload_image_stream(
     dialog, hashed_1, hashed_2 = upload_images_dialog
     async for _ in llm.astream(dialog):
         pass
-    assert len(llm._cached_images.keys()) == 2
+    assert len(llm._cached_uploads.keys()) == 2
     assert patch_gigachat_aupload_file.call_count == 2
     assert patch_gigachat_aupload_file.call_args_list[0][0][0][1] == b"123"
     assert patch_gigachat_aupload_file.call_args_list[1][0][0][1] == b"124"
-    assert hashed_1 in llm._cached_images
-    assert hashed_2 in llm._cached_images
+    assert hashed_1 in llm._cached_uploads
+    assert hashed_2 in llm._cached_uploads
 
 
 def test_ai_upload_disabled_image(
@@ -609,7 +609,7 @@ def test_ai_upload_disabled_image(
     llm = GigaChat()
     dialog, hashed_1, hashed_2 = upload_images_dialog
     llm.invoke(dialog)
-    assert len(llm._cached_images.keys()) == 0
+    assert len(llm._cached_uploads.keys()) == 0
     assert patch_gigachat_upload_file.call_count == 0
 
 
@@ -619,7 +619,7 @@ async def test_ai_aupload_disabled_image(
     llm = GigaChat()
     dialog, hashed_1, hashed_2 = upload_images_dialog
     await llm.ainvoke(dialog)
-    assert len(llm._cached_images.keys()) == 0
+    assert len(llm._cached_uploads.keys()) == 0
     assert patch_gigachat_aupload_file.call_count == 0
 
 
@@ -629,7 +629,7 @@ def test_ai_upload_image_disabled_stream(
     llm = GigaChat()
     dialog, hashed_1, hashed_2 = upload_images_dialog
     list(llm.stream(dialog))
-    assert len(llm._cached_images.keys()) == 0
+    assert len(llm._cached_uploads.keys()) == 0
     assert patch_gigachat_upload_file.call_count == 0
 
 
@@ -640,7 +640,7 @@ async def test_ai_aupload_image_disabled_stream(
     dialog, _, _ = upload_images_dialog
     async for _ in llm.astream(dialog):
         pass
-    assert len(llm._cached_images.keys()) == 0
+    assert len(llm._cached_uploads.keys()) == 0
     assert patch_gigachat_aupload_file.call_count == 0
 
 
@@ -652,12 +652,12 @@ def test_ai_upload_image_per_instance_cache(
     llm2 = GigaChat(auto_upload_attachments=True)
     dialog, hashed_1, hashed_2 = upload_images_dialog
     llm1.invoke(dialog)
-    assert len(llm1._cached_images) == 2
-    assert hashed_1 in llm1._cached_images and hashed_2 in llm1._cached_images
-    assert len(llm2._cached_images) == 0
+    assert len(llm1._cached_uploads) == 2
+    assert hashed_1 in llm1._cached_uploads and hashed_2 in llm1._cached_uploads
+    assert len(llm2._cached_uploads) == 0
     llm2.invoke(dialog)
-    assert len(llm2._cached_images) == 2
-    assert llm1._cached_images is not llm2._cached_images
+    assert len(llm2._cached_uploads) == 2
+    assert llm1._cached_uploads is not llm2._cached_uploads
 
 
 def test_ai_upload_image_cache_eviction(
@@ -679,14 +679,14 @@ def test_ai_upload_image_cache_eviction(
         msg_b = [{"type": "image_url", "image_url": {"url": img_b}}]
         msg_c = [{"type": "image_url", "image_url": {"url": img_c}}]
         llm.invoke([HumanMessage(content=cast(Any, msg_a))])
-        assert len(llm._cached_images) == 1 and hash_a in llm._cached_images
+        assert len(llm._cached_uploads) == 1 and hash_a in llm._cached_uploads
         llm.invoke([HumanMessage(content=cast(Any, msg_b))])
-        assert len(llm._cached_images) == 2
-        assert hash_a in llm._cached_images and hash_b in llm._cached_images
+        assert len(llm._cached_uploads) == 2
+        assert hash_a in llm._cached_uploads and hash_b in llm._cached_uploads
         llm.invoke([HumanMessage(content=cast(Any, msg_c))])
-        assert len(llm._cached_images) == 2
-        assert hash_a not in llm._cached_images
-        assert hash_b in llm._cached_images and hash_c in llm._cached_images
+        assert len(llm._cached_uploads) == 2
+        assert hash_a not in llm._cached_uploads
+        assert hash_b in llm._cached_uploads and hash_c in llm._cached_uploads
 
 
 def test__convert_message_with_attachments_to_dict_system(
@@ -795,8 +795,8 @@ def test_auto_upload_attachments_audio_url(
     llm.invoke([msg])
     assert patch_gigachat_upload_file.call_count == 1
     hashed = hashlib.sha256(audio_data.encode()).hexdigest()
-    assert hashed in llm._cached_images
-    assert llm._cached_images[hashed] == "0"
+    assert hashed in llm._cached_uploads
+    assert llm._cached_uploads[hashed] == "0"
 
 
 async def test_auto_upload_attachments_document_url(
@@ -811,7 +811,7 @@ async def test_auto_upload_attachments_document_url(
     await llm.ainvoke([msg])
     assert patch_gigachat_aupload_file.call_count == 1
     hashed = hashlib.sha256(doc_data.encode()).hexdigest()
-    assert hashed in llm._cached_images
+    assert hashed in llm._cached_uploads
 
 
 class PersonTool(BaseModel):

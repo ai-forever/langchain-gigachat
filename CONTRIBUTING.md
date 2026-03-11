@@ -113,7 +113,7 @@ We follow a fork-and-pull-request model:
 
 1. **Fork the repository** to your GitHub account
 2. **Clone your fork** locally
-3. **Create a feature branch** from `main`:
+3. **Create a feature branch** from `master`:
    ```bash
    git checkout -b feature/your-feature-name
    # or
@@ -170,11 +170,11 @@ git remote add upstream https://github.com/ai-forever/langchain-gigachat.git
 
 # Fetch and merge upstream changes
 git fetch upstream
-git checkout main
-git merge upstream/main
+git checkout master
+git merge upstream/master
 
 # Push to your fork
-git push origin main
+git push origin master
 ```
 
 ### Submitting Your Changes
@@ -184,7 +184,7 @@ git push origin main
    git push origin feature/your-feature-name
    ```
 
-2. **Open a pull request** on GitHub from your fork to `ai-forever/langchain-gigachat:main`
+2. **Open a pull request** on GitHub from your fork to `ai-forever/langchain-gigachat:master`
 
 3. **Fill out the PR template** with all required information
 
@@ -424,13 +424,13 @@ git commit -m "test: add tests for chat timeout"
 
 4. **Review your own changes**
    ```bash
-   git diff main...your-branch
+   git diff master...your-branch
    ```
 
-5. **Rebase on latest main** (if needed)
+5. **Rebase on latest master** (if needed)
    ```bash
    git fetch upstream
-   git rebase upstream/main
+   git rebase upstream/master
    ```
 
 6. **Clean up your commits**
