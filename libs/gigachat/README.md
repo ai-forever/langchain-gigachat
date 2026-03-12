@@ -42,7 +42,7 @@ This library is part of [GigaChain](https://github.com/ai-forever/gigachain) and
 
 - **Chat completions** — synchronous and asynchronous, with streaming
 - **Embeddings** — text vectorization via `GigaChatEmbeddings`
-- **Tool calling** — `giga_tool` decorator with GigaChat-specific extras
+- **Tool calling** — standard LangChain `@tool` with GigaChat metadata in `extras`
 - **Structured output** — Pydantic models and JSON mode
 - **Reasoning models** — `reasoning_effort` for thinking models
 - **Attachments** — images, audio, and documents via the Files API
@@ -163,14 +163,18 @@ print(msg.additional_kwargs.get("reasoning_content"))  # model's chain-of-though
 
 ## Tool Calling
 
-`giga_tool` is a drop-in replacement for LangChain `@tool` with GigaChat-specific extras:
+Use the standard LangChain `@tool` decorator. Pass GigaChat-specific metadata via `extras`:
 
 ```python
 from langchain_gigachat import GigaChat
-from langchain_gigachat.tools import giga_tool
+from langchain_core.tools import tool
 
 
-@giga_tool
+@tool(
+    extras={
+        "few_shot_examples": [{"request": "weather in Tokyo", "params": {"city": "Tokyo"}}]
+    }
+)
 def get_weather(city: str) -> str:
     """Get current weather for a city."""
     return f"{city}: sunny, 22C"

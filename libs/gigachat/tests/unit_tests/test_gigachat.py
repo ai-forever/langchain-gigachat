@@ -36,7 +36,6 @@ from langchain_gigachat.chat_models.gigachat import (
     _convert_message_to_dict,
     get_text_and_images_from_content,
 )
-from langchain_gigachat.tools.giga_tool import FewShotExamples, giga_tool
 
 
 @pytest.fixture
@@ -473,15 +472,15 @@ few_shot_examples = [
 ]
 
 
-@giga_tool(few_shot_examples=few_shot_examples)
+@tool(extras={"few_shot_examples": few_shot_examples, "return_schema": SendSmsResult})
 def _test_send_sms(
     arg: str, config: RunnableConfig, injected: Annotated[str, InjectedToolArg]
-) -> SendSmsResult:
+) -> str:
     """Sends SMS message"""
-    return SendSmsResult(status="success", message="SMS sent")
+    return "SMS sent"
 
 
-def test_gigachat_bind_gigatool() -> None:
+def test_gigachat_bind_standard_tool_with_extras() -> None:
     llm = GigaChat().bind_tools(tools=[_test_send_sms])
     assert llm.kwargs["tools"][0]["function"]["few_shot_examples"] == few_shot_examples  # type: ignore[attr-defined]
     assert llm.kwargs["tools"][0]["function"]["return_parameters"] == {  # type: ignore[attr-defined]
@@ -498,7 +497,7 @@ class SomeResult(BaseModel):
     """My desc"""
 
     @staticmethod
-    def few_shot_examples() -> FewShotExamples:
+    def few_shot_examples() -> list[dict[str, Any]]:
         return [
             {
                 "request": "request example",

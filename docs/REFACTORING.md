@@ -211,7 +211,6 @@
     - Removed redundant `# type: ignore` comments
     - Removed redundant `isinstance()` checks after type-narrowing assignments
   - **Module Exports**:
-    - `tools/__init__.py`: Added exports for `FewShotExamples`, `GigaBaseTool`, `GigaStructuredTool`, `GigaTool`, `giga_tool`
     - `utils/__init__.py`: Added exports for `convert_to_gigachat_function`, `convert_to_gigachat_tool`
   - **Minor Fixes**:
     - Compiled `BASE64_DATA_REGEX` at module level (was inline, repeated)
@@ -273,7 +272,7 @@ Agreed upon during the refactoring review meeting. Each item will be expanded wi
 - [x] **2.5. LangChain Legacy (LCL) Chains Review** — Full review of all legacy LangChain chain patterns in the code. Remove where possible. Includes reviewing `bind_functions` (legacy path) — docstring mentions "auto" but implementation only supports force-by-name.
 - [x] **2.6. Register on models.dev** — Add GigaChat models to [models.dev](https://models.dev).
 - [ ] **2.7. `profiles.py`** — On hold: PR submitted, waiting for review result; no actions for now.
-- [x] **2.8. `giga_tool` Decorator Revision** — Review extra functionality (`return_schema`, `few_shot_examples`) over standard `@tool`. If replaceable by LangChain extras — remove. If removed: rewrite examples, document as **breaking change**.
+- [x] **2.8. `giga_tool` Decorator Revision** — Completed removal of the legacy `giga_tool` / `Giga*Tool` compatibility layer. Tool-specific metadata is now passed only via standard `@tool(extras=...)`, with examples/tests/docs updated accordingly.
 - [x] **2.9. Embeddings Batch Settings** — API natively handles batches (`input` accepts `List[string]`). Removed custom `MAX_BATCH_SIZE_CHARS` / `MAX_BATCH_SIZE_PARTS` logic. See dedicated section below.
 - [x] **2.10. Rewrite README.md** — Finalized. The README now follows the `gigachat` package README style, removes the SDK-only `giga.get_token()` mismatch, documents the current LangChain-facing API surface (`bind_tools`, legacy `bind_functions`, structured output, attachments, file operations), and clarifies `get_file()` vs `get_file_content()` semantics.
 - [x] **2.11. Remove `trim_content_to_stop_sequence`** — Fully remove the function and all call sites (`_generate`, `_agenerate`, `_stream`, `_astream`). Stop sequence handling should be API-side. See dedicated section below.

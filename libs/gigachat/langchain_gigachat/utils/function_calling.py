@@ -251,15 +251,9 @@ def format_tool_to_gigachat_function(tool: BaseTool) -> GigaFunctionDescription:
     if tool.tool_call_schema:
         tool_schema = tool.tool_call_schema
 
-    if hasattr(tool, "return_schema") and tool.return_schema:
-        return_schema = tool.return_schema
-    else:
-        return_schema = None
-
-    if hasattr(tool, "few_shot_examples") and tool.few_shot_examples:
-        few_shot_examples = tool.few_shot_examples
-    else:
-        few_shot_examples = None
+    extras = tool.extras or {}
+    return_schema = extras.get("return_schema")
+    few_shot_examples = extras.get("few_shot_examples")
 
     is_simple_tool = isinstance(tool, Tool) and not tool.args_schema
 
@@ -286,8 +280,8 @@ def format_tool_to_gigachat_function(tool: BaseTool) -> GigaFunctionDescription:
             few_shot_examples=few_shot_examples,
         )
     else:
-        if hasattr(tool, "return_schema") and tool.return_schema:
-            return_schema = _convert_return_schema(tool.return_schema)
+        if return_schema:
+            return_schema = _convert_return_schema(return_schema)
         else:
             return_schema = None
 
