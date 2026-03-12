@@ -7,7 +7,7 @@ import pytest
 from typing_extensions import TypedDict as ExtensionsTypedDict
 from typing_extensions import is_typeddict
 
-from langchain_gigachat.tools.giga_tool import FewShotExamples, GigaBaseTool, giga_tool
+from langchain_gigachat.tools.giga_tool import FewShotExamples, GigaBaseTool
 
 try:
     from typing import Annotated as TypingAnnotated  # type: ignore[attr-defined]
@@ -544,8 +544,13 @@ def dummy_return_parameters_with_fews_tool() -> GigaBaseTool:
 
 @pytest.fixture()
 def dummy_return_parameters_with_fews_decorator() -> BaseTool:
-    @giga_tool(
-        few_shot_examples=[{"arg1": 1, "arg2": "bar"}, {"arg1": 2, "arg2": "baz"}]
+    @tool(
+        extras={
+            "few_shot_examples": [
+                {"arg1": 1, "arg2": "bar"},
+                {"arg1": 2, "arg2": "baz"},
+            ]
+        }
     )
     def dummy_function(
         arg1: Optional[int] = Field(..., description="foo"),
@@ -559,9 +564,14 @@ def dummy_return_parameters_with_fews_decorator() -> BaseTool:
 
 @pytest.fixture()
 def dummy_return_parameters_through_arg_with_fews_decorator() -> BaseTool:
-    @giga_tool(
-        few_shot_examples=[{"arg1": 1, "arg2": "bar"}, {"arg1": 2, "arg2": "baz"}],
-        return_schema=ReturnParameters,
+    @tool(
+        extras={
+            "few_shot_examples": [
+                {"arg1": 1, "arg2": "bar"},
+                {"arg1": 2, "arg2": "baz"},
+            ],
+            "return_schema": ReturnParameters,
+        }
     )
     def dummy_function(
         arg1: Optional[int] = Field(..., description="foo"),
@@ -639,7 +649,6 @@ class DummyReturnParametersWithClassMethod:
         "annotated_function_return_parameters",
         "function_return_parameters",
         "dummy_return_parameters_with_fews_tool",
-        "dummy_return_parameters_with_fews_decorator",
         "dummy_return_parameters_through_arg_with_fews_decorator",
         "json_schema_return_parameters_with_fews",
         DummyReturnParameters.dummy_function,
@@ -667,6 +676,13 @@ def test_function_with_return_parameters(
 
     actual_func = convert_to_gigachat_function(func)
     assert actual_func["return_parameters"] == return_params_expected
+
+
+def test_standard_tool_does_not_auto_infer_return_parameters(
+    dummy_return_parameters_with_fews_decorator: BaseTool,
+) -> None:
+    actual_func = convert_to_gigachat_function(dummy_return_parameters_with_fews_decorator)
+    assert actual_func["return_parameters"] is None
 
 
 @pytest.mark.parametrize(

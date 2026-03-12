@@ -271,6 +271,27 @@ from langchain_gigachat.tools import giga_tool, GigaBaseTool, GigaStructuredTool
 from langchain_gigachat.utils import convert_to_gigachat_function, convert_to_gigachat_tool
 ```
 
+### Tool decorator
+
+`giga_tool` is now just an alias of `langchain_core.tools.tool`.
+
+If you previously passed GigaChat-specific kwargs directly to the decorator, move them to `extras`:
+
+```python
+from langchain_core.tools import tool
+
+
+@tool(
+    extras={
+        "few_shot_examples": [{"request": "weather in Tokyo", "params": {"city": "Tokyo"}}],
+        "return_schema": WeatherResult,
+    }
+)
+def get_weather(city: str) -> str:
+    """Get current weather for a city."""
+    return "sunny"
+```
+
 ### `__version__`
 
 ```python

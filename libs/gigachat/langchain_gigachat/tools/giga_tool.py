@@ -1,4 +1,4 @@
-"""GigaChat tool: extends LangChain @tool with return_schema and few_shot_examples."""
+"""GigaChat tool helpers built on top of LangChain's standard ``@tool``."""
 
 from __future__ import annotations
 
@@ -12,11 +12,8 @@ from typing import (
     Literal,
     Optional,
     Union,
-    overload,
 )
 
-from langchain_core.callbacks import Callbacks
-from langchain_core.runnables import Runnable
 from langchain_core.tools import (
     FILTERED_ARGS,
     BaseTool,
@@ -24,6 +21,7 @@ from langchain_core.tools import (
     Tool,
     _get_runnable_config_param,
     create_schema_from_function,
+    tool as lc_tool,
 )
 from langchain_core.utils.pydantic import TypeBaseModel
 from pydantic import BaseModel
@@ -128,220 +126,9 @@ class GigaStructuredTool(GigaBaseTool, StructuredTool):
         )
 
 
-def _create_giga_tool_factory(
-    tool_name: str,
-    *,
-    return_direct: bool = False,
-    args_schema: Union[type[BaseModel], dict[str, Any], None] = None,
-    infer_schema: bool = True,
-    response_format: Literal["content", "content_and_artifact"] = "content",
-    parse_docstring: bool = False,
-    error_on_invalid_docstring: bool = True,
-    return_schema: Optional[type[BaseModel]] = None,
-    few_shot_examples: FewShotExamples = None,
-    **kwargs: Any,
-) -> Callable[[Union[Callable[..., Any], Runnable]], GigaBaseTool]:
-    """Build a factory that turns a callable or Runnable into a GigaChat tool."""
-
-    def _make_tool(dec_func: Union[Callable[..., Any], Runnable]) -> GigaBaseTool:
-        if isinstance(dec_func, Runnable):
-            runnable_input_schema = dec_func.input_schema
-            if runnable_input_schema.model_json_schema().get("type") != "object":
-                raise ValueError("Runnable must have an object schema.")
-
-            async def _ainvoke(callbacks: Optional[Callbacks] = None, **kw: Any) -> Any:
-                return await dec_func.ainvoke(kw, {"callbacks": callbacks})
-
-            def _invoke(callbacks: Optional[Callbacks] = None, **kw: Any) -> Any:
-                return dec_func.invoke(kw, {"callbacks": callbacks})
-
-            coroutine = _ainvoke
-            func = _invoke
-            schema_arg: Union[type[BaseModel], dict[str, Any], None] = (
-                runnable_input_schema
-            )
-            description = repr(dec_func)
-        elif inspect.iscoroutinefunction(dec_func):
-            coroutine = dec_func
-            func = None
-            schema_arg = args_schema
-            description = None
-        else:
-            coroutine = None
-            func = dec_func
-            schema_arg = args_schema
-            description = None
-
-        if infer_schema or args_schema is not None:
-            return GigaStructuredTool.from_function(
-                func,
-                coroutine,
-                name=tool_name,
-                description=description,
-                return_direct=return_direct,
-                args_schema=schema_arg,
-                infer_schema=infer_schema,
-                response_format=response_format,
-                parse_docstring=parse_docstring,
-                error_on_invalid_docstring=error_on_invalid_docstring,
-                return_schema=return_schema,
-                few_shot_examples=few_shot_examples,
-                **kwargs,
-            )
-
-        if getattr(dec_func, "__doc__", None) is None:
-            raise ValueError(
-                "Function must have a docstring if "
-                "description not provided and infer_schema is False."
-            )
-        return GigaTool(
-            name=tool_name,
-            func=func,
-            description=f"{tool_name} tool",
-            return_direct=return_direct,
-            coroutine=coroutine,
-            response_format=response_format,
-            return_schema=return_schema,
-            few_shot_examples=few_shot_examples,
-            **kwargs,
-        )
-
-    return _make_tool
-
-
-@overload
-def giga_tool(
-    name_or_callable: None = None,
-    runnable: None = None,
-    *args: Any,
-    return_direct: bool = False,
-    args_schema: Union[type[BaseModel], dict[str, Any], None] = None,
-    infer_schema: bool = True,
-    response_format: Literal["content", "content_and_artifact"] = "content",
-    parse_docstring: bool = False,
-    error_on_invalid_docstring: bool = True,
-    return_schema: Optional[type[BaseModel]] = None,
-    few_shot_examples: FewShotExamples = None,
-    **kwargs: Any,
-) -> Callable[[Union[Callable[..., Any], Runnable]], GigaBaseTool]: ...
-
-
-@overload
-def giga_tool(
-    name_or_callable: Callable[..., Any],
-    runnable: None = None,
-    *args: Any,
-    return_direct: bool = False,
-    args_schema: Union[type[BaseModel], dict[str, Any], None] = None,
-    infer_schema: bool = True,
-    response_format: Literal["content", "content_and_artifact"] = "content",
-    parse_docstring: bool = False,
-    error_on_invalid_docstring: bool = True,
-    return_schema: Optional[type[BaseModel]] = None,
-    few_shot_examples: FewShotExamples = None,
-    **kwargs: Any,
-) -> GigaBaseTool: ...
-
-
-@overload
-def giga_tool(
-    name_or_callable: str,
-    runnable: None = None,
-    *args: Any,
-    return_direct: bool = False,
-    args_schema: Union[type[BaseModel], dict[str, Any], None] = None,
-    infer_schema: bool = True,
-    response_format: Literal["content", "content_and_artifact"] = "content",
-    parse_docstring: bool = False,
-    error_on_invalid_docstring: bool = True,
-    return_schema: Optional[type[BaseModel]] = None,
-    few_shot_examples: FewShotExamples = None,
-    **kwargs: Any,
-) -> Callable[[Union[Callable[..., Any], Runnable]], GigaBaseTool]: ...
-
-
-@overload
-def giga_tool(
-    name_or_callable: str,
-    runnable: Runnable,
-    *args: Any,
-    return_direct: bool = False,
-    args_schema: Union[type[BaseModel], dict[str, Any], None] = None,
-    infer_schema: bool = True,
-    response_format: Literal["content", "content_and_artifact"] = "content",
-    parse_docstring: bool = False,
-    error_on_invalid_docstring: bool = True,
-    return_schema: Optional[type[BaseModel]] = None,
-    few_shot_examples: FewShotExamples = None,
-    **kwargs: Any,
-) -> GigaBaseTool: ...
-
-
-def giga_tool(
-    name_or_callable: Union[str, Callable[..., Any], None] = None,
-    runnable: Optional[Runnable] = None,
-    *args: Any,
-    return_direct: bool = False,
-    args_schema: Union[type[BaseModel], dict[str, Any], None] = None,
-    infer_schema: bool = True,
-    response_format: Literal["content", "content_and_artifact"] = "content",
-    parse_docstring: bool = False,
-    error_on_invalid_docstring: bool = True,
-    return_schema: Optional[type[BaseModel]] = None,
-    few_shot_examples: FewShotExamples = None,
-    **kwargs: Any,
-) -> Union[GigaBaseTool, Callable[[Union[Callable[..., Any], Runnable]], GigaBaseTool]]:
-    """Create a GigaChat tool from a function or Runnable (same as @tool).
-
-    Supports:
-    - @giga_tool
-    - @giga_tool("name")
-    - @giga_tool(return_direct=True, few_shot_examples=[...])
-    - giga_tool("name", runnable=my_runnable)
-
-    Extra options vs LangChain's tool: return_schema, few_shot_examples.
-    """
-    factory_kw: dict[str, Any] = {
-        "return_direct": return_direct,
-        "args_schema": args_schema,
-        "infer_schema": infer_schema,
-        "response_format": response_format,
-        "parse_docstring": parse_docstring,
-        "error_on_invalid_docstring": error_on_invalid_docstring,
-        "return_schema": return_schema,
-        "few_shot_examples": few_shot_examples,
-        **kwargs,
-    }
-    if (
-        len(args) == 1
-        and isinstance(args[0], Runnable)
-        and isinstance(name_or_callable, str)
-    ):
-        return _create_giga_tool_factory(name_or_callable, **factory_kw)(args[0])
-    if args:
-        raise ValueError("Too many arguments for tool decorator.")
-
-    if runnable is not None:
-        if not isinstance(name_or_callable, str):
-            raise ValueError("When passing runnable, name must be a string.")
-        return _create_giga_tool_factory(name_or_callable, **factory_kw)(runnable)
-
-    if name_or_callable is not None:
-        if callable(name_or_callable) and hasattr(name_or_callable, "__name__"):
-            return _create_giga_tool_factory(name_or_callable.__name__, **factory_kw)(
-                name_or_callable
-            )
-        if isinstance(name_or_callable, str):
-            return _create_giga_tool_factory(name_or_callable, **factory_kw)
-        raise ValueError(
-            f"First argument must be a string or a callable with __name__. "
-            f"Got {type(name_or_callable)}."
-        )
-
-    def _partial(f: Union[Callable[..., Any], Runnable]) -> GigaBaseTool:
-        name = (
-            f.get_name() if isinstance(f, Runnable) else getattr(f, "__name__", "tool")
-        )
-        return _create_giga_tool_factory(name, **factory_kw)(f)
-
-    return _partial
+giga_tool = lc_tool
+giga_tool.__doc__ = (
+    "Alias of ``langchain_core.tools.tool``.\n\n"
+    "GigaChat-specific metadata must be passed via ``extras`` "
+    "(for example ``extras={'return_schema': MyModel}``)."
+)

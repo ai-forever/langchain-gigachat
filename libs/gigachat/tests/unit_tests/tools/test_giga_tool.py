@@ -2,12 +2,12 @@ from typing import Any
 
 import pytest
 from langchain_core.runnables import RunnableLambda
+from langchain_core.tools import StructuredTool, tool
 from pydantic import BaseModel, Field
 
 from langchain_gigachat.tools.giga_tool import (
     GigaBaseTool,
     GigaStructuredTool,
-    GigaTool,
     giga_tool,
 )
 
@@ -24,7 +24,7 @@ def test_giga_tool_bare_decorator() -> None:
 
     assert greet.name == "greet"
     assert greet.description == "Say hello"
-    assert isinstance(greet, GigaStructuredTool)
+    assert isinstance(greet, StructuredTool)
 
 
 # ---------------------------------------------------------------------------
@@ -41,25 +41,21 @@ def test_giga_tool_with_name() -> None:
     assert greet.name == "my_greeter"
 
 
-# ---------------------------------------------------------------------------
-# @giga_tool(few_shot_examples=..., return_schema=...)
-# ---------------------------------------------------------------------------
-
-
 class GreetResult(BaseModel):
     message: str = Field(description="greeting")
 
 
-def test_giga_tool_with_return_schema_and_few_shots() -> None:
+def test_giga_tool_extras_match_standard_tool() -> None:
     fse = [{"request": "greet Bob", "params": {"name": "Bob"}}]
 
-    @giga_tool(few_shot_examples=fse, return_schema=GreetResult)
-    def greet(name: str) -> GreetResult:
+    @giga_tool(extras={"few_shot_examples": fse, "return_schema": GreetResult})
+    def greet(name: str) -> str:
         """Say hello"""
-        return GreetResult(message=f"Hello {name}")
+        return f"Hello {name}"
 
-    assert greet.return_schema is GreetResult
-    assert greet.few_shot_examples == fse
+    assert greet.extras is not None
+    assert greet.extras["return_schema"] is GreetResult
+    assert greet.extras["few_shot_examples"] == fse
 
 
 # ---------------------------------------------------------------------------
@@ -74,7 +70,7 @@ def test_giga_tool_coroutine() -> None:
         return f"Hello {name}"
 
     assert agreet.name == "agreet"
-    assert isinstance(agreet, GigaStructuredTool)
+    assert isinstance(agreet, StructuredTool)
     assert agreet.coroutine is not None
 
 
@@ -101,57 +97,41 @@ def test_giga_tool_with_runnable_kwarg() -> None:
     assert tool.name == "runnable_tool"
 
 
-# ---------------------------------------------------------------------------
-# Error cases
-# ---------------------------------------------------------------------------
+def test_giga_tool_with_explicit_description() -> None:
+    @giga_tool(description="Custom description")
+    def greet(name: str) -> str:
+        """Say hello"""
+        return f"Hello {name}"
+
+    assert greet.description == "Custom description"
 
 
-def test_giga_tool_too_many_args() -> None:
-    with pytest.raises(ValueError, match="Too many arguments"):
-        giga_tool("name", "extra_arg", "more")  # type: ignore[call-overload]
+def test_giga_tool_with_name_and_explicit_description() -> None:
+    @giga_tool("my_greeter", description="Custom description")
+    def greet(name: str) -> str:
+        """Say hello"""
+        return f"Hello {name}"
+
+    assert greet.name == "my_greeter"
+    assert greet.description == "Custom description"
 
 
-def test_giga_tool_runnable_without_string_name() -> None:
-    def fn(input_dict: dict) -> str:  # type: ignore[type-arg]
-        return str(input_dict)
-
-    runnable = RunnableLambda(fn)
-    with pytest.raises(ValueError, match="name must be a string"):
-        giga_tool(runnable=runnable)  # type: ignore[call-overload]
+def test_giga_tool_is_standard_tool_alias() -> None:
+    assert giga_tool is tool
 
 
-def test_giga_tool_invalid_first_arg() -> None:
-    with pytest.raises(ValueError, match="First argument must be a string"):
-        giga_tool(123)  # type: ignore[call-overload]
+def test_giga_tool_legacy_few_shot_examples_kwarg_is_rejected() -> None:
+    with pytest.raises(TypeError, match="few_shot_examples"):
+        giga_tool(few_shot_examples=[])  # type: ignore[call-arg]
 
 
-# ---------------------------------------------------------------------------
-# infer_schema=False
-# ---------------------------------------------------------------------------
-
-
-def test_giga_tool_no_infer_schema_no_docstring() -> None:
-    def no_doc(x: int) -> int:
-        return x
-
-    no_doc.__doc__ = None  # type: ignore[assignment]
-
-    with pytest.raises(ValueError, match="Function must have a docstring"):
-        giga_tool("no_doc_tool", infer_schema=False)(no_doc)
-
-
-def test_giga_tool_no_infer_schema_with_docstring() -> None:
-    def my_fn(x: int) -> int:
-        """Has a docstring"""
-        return x
-
-    tool = giga_tool("my_fn_tool", infer_schema=False)(my_fn)
-    assert isinstance(tool, GigaTool)
-    assert tool.name == "my_fn_tool"
+def test_giga_tool_legacy_return_schema_kwarg_is_rejected() -> None:
+    with pytest.raises(TypeError, match="return_schema"):
+        giga_tool(return_schema=GreetResult)  # type: ignore[call-arg]
 
 
 # ---------------------------------------------------------------------------
-# GigaStructuredTool.from_function — description inference
+# GigaStructuredTool.from_function — legacy manual subclass path
 # ---------------------------------------------------------------------------
 
 
@@ -183,13 +163,8 @@ def test_giga_base_tool_defaults() -> None:
     assert t.few_shot_examples is None
 
 
-# ---------------------------------------------------------------------------
-# @giga_tool — partial (no name_or_callable, kwargs only)
-# ---------------------------------------------------------------------------
-
-
-def test_giga_tool_partial_decorator() -> None:
-    decorator = giga_tool(few_shot_examples=[{"request": "x", "params": {}}])
+def test_giga_tool_partial_decorator_with_extras() -> None:
+    decorator = giga_tool(extras={"few_shot_examples": [{"request": "x", "params": {}}]})
 
     @decorator
     def my_tool(a: int) -> int:
@@ -197,4 +172,4 @@ def test_giga_tool_partial_decorator() -> None:
         return a
 
     assert my_tool.name == "my_tool"
-    assert my_tool.few_shot_examples == [{"request": "x", "params": {}}]
+    assert my_tool.extras == {"few_shot_examples": [{"request": "x", "params": {}}]}
