@@ -274,7 +274,41 @@ from langchain_gigachat.utils import convert_to_gigachat_function, convert_to_gi
 
 ### Tool decorator
 
-Use the standard `langchain_core.tools.tool` decorator and pass GigaChat-specific metadata via `extras`:
+If you used `@giga_tool(...)` to pass GigaChat-specific metadata such as
+`few_shot_examples` or `return_schema`, migrate to the standard
+`langchain_core.tools.tool` decorator and pass the same metadata via `extras`:
+
+```python
+# Before
+from langchain_gigachat.tools import giga_tool
+
+
+@giga_tool(
+    few_shot_examples=[{"request": "weather in Tokyo", "params": {"city": "Tokyo"}}],
+    return_schema=WeatherResult,
+)
+def get_weather(city: str) -> str:
+    """Get current weather for a city."""
+    return "sunny"
+```
+
+```python
+# After
+from langchain_core.tools import tool
+
+
+@tool(
+    extras={
+        "few_shot_examples": [{"request": "weather in Tokyo", "params": {"city": "Tokyo"}}],
+        "return_schema": WeatherResult,
+    }
+)
+def get_weather(city: str) -> str:
+    """Get current weather for a city."""
+    return "sunny"
+```
+
+For new code, always prefer the standard `@tool` path:
 
 ```python
 from langchain_core.tools import tool
