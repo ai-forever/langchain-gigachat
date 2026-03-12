@@ -265,17 +265,14 @@ msg = HumanMessage(content_blocks=[
 
 ### Module exports
 
-Public tools and utilities are now properly exported:
+Public utilities are exported from the package:
 ```python
-from langchain_gigachat.tools import giga_tool, GigaBaseTool, GigaStructuredTool
 from langchain_gigachat.utils import convert_to_gigachat_function, convert_to_gigachat_tool
 ```
 
 ### Tool decorator
 
-`giga_tool` is now just an alias of `langchain_core.tools.tool`.
-
-If you previously passed GigaChat-specific kwargs directly to the decorator, move them to `extras`:
+Use the standard `langchain_core.tools.tool` decorator and pass GigaChat-specific metadata via `extras`:
 
 ```python
 from langchain_core.tools import tool

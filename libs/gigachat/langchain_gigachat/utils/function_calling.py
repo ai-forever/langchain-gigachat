@@ -252,10 +252,8 @@ def format_tool_to_gigachat_function(tool: BaseTool) -> GigaFunctionDescription:
         tool_schema = tool.tool_call_schema
 
     extras = tool.extras or {}
-    return_schema = getattr(tool, "return_schema", None) or extras.get("return_schema")
-    few_shot_examples = getattr(tool, "few_shot_examples", None) or extras.get(
-        "few_shot_examples"
-    )
+    return_schema = extras.get("return_schema")
+    few_shot_examples = extras.get("few_shot_examples")
 
     is_simple_tool = isinstance(tool, Tool) and not tool.args_schema
 

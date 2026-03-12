@@ -36,8 +36,6 @@ from langchain_gigachat.chat_models.gigachat import (
     _convert_message_to_dict,
     get_text_and_images_from_content,
 )
-from langchain_gigachat.tools.giga_tool import FewShotExamples
-
 
 @pytest.fixture
 def chat_completion() -> ChatCompletion:
@@ -498,7 +496,7 @@ class SomeResult(BaseModel):
     """My desc"""
 
     @staticmethod
-    def few_shot_examples() -> FewShotExamples:
+    def few_shot_examples() -> list[dict[str, Any]]:
         return [
             {
                 "request": "request example",

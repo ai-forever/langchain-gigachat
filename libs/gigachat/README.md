@@ -187,8 +187,6 @@ msg = llm_with_tools.invoke("What's the weather in Tokyo?")
 print(msg.tool_calls)
 ```
 
-`langchain_gigachat.tools.giga_tool` is still exported, but it is now just an alias of `langchain_core.tools.tool`.
-
 > **Note:** `tool_choice="any"` is not supported by the GigaChat API. Use `"auto"`, `"none"`, or a specific tool name. If upstream code passes `"any"`, set `allow_any_tool_choice_fallback=True` to silently convert it to `"auto"`.
 
 > **Note:** GigaChat API does not support parallel tool calls in a single assistant message. If `AIMessage` contains more than one `tool_calls` entry, a `ValueError` is raised.
