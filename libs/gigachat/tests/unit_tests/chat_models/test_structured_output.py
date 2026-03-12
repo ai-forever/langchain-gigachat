@@ -93,6 +93,35 @@ def test_bind_tools_bool_true(llm: GigaChat) -> None:
     assert bound.kwargs["function_call"] == {"name": "MyTool"}  # type: ignore[attr-defined]
 
 
+def test_bind_tools_bool_true_raw_json_schema(llm: GigaChat) -> None:
+    schema: Dict[str, Any] = {
+        "title": "Answer",
+        "description": "Answer schema",
+        "type": "object",
+        "properties": {"x": {"type": "string"}},
+        "required": ["x"],
+    }
+    bound = llm.bind_tools([schema], tool_choice=True)
+    assert bound.kwargs["function_call"] == {"name": "Answer"}  # type: ignore[attr-defined]
+    assert bound.kwargs["tools"][0]["function"]["name"] == "Answer"  # type: ignore[attr-defined]
+    assert bound.kwargs["tools"][0]["function"]["title"] == "Answer"  # type: ignore[attr-defined]
+
+
+def test_bind_tools_bool_true_wrapped_title_only_tool(llm: GigaChat) -> None:
+    tool: Dict[str, Any] = {
+        "type": "function",
+        "function": {
+            "title": "Answer",
+            "description": "Answer schema",
+            "type": "object",
+            "properties": {"x": {"type": "string"}},
+            "required": ["x"],
+        },
+    }
+    bound = llm.bind_tools([tool], tool_choice=True)
+    assert bound.kwargs["function_call"] == {"name": "Answer"}  # type: ignore[attr-defined]
+
+
 def test_bind_tools_bool_true_no_tools(llm: GigaChat) -> None:
     with pytest.raises(ValueError, match="can not be bool if tools are empty"):
         llm.bind_tools([], tool_choice=True)

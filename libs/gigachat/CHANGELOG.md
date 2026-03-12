@@ -24,6 +24,7 @@ This is a pre-release and will not be installed by default via a plain `pip inst
 - **`get_file()` now returns metadata** (`UploadedFile`) instead of content — use `get_file_content()` for binary data.
 - **`tool_choice="any"` now raises `ValueError`** — set `allow_any_tool_choice_fallback=True` for auto-fallback.
 - **Multiple `tool_calls` in one `AIMessage` now raises `ValueError`** — GigaChat API does not support parallel function calls.
+- **`giga_tool` no longer accepts `return_schema` / `few_shot_examples` kwargs** — use standard `@tool(extras={...})`; `giga_tool` is now only an alias of `langchain_core.tools.tool`.
 
 ### Added
 

@@ -190,6 +190,13 @@ def get_text_and_images_from_content(
     """
     text_parts = []
     attachments = []
+    seen_attachments = set()
+
+    def append_attachment(attachment_id: str) -> None:
+        if attachment_id and attachment_id not in seen_attachments:
+            seen_attachments.add(attachment_id)
+            attachments.append(attachment_id)
+
     for content_part in content:
         if isinstance(content_part, str):
             text_parts.append(content_part)
@@ -203,20 +210,20 @@ def get_text_and_images_from_content(
                 if not isinstance(block_data, dict):
                     continue
                 if block_data.get("giga_id"):
-                    attachments.append(block_data["giga_id"])
+                    append_attachment(block_data["giga_id"])
                 url = block_data.get("url")
                 if url:
                     hashed = hashlib.sha256(url.encode()).hexdigest()
                     if hashed in cached_images:
-                        attachments.append(cached_images[hashed])
+                        append_attachment(cached_images[hashed])
             elif block_type in ("image", "audio", "file"):
                 if content_part.get("file_id"):
-                    attachments.append(content_part["file_id"])
+                    append_attachment(content_part["file_id"])
                 url = content_part.get("url")
                 if url:
                     hashed = hashlib.sha256(url.encode()).hexdigest()
                     if hashed in cached_images:
-                        attachments.append(cached_images[hashed])
+                        append_attachment(cached_images[hashed])
     return " ".join(text_parts), attachments
 
 
@@ -339,6 +346,18 @@ def _convert_delta_to_message_chunk(
         return ChatMessageChunk(content=content, role=role)  # type: ignore[arg-type]
     else:
         return default_class(content=content)  # type: ignore[call-arg]
+
+
+def _get_tool_name(tool: Mapping[str, Any]) -> str:
+    """Return tool name from normalized or title-only tool payload."""
+    function = tool.get("function")
+    if not isinstance(function, Mapping):
+        raise ValueError("Tool payload must contain a function mapping.")
+
+    name = function.get("name") or function.get("title")
+    if not isinstance(name, str) or not name:
+        raise ValueError("Tool payload must define a non-empty function name or title.")
+    return name
 
 
 class GigaChat(_BaseGigaChat, BaseChatModel):
@@ -853,7 +872,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             elif isinstance(tool_choice, bool) and tool_choice:
                 if not formatted_tools:
                     raise ValueError("tool_choice can not be bool if tools are empty")
-                tool_choice = {"name": formatted_tools[0]["function"]["name"]}
+                tool_choice = {"name": _get_tool_name(formatted_tools[0])}
             elif isinstance(tool_choice, dict):
                 pass
             else:

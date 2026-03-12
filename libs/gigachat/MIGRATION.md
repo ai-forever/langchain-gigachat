@@ -267,10 +267,28 @@ msg = HumanMessage(content_blocks=[
 
 ### Module exports
 
-Public tools and utilities are now properly exported:
+Public utilities are exported from the package:
 ```python
-from langchain_gigachat.tools import giga_tool, GigaBaseTool, GigaStructuredTool
 from langchain_gigachat.utils import convert_to_gigachat_function, convert_to_gigachat_tool
+```
+
+### Tool decorator
+
+Use the standard `langchain_core.tools.tool` decorator and pass GigaChat-specific metadata via `extras`:
+
+```python
+from langchain_core.tools import tool
+
+
+@tool(
+    extras={
+        "few_shot_examples": [{"request": "weather in Tokyo", "params": {"city": "Tokyo"}}],
+        "return_schema": WeatherResult,
+    }
+)
+def get_weather(city: str) -> str:
+    """Get current weather for a city."""
+    return "sunny"
 ```
 
 ### `__version__`

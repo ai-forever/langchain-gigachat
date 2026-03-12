@@ -36,7 +36,6 @@ from langchain_gigachat.chat_models.gigachat import (
     _convert_message_to_dict,
     get_text_and_images_from_content,
 )
-from langchain_gigachat.tools.giga_tool import FewShotExamples, giga_tool
 
 
 @pytest.fixture
@@ -473,15 +472,15 @@ few_shot_examples = [
 ]
 
 
-@giga_tool(few_shot_examples=few_shot_examples)
+@tool(extras={"few_shot_examples": few_shot_examples, "return_schema": SendSmsResult})
 def _test_send_sms(
     arg: str, config: RunnableConfig, injected: Annotated[str, InjectedToolArg]
-) -> SendSmsResult:
+) -> str:
     """Sends SMS message"""
-    return SendSmsResult(status="success", message="SMS sent")
+    return "SMS sent"
 
 
-def test_gigachat_bind_gigatool() -> None:
+def test_gigachat_bind_standard_tool_with_extras() -> None:
     llm = GigaChat().bind_tools(tools=[_test_send_sms])
     assert llm.kwargs["tools"][0]["function"]["few_shot_examples"] == few_shot_examples  # type: ignore[attr-defined]
     assert llm.kwargs["tools"][0]["function"]["return_parameters"] == {  # type: ignore[attr-defined]
@@ -498,7 +497,7 @@ class SomeResult(BaseModel):
     """My desc"""
 
     @staticmethod
-    def few_shot_examples() -> FewShotExamples:
+    def few_shot_examples() -> list[dict[str, Any]]:
         return [
             {
                 "request": "request example",
@@ -766,6 +765,26 @@ def test_get_text_and_images_from_content_standard_blocks() -> None:
     text, attachments = get_text_and_images_from_content(content, {})
     assert text == "Describe"
     assert attachments == ["giga-img-1", "giga-aud-1", "giga-doc-1"]
+
+
+def test_get_text_and_images_from_content_deduplicates_attachment_ids() -> None:
+    """Attachment IDs are deduplicated when explicit IDs match cached URLs."""
+    first_url = "data:image/png;base64,Zmlyc3Q="
+    second_url = "data:application/pdf;base64,c2Vjb25k"
+    cache = {
+        hashlib.sha256(first_url.encode()).hexdigest(): "file-1",
+        hashlib.sha256(second_url.encode()).hexdigest(): "file-2",
+    }
+    content: list[str | dict[str, Any]] = [
+        {"type": "image_url", "image_url": {"giga_id": "file-1", "url": first_url}},
+        {"type": "file", "file_id": "file-2", "url": second_url},
+        {"type": "audio_url", "audio_url": {"url": first_url}},
+    ]
+
+    text, attachments = get_text_and_images_from_content(content, cache)
+
+    assert text == ""
+    assert attachments == ["file-1", "file-2"]
 
 
 def test_convert_message_to_dict_with_audio_and_document_attachments() -> None:
