@@ -37,6 +37,7 @@ from langchain_gigachat.chat_models.gigachat import (
     get_text_and_images_from_content,
 )
 
+
 @pytest.fixture
 def chat_completion() -> ChatCompletion:
     return ChatCompletion(

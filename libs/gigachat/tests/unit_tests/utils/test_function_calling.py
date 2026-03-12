@@ -654,9 +654,9 @@ def test_function_with_return_parameters(
 
 
 def test_standard_tool_does_not_auto_infer_return_parameters(
-    dummy_return_parameters_with_fews_decorator: BaseTool,
+    dummy_return_parameters: BaseTool,
 ) -> None:
-    actual_func = convert_to_gigachat_function(dummy_return_parameters_with_fews_decorator)
+    actual_func = convert_to_gigachat_function(dummy_return_parameters)
     assert actual_func["return_parameters"] is None
 
 
