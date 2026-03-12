@@ -341,6 +341,18 @@ def _convert_delta_to_message_chunk(
         return default_class(content=content)  # type: ignore[call-arg]
 
 
+def _get_tool_name(tool: Mapping[str, Any]) -> str:
+    """Return tool name from normalized or title-only tool payload."""
+    function = tool.get("function")
+    if not isinstance(function, Mapping):
+        raise ValueError("Tool payload must contain a function mapping.")
+
+    name = function.get("name") or function.get("title")
+    if not isinstance(name, str) or not name:
+        raise ValueError("Tool payload must define a non-empty function name or title.")
+    return name
+
+
 class GigaChat(_BaseGigaChat, BaseChatModel):
     """
     LangChain chat model for GigaChat API.
@@ -853,7 +865,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             elif isinstance(tool_choice, bool) and tool_choice:
                 if not formatted_tools:
                     raise ValueError("tool_choice can not be bool if tools are empty")
-                tool_choice = {"name": formatted_tools[0]["function"]["name"]}
+                tool_choice = {"name": _get_tool_name(formatted_tools[0])}
             elif isinstance(tool_choice, dict):
                 pass
             else:

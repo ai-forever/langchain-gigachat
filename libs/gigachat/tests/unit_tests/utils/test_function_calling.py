@@ -772,7 +772,7 @@ def test_raw_dict_schema_with_array_and_freeform_object() -> None:
 
 
 @pytest.mark.parametrize(
-    ("raw_schema", "expected_title"),
+    ("raw_schema", "expected_name", "expected_title"),
     [
         (
             {
@@ -784,6 +784,7 @@ def test_raw_dict_schema_with_array_and_freeform_object() -> None:
                 "required": ["value"],
                 "type": "object",
             },
+            "SomeResult",
             "SomeResult",
         ),
         (
@@ -798,13 +799,15 @@ def test_raw_dict_schema_with_array_and_freeform_object() -> None:
                     },
                 },
             },
+            "my_tool",
             None,
         ),
     ],
 )
 def test_raw_dict_schema_title_fallback_behavior(
-    raw_schema: dict[str, Any], expected_title: Optional[str]
+    raw_schema: dict[str, Any], expected_name: str, expected_title: Optional[str]
 ) -> None:
-    """Preserve title only when schema has no explicit name."""
+    """Preserve title fallback while normalizing name for raw schemas."""
     actual = convert_to_gigachat_function(raw_schema)
+    assert actual["name"] == expected_name
     assert actual.get("title") == expected_title

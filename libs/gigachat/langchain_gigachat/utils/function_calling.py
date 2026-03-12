@@ -417,6 +417,7 @@ def convert_to_gigachat_function(
     if isinstance(function, dict):
         fixed = gigachat_fix_schema(function)
         if "name" not in fixed and "title" in function:
+            fixed["name"] = function["title"]
             fixed["title"] = function["title"]
         return fixed
     elif isinstance(function, type) and is_basemodel_subclass(function):
