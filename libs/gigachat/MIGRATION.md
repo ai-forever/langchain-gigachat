@@ -1,16 +1,18 @@
-# Migration Guide: langchain-gigachat 0.3.x → 0.4.0
+# Migration Guide: langchain-gigachat 0.3.x → 0.4.0a1
 
-This guide covers all breaking changes in `langchain-gigachat` 0.4.0 and explains how to update your code.
+This guide covers all breaking changes in `langchain-gigachat` 0.4.0a1 and explains how to update your code.
 
 ## Requirements
 
-| Dependency | Before (0.3.x) | After (0.4.0) |
+| Dependency | Before (0.3.x) | After (0.4.0a1) |
 |------------|-----------------|---------------|
 | Python | >= 3.9 | **>= 3.10** |
 | `langchain-core` | >= 0.3, < 1 | **>= 1, < 2** |
 | `gigachat` (SDK) | >= 0.1.41 | **>= 0.2.0, < 0.3** |
 
 > LangChain Core 1.x dropped Python 3.9 support. GigaChat SDK 0.2.0 migrated to Pydantic V2.
+>
+> `0.4.0a1` is an alpha pre-release. It will not be installed by default by a plain `pip install -U`; users must opt in to pre-releases explicitly.
 
 ---
 
@@ -275,5 +277,5 @@ from langchain_gigachat.utils import convert_to_gigachat_function, convert_to_gi
 
 ```python
 import langchain_gigachat
-print(langchain_gigachat.__version__)  # "0.4.0"
+print(langchain_gigachat.__version__)  # "0.4.0a1"
 ```
