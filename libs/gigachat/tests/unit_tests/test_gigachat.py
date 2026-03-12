@@ -767,6 +767,26 @@ def test_get_text_and_images_from_content_standard_blocks() -> None:
     assert attachments == ["giga-img-1", "giga-aud-1", "giga-doc-1"]
 
 
+def test_get_text_and_images_from_content_deduplicates_attachment_ids() -> None:
+    """Attachment IDs are deduplicated when explicit IDs match cached URLs."""
+    first_url = "data:image/png;base64,Zmlyc3Q="
+    second_url = "data:application/pdf;base64,c2Vjb25k"
+    cache = {
+        hashlib.sha256(first_url.encode()).hexdigest(): "file-1",
+        hashlib.sha256(second_url.encode()).hexdigest(): "file-2",
+    }
+    content: list[str | dict[str, Any]] = [
+        {"type": "image_url", "image_url": {"giga_id": "file-1", "url": first_url}},
+        {"type": "file", "file_id": "file-2", "url": second_url},
+        {"type": "audio_url", "audio_url": {"url": first_url}},
+    ]
+
+    text, attachments = get_text_and_images_from_content(content, cache)
+
+    assert text == ""
+    assert attachments == ["file-1", "file-2"]
+
+
 def test_convert_message_to_dict_with_audio_and_document_attachments() -> None:
     """HumanMessage with audio/document_url (giga_id) gets attachments in payload."""
     msg = HumanMessage(

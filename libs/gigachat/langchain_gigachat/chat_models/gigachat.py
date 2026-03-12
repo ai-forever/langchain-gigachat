@@ -190,6 +190,13 @@ def get_text_and_images_from_content(
     """
     text_parts = []
     attachments = []
+    seen_attachments = set()
+
+    def append_attachment(attachment_id: str) -> None:
+        if attachment_id and attachment_id not in seen_attachments:
+            seen_attachments.add(attachment_id)
+            attachments.append(attachment_id)
+
     for content_part in content:
         if isinstance(content_part, str):
             text_parts.append(content_part)
@@ -203,20 +210,20 @@ def get_text_and_images_from_content(
                 if not isinstance(block_data, dict):
                     continue
                 if block_data.get("giga_id"):
-                    attachments.append(block_data["giga_id"])
+                    append_attachment(block_data["giga_id"])
                 url = block_data.get("url")
                 if url:
                     hashed = hashlib.sha256(url.encode()).hexdigest()
                     if hashed in cached_images:
-                        attachments.append(cached_images[hashed])
+                        append_attachment(cached_images[hashed])
             elif block_type in ("image", "audio", "file"):
                 if content_part.get("file_id"):
-                    attachments.append(content_part["file_id"])
+                    append_attachment(content_part["file_id"])
                 url = content_part.get("url")
                 if url:
                     hashed = hashlib.sha256(url.encode()).hexdigest()
                     if hashed in cached_images:
-                        attachments.append(cached_images[hashed])
+                        append_attachment(cached_images[hashed])
     return " ".join(text_parts), attachments
 
 
