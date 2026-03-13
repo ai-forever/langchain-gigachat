@@ -18,10 +18,11 @@ from typing import (
 from langchain_core.tools import BaseTool, Tool
 from langchain_core.utils.function_calling import (
     FunctionDescription,
+    _parse_google_docstring,  # no public alternative; tests guard this dependency
     is_basemodel_subclass,
 )
 from langchain_core.utils.json_schema import dereference_refs
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, create_model
 from typing_extensions import get_args, get_origin, is_typeddict
 
 
@@ -36,7 +37,7 @@ class GigaFunctionDescription(FunctionDescription):
 
 SCHEMA_DO_NOT_SUPPORT_MESSAGE = """Incorrect function schema!
 {schema}
-GigaChat currently do not support these typings: 
+GigaChat currently do not support these typings:
 Union[X, Y, ...]"""
 
 
@@ -46,10 +47,13 @@ class IncorrectSchemaException(Exception):
 
 def gigachat_fix_schema(schema: Any, prev_key: str = "") -> Any:
     """
-    GigaChat do not support allOf/anyOf in JSON schema.
-    We need to fix this in case of allOf with one object or
-    in case with optional parameter.
-    In other cases throw exception that we do not support this types of schemas
+    Fix schema incompatibilities between JSON Schema and GigaChat API.
+
+    - GigaChat does not support allOf/anyOf in JSON schema. Collapses allOf
+      with a single element; raises for multi-element Union types.
+    - GigaChat requires ``properties`` on every object-typed node. Without this
+      normalization, free-form object fields such as ``dict[str, Any]`` can lead
+      to provider-side 422 validation errors.
     """
     if isinstance(schema, dict):
         obj_out: Any = {}
@@ -59,22 +63,28 @@ def gigachat_fix_schema(schema: Any, prev_key: str = "") -> Any:
                     obj_out[k] = gigachat_fix_schema(v, k)
                 else:
                     continue
-            if k == "allOf":
+            elif k == "allOf":
                 if len(v) > 1:
                     raise IncorrectSchemaException()
                 obj = gigachat_fix_schema(v[0], k)
                 outer_description = schema.get("description")
                 obj_out = {**obj_out, **obj}
                 if outer_description:
-                    # Внешнее описания приоритетнее внутреннего для ref
+                    # Outer description takes priority over inner one for ref
                     obj_out["description"] = outer_description
-            if k == "anyOf":
+            elif k == "anyOf":
                 if len(v) > 1:
                     raise IncorrectSchemaException()
             elif isinstance(v, (list, dict)):
                 obj_out[k] = gigachat_fix_schema(v, k)
             else:
                 obj_out[k] = v
+
+        # GigaChat requires 'properties' on every object-typed node.
+        # Pydantic omits it for free-form dicts (Dict[str, Any], bare dict…).
+        if obj_out.get("type") == "object" and "properties" not in obj_out:
+            obj_out["properties"] = {}
+
         return obj_out
     elif isinstance(schema, list):
         return [gigachat_fix_schema(el) for el in schema]
@@ -104,8 +114,13 @@ def _is_optional(field: type) -> bool:
 def _convert_any_typed_dicts_to_pydantic(
     type_: type, *, visited: dict, depth: int = 0
 ) -> type:
-    from pydantic import Field, create_model
+    """Recursively convert TypedDict types to Pydantic BaseModel.
 
+    Pydantic models are required for JSON Schema generation via
+    ``model_json_schema()``.  TypedDict classes lack this method, so every
+    TypedDict encountered in the type tree (including nested generics like
+    ``List[MyTypedDict]``) is replaced with a dynamically created BaseModel.
+    """
     if type_ in visited:
         return visited[type_]
     elif depth >= _MAX_TYPED_DICT_RECURSION:
@@ -113,7 +128,10 @@ def _convert_any_typed_dicts_to_pydantic(
     elif is_typeddict(type_):
         typed_dict = type_
         docstring = inspect.getdoc(typed_dict)
-        annotations_ = typed_dict.__annotations__
+        try:
+            annotations_ = get_type_hints(typed_dict, include_extras=True)
+        except Exception:
+            annotations_ = typed_dict.__annotations__
         description, arg_descriptions = _parse_google_docstring(
             docstring, list(annotations_)
         )
@@ -134,10 +152,8 @@ def _convert_any_typed_dicts_to_pydantic(
                         f"type {type(field_desc)}."
                     )
                     raise ValueError(msg)
-                elif arg_desc := arg_descriptions.get(arg):
+                if arg_desc := arg_descriptions.get(arg):
                     field_kwargs["description"] = arg_desc
-                else:
-                    pass
                 fields[arg] = (new_arg_type, Field(**field_kwargs))
             else:
                 new_arg_type = _convert_any_typed_dicts_to_pydantic(
@@ -155,7 +171,7 @@ def _convert_any_typed_dicts_to_pydantic(
         visited[typed_dict] = model
         return model
     elif (origin := get_origin(type_)) and (type_args := get_args(type_)):
-        subscriptable_origin = _py_38_safe_origin(origin)
+        subscriptable_origin = _subscriptable_origin(origin)
         type_args = tuple(
             _convert_any_typed_dicts_to_pydantic(arg, depth=depth + 1, visited=visited)
             for arg in type_args  # type: ignore[index]
@@ -165,7 +181,14 @@ def _convert_any_typed_dicts_to_pydantic(
         return type_
 
 
-def _py_38_safe_origin(origin: type) -> type:
+def _subscriptable_origin(origin: type) -> type:
+    """Map a runtime generic origin to a subscriptable typing equivalent.
+
+    ``typing.get_origin()`` returns raw objects (``collections.abc.Sequence``,
+    ``types.UnionType``, etc.) that cannot be subscripted with ``[...]``.
+    This function replaces them with subscriptable counterparts from ``typing``
+    so that ``origin[type_args]`` works when rebuilding generic types.
+    """
     origin_union_type_map: dict[type, Any] = (
         {types.UnionType: Union} if hasattr(types, "UnionType") else {}
     )
@@ -182,65 +205,6 @@ def _py_38_safe_origin(origin: type) -> type:
         **origin_union_type_map,
     }
     return cast(type, origin_map.get(origin, origin))
-
-
-def _parse_google_docstring(
-    docstring: Optional[str],
-    args: list[str],
-    *,
-    error_on_invalid_docstring: bool = False,
-) -> tuple[str, dict]:
-    """Parse the function and argument descriptions from the docstring of a function.
-
-    Assumes the function docstring follows Google Python style guide.
-    """
-    if docstring:
-        docstring_blocks = docstring.split("\n\n")
-        if error_on_invalid_docstring:
-            filtered_annotations = {
-                arg for arg in args if arg not in ("run_manager", "callbacks", "return")
-            }
-            if filtered_annotations and (
-                len(docstring_blocks) < 2 or not docstring_blocks[1].startswith("Args:")
-            ):
-                msg = "Found invalid Google-Style docstring."
-                raise ValueError(msg)
-        descriptors = []
-        args_block = None
-        past_descriptors = False
-        for block in docstring_blocks:
-            if block.startswith("Args:"):
-                args_block = block
-                break
-            elif block.startswith(("Returns:", "Example:")):
-                # Don't break in case Args come after
-                past_descriptors = True
-            elif not past_descriptors:
-                descriptors.append(block)
-            else:
-                continue
-        description = " ".join(descriptors)
-    else:
-        if error_on_invalid_docstring:
-            msg = "Found invalid Google-Style docstring."
-            raise ValueError(msg)
-        description = ""
-        args_block = None
-    arg_descriptions = {}
-    if args_block:
-        arg = None
-        for line in args_block.split("\n")[1:]:
-            if ":" in line:
-                arg, desc = line.split(":", maxsplit=1)
-                arg_descriptions[arg.strip()] = desc.strip()
-            elif arg:
-                arg_descriptions[arg.strip()] += " " + line.strip()
-    return description, arg_descriptions
-
-
-def _get_python_function_name(function: Callable) -> str:
-    """Get the name of a Python function."""
-    return function.__name__
 
 
 def _model_to_schema(model: Union[type[BaseModel], dict[str, Any]]) -> dict:
@@ -290,16 +254,9 @@ def format_tool_to_gigachat_function(tool: BaseTool) -> GigaFunctionDescription:
     if tool.tool_call_schema:
         tool_schema = tool.tool_call_schema
 
-    if hasattr(tool, "return_schema") and tool.return_schema:
-        # return_schema = _convert_return_schema(tool.return_schema)
-        return_schema = tool.return_schema
-    else:
-        return_schema = None
-
-    if hasattr(tool, "few_shot_examples") and tool.few_shot_examples:
-        few_shot_examples = tool.few_shot_examples
-    else:
-        few_shot_examples = None
+    extras = tool.extras or {}
+    return_schema = extras.get("return_schema")
+    few_shot_examples = extras.get("few_shot_examples")
 
     is_simple_tool = isinstance(tool, Tool) and not tool.args_schema
 
@@ -326,8 +283,8 @@ def format_tool_to_gigachat_function(tool: BaseTool) -> GigaFunctionDescription:
             few_shot_examples=few_shot_examples,
         )
     else:
-        if hasattr(tool, "return_schema") and tool.return_schema:
-            return_schema = _convert_return_schema(tool.return_schema)
+        if return_schema:
+            return_schema = _convert_return_schema(return_schema)
         else:
             return_schema = None
 
@@ -422,7 +379,7 @@ def convert_python_function_to_gigachat_function(
     """
     from langchain_core import tools
 
-    func_name = _get_python_function_name(function)
+    func_name = function.__name__
     model = tools.create_schema_from_function(
         func_name,
         function,
@@ -455,7 +412,11 @@ def convert_to_gigachat_function(
     from langchain_core.tools import BaseTool
 
     if isinstance(function, dict):
-        return function
+        fixed = gigachat_fix_schema(function)
+        if "name" not in fixed and "title" in function:
+            fixed["name"] = function["title"]
+            fixed["title"] = function["title"]
+        return fixed
     elif isinstance(function, type) and is_basemodel_subclass(function):
         function = cast(Dict, convert_pydantic_to_gigachat_function(function))
     elif isinstance(function, BaseTool):

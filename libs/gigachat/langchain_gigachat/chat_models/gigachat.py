@@ -6,10 +6,10 @@ import hashlib
 import json
 import logging
 import re
+import warnings
 from mimetypes import guess_extension
 from operator import itemgetter
 from typing import (
-    TYPE_CHECKING,
     Any,
     AsyncIterator,
     Callable,
@@ -22,13 +22,11 @@ from typing import (
     Sequence,
     Tuple,
     Type,
-    TypedDict,
-    TypeVar,
     Union,
-    overload,
 )
 from uuid import uuid4
 
+import gigachat.models as gm
 from langchain_core.callbacks import (
     AsyncCallbackManagerForLLMRun,
     CallbackManagerForLLMRun,
@@ -68,16 +66,14 @@ from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResu
 from langchain_core.runnables import Runnable, RunnableMap, RunnablePassthrough
 from langchain_core.tools import BaseTool
 from langchain_core.utils.pydantic import is_basemodel_subclass, pre_init
-from pydantic import BaseModel
+from pydantic import BaseModel, PrivateAttr
+from typing_extensions import override
 
 from langchain_gigachat.chat_models.base_gigachat import _BaseGigaChat
 from langchain_gigachat.utils.function_calling import (
     convert_to_gigachat_function,
     convert_to_gigachat_tool,
 )
-
-if TYPE_CHECKING:
-    import gigachat.models as gm
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +83,35 @@ IMAGE_SEARCH_REGEX = re.compile(
 VIDEO_SEARCH_REGEX = re.compile(
     r'<video\scover="(?P<cover_UUID>.+?)"\ssrc="(?P<UUID>.+?)"\sfuse="true"/>(?P<postfix>.+)?'  # noqa
 )
+BASE64_DATA_REGEX = re.compile(r"data:(.+);(.+),(.+)")
+
+# GigaChat-supported MIME types where mimetypes.guess_extension returns None
+# https://developers.sber.ru/docs/ru/gigachat/api/reference/rest/post-file
+MIME_EXTENSION_FALLBACK: Dict[str, str] = {
+    "audio/mp3": ".mp3",
+    "audio/mp4": ".mp4",
+    "audio/x-m4a": ".m4a",
+    "audio/x-wav": ".wav",
+    "audio/wave": ".wav",
+    "audio/wav": ".wav",
+    "audio/x-pn-wav": ".wav",
+    "audio/webm": ".weba",
+    "audio/x-ogg": ".ogg",
+    "audio/opus": ".opus",
+    "application/epub": ".epub",
+    "application/pptx": ".pptx",
+    "application/ppt": ".ppt",
+}
+
+DEFAULT_IMAGE_CACHE_MAX_SIZE = 1000
+
+ATTACHMENT_BLOCK_KEYS = ("image_url", "audio_url", "document_url")
+
+
+def _extension_for_mime(mime: str) -> str:
+    """Return file extension (with dot) for MIME type, falling back to '.bin'."""
+    ext = guess_extension(mime.split(";")[0].strip())
+    return ext or MIME_EXTENSION_FALLBACK.get(mime.split(";")[0].strip(), ".bin")
 
 
 def _validate_content(content: Any) -> Any:
@@ -100,12 +125,10 @@ def _validate_content(content: Any) -> Any:
 
 
 def _convert_dict_to_message(message: gm.Messages) -> BaseMessage:
-    from gigachat.models import FunctionCall, MessagesRole
-
     additional_kwargs: Dict = {}
     tool_calls = []
     if function_call := message.function_call:
-        if isinstance(function_call, FunctionCall):
+        if isinstance(function_call, gm.FunctionCall):
             additional_kwargs["function_call"] = dict(function_call)
         elif isinstance(function_call, dict):
             additional_kwargs["function_call"] = function_call
@@ -128,17 +151,20 @@ def _convert_dict_to_message(message: gm.Messages) -> BaseMessage:
             additional_kwargs["cover_uuid"] = match.group("cover_UUID")
             additional_kwargs["video_uuid"] = match.group("UUID")
             additional_kwargs["postfix_message"] = match.group("postfix")
-    if message.role == MessagesRole.SYSTEM:
+    reasoning_content = getattr(message, "reasoning_content", None)
+    if reasoning_content is not None:
+        additional_kwargs["reasoning_content"] = reasoning_content
+    if message.role == gm.MessagesRole.SYSTEM:
         return SystemMessage(content=message.content)
-    elif message.role == MessagesRole.USER:
+    elif message.role == gm.MessagesRole.USER:
         return HumanMessage(content=message.content)
-    elif message.role == MessagesRole.ASSISTANT:
+    elif message.role == gm.MessagesRole.ASSISTANT:
         return AIMessage(
             content=message.content,
             additional_kwargs=additional_kwargs,
             tool_calls=tool_calls,
         )
-    elif message.role == MessagesRole.FUNCTION:
+    elif message.role == gm.MessagesRole.FUNCTION:
         return FunctionMessage(
             name=message.name or "", content=_validate_content(message.content)
         )
@@ -149,32 +175,61 @@ def _convert_dict_to_message(message: gm.Messages) -> BaseMessage:
 def get_text_and_images_from_content(
     content: list[Union[str, dict]], cached_images: Dict[str, str]
 ) -> Tuple[str, List[str]]:
+    """Extract text and attachment IDs from LangChain content blocks.
+
+    Supports two formats:
+
+    1) Provider-native (OpenAI-style): type in ("image_url", "audio_url",
+       "document_url") with nested block key and "giga_id" or "url" (cache).
+    2) Standard LangChain content_blocks: type in ("image", "audio", "file") with
+       top-level "file_id" (GigaChat file id) or "url" (resolved via cache).
+
+    Use standard blocks (e.g. content_blocks=[{"type": "image", "file_id": "id"}])
+    so that message.content_blocks displays typed blocks; both formats are
+    accepted for API payload building.
+    """
     text_parts = []
     attachments = []
+    seen_attachments = set()
+
+    def append_attachment(attachment_id: str) -> None:
+        if attachment_id and attachment_id not in seen_attachments:
+            seen_attachments.add(attachment_id)
+            attachments.append(attachment_id)
+
     for content_part in content:
         if isinstance(content_part, str):
             text_parts.append(content_part)
         elif isinstance(content_part, dict):
-            if content_part.get("type") == "text":
-                text_parts.append(content_part["text"])
-            elif content_part.get("type") == "image_url":
-                image_data = content_part["image_url"]
-                if not isinstance(image_data, dict):
+            block_type = content_part.get("type")
+            if block_type == "text":
+                text_parts.append(content_part.get("text", ""))
+            elif block_type in ("image_url", "audio_url", "document_url"):
+                block_key = block_type
+                block_data = content_part.get(block_key)
+                if not isinstance(block_data, dict):
                     continue
-                if "giga_id" in content_part["image_url"]:
-                    attachments.append(content_part["image_url"].get("giga_id"))
-                image_url = content_part["image_url"].get("url")
-                hashed = hashlib.sha256(image_url.encode()).hexdigest()
-                if hashed in cached_images:
-                    attachments.append(cached_images[hashed])
+                if block_data.get("giga_id"):
+                    append_attachment(block_data["giga_id"])
+                url = block_data.get("url")
+                if url:
+                    hashed = hashlib.sha256(url.encode()).hexdigest()
+                    if hashed in cached_images:
+                        append_attachment(cached_images[hashed])
+            elif block_type in ("image", "audio", "file"):
+                if content_part.get("file_id"):
+                    append_attachment(content_part["file_id"])
+                url = content_part.get("url")
+                if url:
+                    hashed = hashlib.sha256(url.encode()).hexdigest()
+                    if hashed in cached_images:
+                        append_attachment(cached_images[hashed])
     return " ".join(text_parts), attachments
 
 
 def _convert_message_to_dict(
     message: BaseMessage, cached_images: Optional[Dict[str, str]] = None
 ) -> gm.Messages:
-    from gigachat.models import Messages, MessagesRole
-
     kwargs = {}
     if cached_images is None:
         cached_images = {}
@@ -192,37 +247,49 @@ def _convert_message_to_dict(
         kwargs["functions_state_id"] = functions_state_id
 
     if isinstance(message, SystemMessage):
-        kwargs["role"] = MessagesRole.SYSTEM
+        kwargs["role"] = gm.MessagesRole.SYSTEM
         kwargs["content"] = content
     elif isinstance(message, HumanMessage):
-        kwargs["role"] = MessagesRole.USER
+        kwargs["role"] = gm.MessagesRole.USER
         if attachments:
             kwargs["attachments"] = attachments
         kwargs["content"] = content
     elif isinstance(message, AIMessage):
         if tool_calls := getattr(message, "tool_calls", None):
+            if len(tool_calls) > 1:
+                raise ValueError(
+                    "GigaChat API does not support multiple tool calls in a single "
+                    "message. Received an AIMessage with "
+                    f"{len(tool_calls)} tool_calls. "
+                    "Use a single tool call per turn."
+                )
             function_call = copy.deepcopy(tool_calls[0])
 
             if "args" in function_call:
                 function_call["arguments"] = function_call.pop("args")
         else:
             function_call = message.additional_kwargs.get("function_call", None)
-        kwargs["role"] = MessagesRole.ASSISTANT
+        kwargs["role"] = gm.MessagesRole.ASSISTANT
         kwargs["content"] = content
         kwargs["function_call"] = function_call
     elif isinstance(message, ChatMessage):
         kwargs["role"] = message.role
         kwargs["content"] = content
     elif isinstance(message, FunctionMessage):
-        kwargs["role"] = MessagesRole.FUNCTION
-        # TODO Switch to using 'result' field in future GigaChat models
+        kwargs["role"] = gm.MessagesRole.FUNCTION
+        kwargs["name"] = message.name
         kwargs["content"] = _validate_content(content)
     elif isinstance(message, ToolMessage):
-        kwargs["role"] = MessagesRole.FUNCTION
+        # LangChain's public surface is tool-oriented, but the provider transport
+        # is still function-oriented, so tool results must be serialized back as
+        # provider FUNCTION messages for round-trip compatibility.
+        kwargs["role"] = gm.MessagesRole.FUNCTION
+        if message.name:
+            kwargs["name"] = message.name
         kwargs["content"] = _validate_content(content)
     else:
         raise TypeError(f"Got unknown type {message}")
-    return Messages(**kwargs)
+    return gm.Messages(**kwargs)
 
 
 def _convert_delta_to_message_chunk(
@@ -248,6 +315,8 @@ def _convert_delta_to_message_chunk(
             ]
     if _dict.get("functions_state_id"):
         additional_kwargs["functions_state_id"] = _dict["functions_state_id"]
+    if _dict.get("reasoning_content") is not None:
+        additional_kwargs["reasoning_content"] = _dict["reasoning_content"]
     match = IMAGE_SEARCH_REGEX.search(content)
     if match:
         additional_kwargs["image_uuid"] = match.group("UUID")
@@ -282,38 +351,16 @@ def _convert_delta_to_message_chunk(
         return default_class(content=content)  # type: ignore[call-arg]
 
 
-class _FunctionCall(TypedDict):
-    name: str
+def _get_tool_name(tool: Mapping[str, Any]) -> str:
+    """Return tool name from normalized or title-only tool payload."""
+    function = tool.get("function")
+    if not isinstance(function, Mapping):
+        raise ValueError("Tool payload must contain a function mapping.")
 
-
-_BM = TypeVar("_BM", bound=BaseModel)
-_DictOrPydanticClass = Union[Dict[str, Any], Type[_BM], Type]
-_DictOrPydantic = Union[Dict, _BM]
-
-
-class _AllReturnType(TypedDict):
-    raw: BaseMessage
-    parsed: Optional[_DictOrPydantic]
-    parsing_error: Optional[BaseException]
-
-
-def trim_content_to_stop_sequence(
-    content: str, stop_sequence: Optional[List[str]]
-) -> Union[str, bool]:
-    """
-    Обрезаем строку к стоп слову.
-    Если стоп слово нашлось в строке возвращаем обрезанную строку.
-    Если нет, то возвращаем False
-    """
-    if stop_sequence is None:
-        return False
-    for stop_w in stop_sequence:
-        try:
-            index = content.index(stop_w)
-            return content[:index]
-        except ValueError:
-            pass
-    return False
+    name = function.get("name") or function.get("title")
+    if not isinstance(name, str) or not name:
+        raise ValueError("Tool payload must define a non-empty function name or title.")
+    return name
 
 
 class GigaChat(_BaseGigaChat, BaseChatModel):
@@ -336,6 +383,15 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         key_file: Path to key file.
         key_file_password: Password for key file.
         ssl_context: SSL context.
+        max_retries: Maximum number of retries for transient errors
+            (SDK default: 0, disabled). Avoid combining with LangChain's
+            ``.with_retry()`` to prevent multiplicative retry counts.
+        max_connections: Maximum number of simultaneous connections to the
+            GigaChat API.
+        retry_backoff_factor: Backoff factor for retry delays
+            (SDK default: 0.5).
+        retry_on_status_codes: HTTP status codes that trigger a retry
+            (SDK default: ``(429, 500, 502, 503, 504)``).
         profanity_check: Check for profanity.
         streaming: Whether to stream the results or not.
         temperature: What sampling temperature to use.
@@ -347,94 +403,124 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         repetition_penalty: The penalty applied to repeated tokens.
         update_interval: Minimum interval in seconds that elapses between
             sending tokens.
-        auto_upload_images: Auto-upload Base-64 images. Not for production usage.
+        auto_upload_attachments: Auto-upload Base-64 content for image_url,
+            audio_url, and document_url blocks. Not for production usage.
+        allow_any_tool_choice_fallback: Allow automatic fallback from
+            tool_choice='any' to 'auto'. By default, 'any' raises an error
+            because GigaChat API doesn't support it. Set to True to silently
+            convert to 'auto' (may cause unpredictable agent behavior).
+        reasoning_effort: Reasoning effort for reasoning-capable models
+            (e.g. GigaChat-2-Reasoning). When set, the API may return
+            reasoning_content in the assistant message (see additional_kwargs).
     """
 
-    """ Auto-upload Base-64 images. Not for production usage! """
-    auto_upload_images: bool = False
-    """ 
-    Dict with cached images, with key as hashed 
-    base-64 image to File ID on GigaChat API 
+    auto_upload_attachments: bool = False
+    """Auto-upload Base-64 image/audio/document blocks. Not for production usage."""
+    allow_any_tool_choice_fallback: bool = False
     """
-    _cached_images: Dict[str, str] = {}
+    Allow automatic fallback from tool_choice='any' to 'auto'.
+    GigaChat API doesn't support 'any', so by default it raises an error.
+    """
+
+    _cached_uploads: Dict[str, str] = PrivateAttr(default_factory=dict)
 
     @pre_init
     def validate_environment(cls, values: Dict) -> Dict:
-        values = super(GigaChat, cls).validate_environment(values)
-        if values["auto_upload_images"]:
+        if values.get("auto_upload_attachments"):
             logger.warning(
-                "`auto_upload_images` is experiment option. "
+                "`auto_upload_attachments` is experiment option. "
                 "Please, don't use it on production. "
-                "Use instead GigaChat.upload_file method for uploading images"
+                "Use instead GigaChat.upload_file for uploading files."
             )
         return values
 
-    async def _aupload_images(self, messages: List[BaseMessage]) -> None:
-        for message in messages:
-            if isinstance(message.content, list):
-                for content_part in message.content:
-                    if not isinstance(content_part, dict):
-                        continue
-                    if content_part.get("type") == "image_url":
-                        image_url = content_part["image_url"]["url"]
-                        matches = re.search(r"data:(.+);(.+),(.+)", image_url)
-                        if matches and not self.auto_upload_images:
-                            logger.warning(
-                                "You trying to send base-64 images, "
-                                "but parameter `auto_upload_images` is not True. "
-                                "Set it to True. "
-                            )
-                        if not matches or not self.auto_upload_images:
-                            continue
-                        hashed = hashlib.sha256(image_url.encode()).hexdigest()
-                        if hashed not in self._cached_images:
-                            extension, type_, image_str = matches.groups()
-                            if type_ != "base64":
-                                continue
-                            file = await self.aupload_file(
-                                (
-                                    f"{uuid4()}{guess_extension(extension)}",
-                                    base64.b64decode(image_str),
-                                )
-                            )
-                            self._cached_images[hashed] = file.id_
+    def _set_cached_upload(self, hashed: str, file_id: str) -> None:
+        """Store file_id for hashed content url; evict oldest entry if at capacity."""
+        if len(self._cached_uploads) >= DEFAULT_IMAGE_CACHE_MAX_SIZE:
+            self._cached_uploads.pop(next(iter(self._cached_uploads)))
+        self._cached_uploads[hashed] = file_id
 
-    def _upload_images(self, messages: List[BaseMessage]) -> None:
-        for message in messages:
-            if isinstance(message.content, list):
-                for content_part in message.content:
-                    if not isinstance(content_part, dict):
-                        continue
-                    if content_part.get("type") == "image_url":
-                        image_url = content_part["image_url"]["url"]
-                        matches = re.search(r"data:(.+);(.+),(.+)", image_url)
-                        if matches and not self.auto_upload_images:
-                            logger.warning(
-                                "You trying to send base-64 images, "
-                                "but parameter `auto_upload_images` is not True. "
-                                "Set it to True. "
-                            )
-                        if not matches or not self.auto_upload_images:
-                            continue
-                        hashed = hashlib.sha256(image_url.encode()).hexdigest()
-                        if hashed not in self._cached_images:
-                            extension, type_, image_str = matches.groups()
-                            if type_ != "base64":
-                                continue
-                            file = self.upload_file(
-                                (
-                                    f"{uuid4()}{guess_extension(extension)}",
-                                    base64.b64decode(image_str),
-                                )
-                            )
+    def _should_upload_block(
+        self, block_type: str, url: str
+    ) -> Tuple[bool, Optional[re.Match[str]]]:
+        """Return (should_upload, data_url_match)."""
+        matches = BASE64_DATA_REGEX.search(url)
+        if not matches:
+            return False, None
+        if block_type not in ATTACHMENT_BLOCK_KEYS:
+            return False, None
+        if not self.auto_upload_attachments:
+            if block_type == "image_url":
+                logger.warning(
+                    "Base-64 image in message but `auto_upload_attachments` is False. "
+                    "Set it to True or upload via GigaChat.upload_file."
+                )
+            return False, None
+        return True, matches
 
-                            self._cached_images[hashed] = file.id_
+    async def _aupload_attachments(self, messages: List[BaseMessage]) -> None:
+        for message in messages:
+            if not isinstance(message.content, list):
+                continue
+            for content_part in message.content:
+                if not isinstance(content_part, dict):
+                    continue
+                block_type = content_part.get("type")
+                if block_type not in ATTACHMENT_BLOCK_KEYS:
+                    continue
+                block_data = content_part.get(block_type)
+                if not isinstance(block_data, dict):
+                    continue
+                url = block_data.get("url")
+                if not url:
+                    continue
+                should_upload, matches = self._should_upload_block(block_type, url)
+                if not should_upload or not matches:
+                    continue
+                hashed = hashlib.sha256(url.encode()).hexdigest()
+                if hashed in self._cached_uploads:
+                    continue
+                mime, encoding, data_b64 = matches.groups()
+                if encoding != "base64":
+                    continue
+                ext = _extension_for_mime(mime)
+                file = await self.aupload_file(
+                    (f"{uuid4()}{ext}", base64.b64decode(data_b64))
+                )
+                self._set_cached_upload(hashed, file.id_)
+
+    def _upload_attachments(self, messages: List[BaseMessage]) -> None:
+        for message in messages:
+            if not isinstance(message.content, list):
+                continue
+            for content_part in message.content:
+                if not isinstance(content_part, dict):
+                    continue
+                block_type = content_part.get("type")
+                if block_type not in ATTACHMENT_BLOCK_KEYS:
+                    continue
+                block_data = content_part.get(block_type, {})
+                if not isinstance(block_data, dict):
+                    continue
+                url = block_data.get("url")
+                if not url:
+                    continue
+                should_upload, matches = self._should_upload_block(block_type, url)
+                if not should_upload or not matches:
+                    continue
+                hashed = hashlib.sha256(url.encode()).hexdigest()
+                if hashed in self._cached_uploads:
+                    continue
+                mime, encoding, data_b64 = matches.groups()
+                if encoding != "base64":
+                    continue
+                ext = _extension_for_mime(mime)
+                file = self.upload_file((f"{uuid4()}{ext}", base64.b64decode(data_b64)))
+                self._set_cached_upload(hashed, file.id_)
 
     def _build_payload(self, messages: List[BaseMessage], **kwargs: Any) -> gm.Chat:
-        from gigachat.models import Chat
-
         messages_dicts = [
-            _convert_message_to_dict(m, self._cached_images) for m in messages
+            _convert_message_to_dict(m, self._cached_uploads) for m in messages
         ]
         kwargs.pop("messages", None)
 
@@ -457,22 +543,28 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             "update_interval": self.update_interval,
             **kwargs,
         }
+        if self.reasoning_effort is not None:
+            payload_dict["reasoning_effort"] = self.reasoning_effort
 
-        payload = Chat.model_validate(payload_dict)
+        payload = gm.Chat.model_validate(payload_dict)
 
         return payload
 
-    def _check_finish_reason(self, finish_reason: str | None) -> None:
-        if finish_reason and finish_reason not in {"stop", "function_call"}:
-            logger.warning("Giga generation stopped with reason: %s", finish_reason)
-
     def _create_chat_result(self, response: gm.ChatCompletion) -> ChatResult:
+        """Convert SDK response to ChatResult and preserve tracing metadata.
+
+        The wrapper surfaces provider tracing headers in two places:
+        - ``message.id`` carries ``x-request-id`` when present.
+        - ``llm_output["x_headers"]`` keeps the full response headers for
+          debugging, logging, or support escalation.
+        """
         generations = []
         x_headers = None
         for res in response.choices:
             message = _convert_dict_to_message(res.message)
             x_headers = response.x_headers if response.x_headers else {}
             if x_headers.get("x-request-id") is not None:
+                # GigaChat request id for tracing and support.
                 message.id = x_headers["x-request-id"]
             if isinstance(message, AIMessage):
                 message.usage_metadata = UsageMetadata(
@@ -484,7 +576,6 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                     },
                 )
             finish_reason = res.finish_reason
-            self._check_finish_reason(finish_reason)
             gen = ChatGeneration(
                 message=message,
                 generation_info={
@@ -496,10 +587,58 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         llm_output = {
             "token_usage": response.usage.model_dump(),
             "model_name": response.model,
-            "x_headers": x_headers,
+            "x_headers": x_headers,  # GigaChat response headers for debugging.
         }
         return ChatResult(generations=generations, llm_output=llm_output)
 
+    def _build_stream_chunk(
+        self,
+        chunk: Dict[str, Any],
+        first_chunk: bool,
+    ) -> Tuple[BaseMessageChunk, Dict[str, Any], Any]:
+        """Build message chunk and generation_info from a normalized stream chunk dict.
+
+        Usage and x_headers are set here in one place for both _stream and
+        _astream. ``x-request-id`` is copied to ``chunk.id`` when present.
+        The first streamed chunk also exposes the full ``x_headers`` payload via
+        ``generation_info`` so callers can keep tracing metadata in streaming and
+        non-streaming paths.
+
+        Caller is responsible for normalizing the raw chunk to a dict and for
+        callbacks.
+        """
+        choice = chunk["choices"][0]
+        content = choice.get("delta", {}).get("content", "")
+        chunk_m = _convert_delta_to_message_chunk(choice["delta"], AIMessageChunk)
+
+        usage_metadata = None
+        if chunk.get("usage"):
+            usage_metadata = UsageMetadata(
+                output_tokens=chunk["usage"]["completion_tokens"],
+                input_tokens=chunk["usage"]["prompt_tokens"],
+                total_tokens=chunk["usage"]["total_tokens"],
+                input_token_details={
+                    "cache_read": chunk["usage"].get("precached_prompt_tokens", 0)
+                },
+            )
+        if isinstance(chunk_m, AIMessageChunk):
+            chunk_m.usage_metadata = usage_metadata
+
+        x_headers = chunk.get("x_headers")
+        x_headers = x_headers if isinstance(x_headers, dict) else {}
+        if "x-request-id" in x_headers:
+            chunk_m.id = x_headers["x-request-id"]
+
+        generation_info: Dict[str, Any] = {}
+        if finish_reason := choice.get("finish_reason"):
+            generation_info["model_name"] = chunk.get("model")
+            generation_info["finish_reason"] = finish_reason
+        if first_chunk:
+            generation_info["x_headers"] = x_headers
+
+        return (chunk_m, generation_info, content)
+
+    @override
     def _generate(
         self,
         messages: List[BaseMessage],
@@ -508,6 +647,8 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         stream: Optional[bool] = None,
         **kwargs: Any,
     ) -> ChatResult:
+        # Kept in the signature for LangChain compatibility, but wrapper-side
+        # local stop handling was removed in 0.5.x. See MIGRATION.md.
         should_stream = stream if stream is not None else self.streaming
         if should_stream:
             stream_iter = self._stream(
@@ -515,19 +656,12 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             )
             return generate_from_stream(stream_iter)
 
-        self._upload_images(messages)
+        self._upload_attachments(messages)
         payload = self._build_payload(messages, **kwargs)
         response = self._client.chat(payload)
-        for choice in response.choices:
-            trimmed_content = trim_content_to_stop_sequence(
-                choice.message.content, stop
-            )
-            if isinstance(trimmed_content, str):
-                choice.message.content = trimmed_content
-                break
-
         return self._create_chat_result(response)
 
+    @override
     async def _agenerate(
         self,
         messages: List[BaseMessage],
@@ -536,6 +670,8 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         stream: Optional[bool] = None,
         **kwargs: Any,
     ) -> ChatResult:
+        # Kept in the signature for LangChain compatibility, but wrapper-side
+        # local stop handling was removed in 0.5.x. See MIGRATION.md.
         should_stream = stream if stream is not None else self.streaming
         if should_stream:
             stream_iter = self._astream(
@@ -543,19 +679,12 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             )
             return await agenerate_from_stream(stream_iter)
 
-        await self._aupload_images(messages)
+        await self._aupload_attachments(messages)
         payload = self._build_payload(messages, **kwargs)
         response = await self._client.achat(payload)
-        for choice in response.choices:
-            trimmed_content = trim_content_to_stop_sequence(
-                choice.message.content, stop
-            )
-            if isinstance(trimmed_content, str):
-                choice.message.content = trimmed_content
-                break
-
         return self._create_chat_result(response)
 
+    @override
     def _stream(
         self,
         messages: List[BaseMessage],
@@ -563,56 +692,26 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         run_manager: Optional[CallbackManagerForLLMRun] = None,
         **kwargs: Any,
     ) -> Iterator[ChatGenerationChunk]:
-        self._upload_images(messages)
+        # Kept in the signature for LangChain compatibility, but wrapper-side
+        # local stop handling was removed in 0.5.x. See MIGRATION.md.
+        self._upload_attachments(messages)
         payload = self._build_payload(messages, **kwargs)
-        message_content = ""
-
         first_chunk = True
+
         for chunk_d in self._client.stream(payload):
-            chunk = {}
-            if not isinstance(chunk_d, dict):
-                chunk = chunk_d.model_dump()
-            else:
-                chunk = chunk_d
+            chunk = chunk_d if isinstance(chunk_d, dict) else chunk_d.model_dump()
             if len(chunk["choices"]) == 0:
                 continue
 
-            choice = chunk["choices"][0]
-            content = choice.get("delta", {}).get("content", {})
-            message_content += content
-            if trim_content_to_stop_sequence(message_content, stop):
-                return
-            chunk_m = _convert_delta_to_message_chunk(choice["delta"], AIMessageChunk)
-            usage_metadata = None
-            if chunk.get("usage"):
-                usage_metadata = UsageMetadata(
-                    output_tokens=chunk["usage"]["completion_tokens"],
-                    input_tokens=chunk["usage"]["prompt_tokens"],
-                    total_tokens=chunk["usage"]["total_tokens"],
-                    input_token_details={
-                        "cache_read": chunk["usage"].get("precached_prompt_tokens", 0)
-                    },
-                )
-            if isinstance(chunk_m, AIMessageChunk):
-                chunk_m.usage_metadata = usage_metadata
-            x_headers = chunk.get("x_headers")
-            x_headers = x_headers if isinstance(x_headers, dict) else {}
-            if "x-request-id" in x_headers:
-                chunk_m.id = x_headers["x-request-id"]
-
-            generation_info = {}
-            if finish_reason := choice.get("finish_reason"):
-                self._check_finish_reason(finish_reason)
-                generation_info["model_name"] = chunk.get("model")
-                generation_info["finish_reason"] = finish_reason
-            if first_chunk:
-                generation_info["x_headers"] = x_headers
-                first_chunk = False
+            chunk_m, generation_info, content = self._build_stream_chunk(
+                chunk, first_chunk
+            )
+            first_chunk = False
             if run_manager:
                 run_manager.on_llm_new_token(content)
-
             yield ChatGenerationChunk(message=chunk_m, generation_info=generation_info)
 
+    @override
     async def _astream(
         self,
         messages: List[BaseMessage],
@@ -620,54 +719,23 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         run_manager: Optional[AsyncCallbackManagerForLLMRun] = None,
         **kwargs: Any,
     ) -> AsyncIterator[ChatGenerationChunk]:
-        await self._aupload_images(messages)
+        # Kept in the signature for LangChain compatibility, but wrapper-side
+        # local stop handling was removed in 0.5.x. See MIGRATION.md.
+        await self._aupload_attachments(messages)
         payload = self._build_payload(messages, **kwargs)
-        message_content = ""
         first_chunk = True
 
         async for chunk_d in self._client.astream(payload):
-            chunk = {}
-            if not isinstance(chunk_d, dict):
-                chunk = chunk_d.model_dump()
-            else:
-                chunk = chunk_d
+            chunk = chunk_d if isinstance(chunk_d, dict) else chunk_d.model_dump()
             if len(chunk["choices"]) == 0:
                 continue
 
-            choice = chunk["choices"][0]
-            content = choice.get("delta", {}).get("content", {})
-            message_content += content
-            if trim_content_to_stop_sequence(message_content, stop):
-                return
-            chunk_m = _convert_delta_to_message_chunk(choice["delta"], AIMessageChunk)
-            usage_metadata = None
-            if chunk.get("usage"):
-                usage_metadata = UsageMetadata(
-                    output_tokens=chunk["usage"]["completion_tokens"],
-                    input_tokens=chunk["usage"]["prompt_tokens"],
-                    total_tokens=chunk["usage"]["total_tokens"],
-                    input_token_details={
-                        "cache_read": chunk["usage"].get("precached_prompt_tokens", 0)
-                    },
-                )
-            if isinstance(chunk_m, AIMessageChunk):
-                chunk_m.usage_metadata = usage_metadata
-            x_headers = chunk.get("x_headers")
-            x_headers = x_headers if isinstance(x_headers, dict) else {}
-            if isinstance(x_headers, dict) and "x-request-id" in x_headers:
-                chunk_m.id = x_headers["x-request-id"]
-
-            generation_info = {}
-            if finish_reason := choice.get("finish_reason"):
-                self._check_finish_reason(finish_reason)
-                generation_info["model_name"] = chunk.get("model")
-                generation_info["finish_reason"] = finish_reason
-            if first_chunk:
-                generation_info["x_headers"] = x_headers
-                first_chunk = False
+            chunk_m, generation_info, content = self._build_stream_chunk(
+                chunk, first_chunk
+            )
+            first_chunk = False
             if run_manager:
                 await run_manager.on_llm_new_token(content)
-
             yield ChatGenerationChunk(message=chunk_m, generation_info=generation_info)
 
     def bind_functions(
@@ -675,8 +743,8 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         functions: Sequence[Union[Dict[str, Any], Type[BaseModel], Callable, type]],
         function_call: Optional[str] = None,
         **kwargs: Any,
-    ) -> Runnable[LanguageModelInput, BaseMessage]:
-        """Bind functions (and other objects) to this chat model.
+    ) -> Runnable[LanguageModelInput, AIMessage]:
+        """Bind functions (legacy) to this chat model.
 
         Args:
             functions: A list of function definitions to bind to this chat model.
@@ -684,64 +752,66 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 models and callables will be automatically converted to
                 their schema dictionary representation.
             function_call: Which function to require the model to call.
-                Must be the name of the single provided function or
-                "auto" to automatically determine which function to call
-                (if any).
-            kwargs: Any additional parameters to pass to the
-                :class:`~langchain.runnable.Runnable` constructor.
+                Supported values:
+                - ``None``: Do not force a function call (model decides).
+                - ``"auto"``: Let the model decide whether to call a function.
+                - ``"none"``: Explicitly disable function calling.
+                - ``"<function_name>"``: Force a specific function by name.
+            kwargs: Any additional parameters forwarded to the underlying
+                runnable binding.
         """
         formatted_functions = [convert_to_gigachat_function(fn) for fn in functions]
         if function_call is not None:
-            if len(formatted_functions) != 1:
-                raise ValueError(
-                    "When specifying `function_call`, you must provide exactly one "
-                    "function."
-                )
-            if formatted_functions[0]["name"] != function_call:
-                raise ValueError(
-                    f"Function call {function_call} was specified, but the only "
-                    f"provided function was {formatted_functions[0]['name']}."
-                )
-            function_call_ = {"name": function_call}
-            kwargs = {**kwargs, "function_call": function_call_}
+            if function_call in ("auto", "none"):
+                kwargs = {**kwargs, "function_call": function_call}
+            else:
+                available_names = [fn.get("name") for fn in formatted_functions]
+                if function_call not in available_names:
+                    available = ", ".join(n for n in available_names if n)
+                    available = available or "<unknown>"
+                    raise ValueError(
+                        f"Function call {function_call} was specified, but it was "
+                        f"not found in provided functions: {available}."
+                    )
+                function_call_ = {"name": function_call}
+                kwargs = {**kwargs, "function_call": function_call_}
         return super().bind(functions=formatted_functions, **kwargs)
 
-    # TODO: Fix typing.
-    @overload  # type: ignore[override]
+    @override
     def with_structured_output(
         self,
-        schema: Optional[_DictOrPydanticClass] = None,
+        schema: Dict[str, Any] | type,
         *,
-        method: Literal[
-            "function_calling", "json_mode", "format_instructions"
-        ] = "function_calling",
-        include_raw: Literal[True] = True,
-        **kwargs: Any,
-    ) -> Runnable[LanguageModelInput, _AllReturnType]: ...
-
-    @overload
-    def with_structured_output(
-        self,
-        schema: Optional[_DictOrPydanticClass] = None,
-        *,
-        method: Literal[
-            "function_calling", "json_mode", "format_instructions"
-        ] = "function_calling",
-        include_raw: Literal[False] = False,
-        **kwargs: Any,
-    ) -> Runnable[LanguageModelInput, _DictOrPydantic]: ...
-
-    def with_structured_output(
-        self,
-        schema: Optional[_DictOrPydanticClass] = None,
-        *,
-        method: Literal[
-            "function_calling", "json_mode", "format_instructions"
-        ] = "function_calling",
         include_raw: bool = False,
         **kwargs: Any,
-    ) -> Runnable[LanguageModelInput, _DictOrPydantic]:
-        """Model wrapper that returns outputs formatted to match the given schema."""
+    ) -> Runnable[LanguageModelInput, Dict | BaseModel]:
+        """Return a model wrapper that formats outputs to match a schema.
+
+        Args:
+            schema: Output schema. Can be a dict-like tool/schema description
+                or a Pydantic class.
+            include_raw: If ``False``, return only parsed structured output.
+                If ``True``, return a dict with ``raw``, ``parsed``, and
+                ``parsing_error`` keys.
+            **kwargs: Additional options for structured output.
+                Supported key:
+                - ``method``: ``"function_calling"`` (default) or
+                  ``"json_mode"``.
+
+        Raises:
+            ValueError: If ``method`` is unsupported or unknown kwargs are passed.
+
+        Returns:
+            Runnable that keeps the same input type as this chat model and
+            returns parsed structured output (or a raw+parsed payload when
+            ``include_raw=True``).
+        """
+        method = kwargs.pop("method", "function_calling")
+        if method not in ("function_calling", "json_mode"):
+            raise ValueError(
+                "Unrecognized method. Expected 'function_calling' or 'json_mode'. "
+                f"Received: {method}"
+            )
         if kwargs:
             raise ValueError(f"Received unsupported arguments {kwargs}")
         is_pydantic_schema = _is_pydantic_class(schema)
@@ -772,37 +842,6 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 if is_pydantic_schema
                 else JsonOutputParser()
             )
-            if method == "format_instructions":
-                from langchain_core.prompt_values import ChatPromptValue
-                from langchain_core.runnables import RunnableLambda
-
-                def add_format_instructions(
-                    _input: LanguageModelInput, format_instructions: str
-                ) -> LanguageModelInput:
-                    if isinstance(_input, ChatPromptValue):
-                        messages = _input.messages
-                        return type(messages)(
-                            list(messages) + [HumanMessage(format_instructions)]  # type: ignore[call-arg]
-                        )
-                    elif isinstance(_input, str):
-                        return _input + f"\n\n{format_instructions}"
-                    elif isinstance(_input, Sequence):
-                        return type(_input)(
-                            list(_input) + [HumanMessage(format_instructions)]  # type: ignore[call-arg]
-                        )
-                    else:
-                        msg = (
-                            f"Invalid input type {type(_input)}. "
-                            "Must be a PromptValue, str, or list of BaseMessages."
-                        )
-                        raise ValueError(msg)  # noqa: TRY004
-
-                add_format_instructions_chain = RunnableLambda(
-                    lambda _input: add_format_instructions(
-                        _input, output_parser.get_format_instructions()
-                    )
-                )
-                llm = add_format_instructions_chain | llm
 
         if include_raw:
             parser_assign = RunnablePassthrough.assign(
@@ -816,6 +855,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         else:
             return llm | output_parser
 
+    @override
     def bind_tools(
         self,
         tools: Sequence[
@@ -826,18 +866,37 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             Union[dict, str, Literal["auto", "any", "none"], bool]
         ] = None,
         **kwargs: Any,
-    ) -> Runnable[LanguageModelInput, BaseMessage]:
+    ) -> Runnable[LanguageModelInput, AIMessage]:
         """Bind tool-like objects to this chat model.
         Assumes model is compatible with GigaChat tool-calling API."""
         formatted_tools = [convert_to_gigachat_tool(tool) for tool in tools]
         if tool_choice is not None and tool_choice:
             if isinstance(tool_choice, str):
-                if tool_choice not in ("auto", "none"):
+                # GigaChat API doesn't support "any" tool choice
+                if tool_choice == "any":
+                    if not self.allow_any_tool_choice_fallback:
+                        raise ValueError(
+                            "GigaChat API does not support tool_choice='any'. "
+                            "Use 'auto' or specify a concrete tool name. "
+                            "If you want to automatically convert 'any' to 'auto', "
+                            "set allow_any_tool_choice_fallback=True when creating "
+                            "the GigaChat instance."
+                        )
+                    warnings.warn(
+                        "GigaChat API does not support tool_choice='any'. "
+                        "Using 'auto' instead. "
+                        "The model may choose not to call any tool, "
+                        "which may break agent behavior.",
+                        UserWarning,
+                        stacklevel=2,
+                    )
+                    tool_choice = "auto"
+                elif tool_choice not in ("auto", "none"):
                     tool_choice = {"name": tool_choice}
             elif isinstance(tool_choice, bool) and tool_choice:
                 if not formatted_tools:
                     raise ValueError("tool_choice can not be bool if tools are empty")
-                tool_choice = {"name": formatted_tools[0]["name"]}
+                tool_choice = {"name": _get_tool_name(formatted_tools[0])}
             elif isinstance(tool_choice, dict):
                 pass
             else:

@@ -7,8 +7,6 @@ import pytest
 from typing_extensions import TypedDict as ExtensionsTypedDict
 from typing_extensions import is_typeddict
 
-from langchain_gigachat.tools.giga_tool import FewShotExamples, GigaBaseTool, giga_tool
-
 try:
     from typing import Annotated as TypingAnnotated  # type: ignore[attr-defined]
 except ImportError:
@@ -352,7 +350,6 @@ def test_simple_tool() -> None:
     assert actual == expected
 
 
-@pytest.mark.xfail(reason="Direct pydantic v2 models not yet supported")
 def test_convert_to_openai_function_nested_v2() -> None:
     class NestedV2(BaseModel):
         nested_v2_arg1: int = Field(..., description="foo")
@@ -406,9 +403,6 @@ def test_convert_to_gigachat_function_nested() -> None:
     assert actual == expected
 
 
-@pytest.mark.xfail(
-    reason="Pydantic converts Optional[str] to str in .model_json_schema()"
-)
 def test_function_optional_param() -> None:
     @tool
     def func5(a: Optional[str], b: str, c: Optional[list[Optional[str]]]) -> None:
@@ -525,54 +519,42 @@ def function_return_parameters() -> Callable:
 
 
 @pytest.fixture()
-def dummy_return_parameters_with_fews_tool() -> GigaBaseTool:
-    class Schema(BaseModel):
-        arg1: int = Field(..., description="foo")
-        arg2: Literal["bar", "baz"] = Field(..., description="one of 'bar', 'baz'")
-
-    class DummyFunction(GigaBaseTool):  # type: ignore[override]
-        args_schema: type[BaseModel] = Schema
-        name: str = "dummy_function"
-        description: str = "dummy function"
-        return_schema: type[BaseModel] = ReturnParameters
-        few_shot_examples: FewShotExamples = [
-            {"arg1": 1, "arg2": "bar"},
-            {"arg1": 2, "arg2": "baz"},
-        ]
-
-        def _run(self, *args: Any, **kwargs: Any) -> Any:
-            pass
-
-    return DummyFunction()
-
-
-@pytest.fixture()
-def dummy_return_parameters_with_fews_decorator() -> Callable:
-    @giga_tool(
-        few_shot_examples=[{"arg1": 1, "arg2": "bar"}, {"arg1": 2, "arg2": "baz"}]
+def dummy_return_parameters_with_fews_decorator() -> BaseTool:
+    @tool(
+        extras={
+            "few_shot_examples": [
+                {"arg1": 1, "arg2": "bar"},
+                {"arg1": 2, "arg2": "baz"},
+            ]
+        }
     )
-    def dummy_function(  # type: ignore
+    def dummy_function(
         arg1: Optional[int] = Field(..., description="foo"),
         arg2: Literal["bar", "baz"] = Field(..., description="one of 'bar', 'baz'"),
     ) -> ReturnParameters:
         """dummy function"""
-        pass
+        return ReturnParameters(arg1=arg1 or 0, arg2=arg2)
 
     return dummy_function
 
 
 @pytest.fixture()
-def dummy_return_parameters_through_arg_with_fews_decorator() -> Callable:
-    @giga_tool(
-        few_shot_examples=[{"arg1": 1, "arg2": "bar"}, {"arg1": 2, "arg2": "baz"}],
-        return_schema=ReturnParameters,
+def dummy_return_parameters_through_arg_with_fews_decorator() -> BaseTool:
+    @tool(
+        extras={
+            "few_shot_examples": [
+                {"arg1": 1, "arg2": "bar"},
+                {"arg1": 2, "arg2": "baz"},
+            ],
+            "return_schema": ReturnParameters,
+        }
     )
     def dummy_function(
         arg1: Optional[int] = Field(..., description="foo"),
         arg2: Literal["bar", "baz"] = Field(..., description="one of 'bar', 'baz'"),
     ) -> None:
         """dummy function"""
-        pass
+        return None
 
     return dummy_function
 
@@ -642,8 +624,6 @@ class DummyReturnParametersWithClassMethod:
     [
         "annotated_function_return_parameters",
         "function_return_parameters",
-        "dummy_return_parameters_with_fews_tool",
-        "dummy_return_parameters_with_fews_decorator",
         "dummy_return_parameters_through_arg_with_fews_decorator",
         "json_schema_return_parameters_with_fews",
         DummyReturnParameters.dummy_function,
@@ -673,10 +653,18 @@ def test_function_with_return_parameters(
     assert actual_func["return_parameters"] == return_params_expected
 
 
+def test_standard_tool_does_not_auto_infer_return_parameters(
+    dummy_return_parameters_with_fews_decorator: BaseTool,
+) -> None:
+    actual_func = convert_to_gigachat_function(
+        dummy_return_parameters_with_fews_decorator
+    )
+    assert actual_func["return_parameters"] is None
+
+
 @pytest.mark.parametrize(
     "func",
     [
-        "dummy_return_parameters_with_fews_tool",
         "dummy_return_parameters_with_fews_decorator",
         "dummy_return_parameters_through_arg_with_fews_decorator",
         "json_schema_return_parameters_with_fews",
@@ -689,3 +677,129 @@ def test_function_with_few_shots(func: Any, request: pytest.FixtureRequest) -> N
 
     actual_func = convert_to_gigachat_function(func)
     assert actual_func["few_shot_examples"] == few_shots_expected
+
+
+def test_dict_any_field_has_properties_key() -> None:
+    """dict[str, Any] param must produce a schema with a 'properties' key.
+
+    Pydantic emits {"type": "object", "additionalProperties": true} for such
+    fields; GigaChat requires the 'properties' key to be present.
+    """
+
+    class UpdateTestCaseInput(BaseModel):
+        """Update fields of an existing test case."""
+
+        test_case_id: str = Field(..., description="Test case identifier")
+        patch_json: dict[str, Any] = Field(
+            ..., description="Fields to patch as a JSON object"
+        )
+
+    actual = convert_to_gigachat_function(UpdateTestCaseInput)
+
+    patch_schema = actual["parameters"]["properties"]["patch_json"]
+    assert patch_schema["type"] == "object"
+    assert "properties" in patch_schema, (
+        "GigaChat requires 'properties' on every object-typed field. "
+        "Missing it causes 422: \"Field 'properties.patch_json.properties' is missing\""
+    )
+    # injecting properties must not drop additionalProperties
+    assert patch_schema["additionalProperties"] is True
+
+
+def test_nested_dict_in_list_has_properties_key() -> None:
+    """list[dict[str, Any]] items must also have 'properties' recursively."""
+
+    class ToolInput(BaseModel):
+        """Tool with a list of free-form dicts."""
+
+        name: str = Field(..., description="Name")
+        items: list[dict[str, Any]] = Field(..., description="List of items")
+
+    actual = convert_to_gigachat_function(ToolInput)
+
+    items_schema = actual["parameters"]["properties"]["items"]
+    assert items_schema["type"] == "array"
+    item_schema = items_schema["items"]
+    assert item_schema.get("type") == "object"
+    assert "properties" in item_schema, (
+        "Nested object inside array must have 'properties' for GigaChat"
+    )
+
+
+def test_raw_dict_schema_with_array_and_freeform_object() -> None:
+    """Raw dict schema: array field is kept intact, object field gets 'properties'."""
+    raw_schema = {
+        "name": "upload_files",
+        "description": "Upload files with metadata",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "file_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                },
+                "metadata": {
+                    "type": "object",
+                    "additionalProperties": True,
+                },
+            },
+            "required": ["file_ids", "metadata"],
+        },
+    }
+
+    actual = convert_to_gigachat_function(raw_schema)
+    # file_ids: array schema must pass through unchanged
+    file_ids = actual["parameters"]["properties"]["file_ids"]
+    assert file_ids["type"] == "array"
+    assert file_ids["items"] == {"type": "string"}
+
+    # metadata: object must get 'properties' injected, keep additionalProperties
+    metadata = actual["parameters"]["properties"]["metadata"]
+    assert metadata["type"] == "object"
+    assert metadata["additionalProperties"] is True
+    assert "properties" in metadata, (
+        "GigaChat requires 'properties' on every object-typed node. "
+        "Missing it causes 422: \"Field 'properties.metadata.properties' is missing\""
+    )
+
+
+@pytest.mark.parametrize(
+    ("raw_schema", "expected_name", "expected_title"),
+    [
+        (
+            {
+                "title": "SomeResult",
+                "description": "My desc",
+                "properties": {
+                    "value": {"type": "integer", "description": "some value"},
+                },
+                "required": ["value"],
+                "type": "object",
+            },
+            "SomeResult",
+            "SomeResult",
+        ),
+        (
+            {
+                "name": "my_tool",
+                "title": "MyTool",
+                "description": "A tool",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "q": {"type": "string", "description": "query"},
+                    },
+                },
+            },
+            "my_tool",
+            None,
+        ),
+    ],
+)
+def test_raw_dict_schema_title_fallback_behavior(
+    raw_schema: dict[str, Any], expected_name: str, expected_title: Optional[str]
+) -> None:
+    """Preserve title fallback while normalizing name for raw schemas."""
+    actual = convert_to_gigachat_function(raw_schema)
+    assert actual["name"] == expected_name
+    assert actual.get("title") == expected_title

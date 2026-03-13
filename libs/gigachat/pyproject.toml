@@ -1,12 +1,15 @@
 [project]
 name = "langchain-gigachat"
-version = "0.4.0b2"
+version = "0.5.0a1"
 description = "An integration package connecting GigaChat and LangChain"
 authors = []
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.9,<4"
-dependencies = ["langchain-core>=0.3,<1", "gigachat>=0.2.0b2,<0.3"]
+requires-python = ">=3.10,<4"
+dependencies = [
+    "langchain-core>=1,<2",
+    "gigachat>=0.2.0,<0.3",
+]
 
 [project.urls]
 Repository = "https://github.com/ai-forever/langchain-gigachat"
@@ -61,3 +64,4 @@ filterwarnings = [
 
 [tool.coverage.run]
 omit = ["tests/*"]
+
