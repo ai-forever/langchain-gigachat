@@ -113,6 +113,11 @@ for chunk in llm.stream("Write a short poem about programming"):
 print()
 ```
 
+> **Note:** Wrapper-side local `stop` handling was removed in `0.5.x`. The
+> public methods still accept `stop` for LangChain signature compatibility, but
+> `langchain-gigachat` no longer applies stop-sequence truncation itself. See
+> [`MIGRATION.md`](MIGRATION.md) before carrying `stop=...` call sites forward.
+
 ### Async
 
 Use async/await for non-blocking operations:
@@ -212,6 +217,10 @@ llm_with_functions = llm.bind_functions(
 ```
 
 Use `bind_tools()` for new code. `bind_functions()` is kept as a compatibility layer over the provider's `function_call` transport and supports `None`, `"auto"`, `"none"`, or a specific function name.
+
+Internally, the provider transport is still function-oriented. That is why
+`ToolMessage` results are serialized back as provider `function` messages when
+continuing a conversation.
 
 ## Structured Output
 
@@ -363,6 +372,19 @@ except GigaChatException as e:
 ```
 
 For the full exception hierarchy and HTTP status code mapping, see the [GigaChat SDK — Error Handling](https://github.com/ai-forever/gigachat#error-handling).
+
+## Tracing Metadata
+
+When the provider returns tracing headers, the wrapper preserves them in both
+non-streaming and streaming flows:
+
+- `AIMessage.id` / `AIMessageChunk.id` carries `x-request-id`
+- non-streaming responses keep full headers in `ChatResult.llm_output["x_headers"]`
+- streaming responses expose full headers on the first chunk via
+  `generation_info["x_headers"]`
+
+This makes it possible to correlate LangChain runs with provider-side logs or
+support requests without parsing SDK responses directly.
 
 ## Related Projects
 

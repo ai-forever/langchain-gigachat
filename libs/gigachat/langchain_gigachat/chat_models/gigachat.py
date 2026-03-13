@@ -280,6 +280,9 @@ def _convert_message_to_dict(
         kwargs["name"] = message.name
         kwargs["content"] = _validate_content(content)
     elif isinstance(message, ToolMessage):
+        # LangChain's public surface is tool-oriented, but the provider transport
+        # is still function-oriented, so tool results must be serialized back as
+        # provider FUNCTION messages for round-trip compatibility.
         kwargs["role"] = gm.MessagesRole.FUNCTION
         if message.name:
             kwargs["name"] = message.name
@@ -548,6 +551,13 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         return payload
 
     def _create_chat_result(self, response: gm.ChatCompletion) -> ChatResult:
+        """Convert SDK response to ChatResult and preserve tracing metadata.
+
+        The wrapper surfaces provider tracing headers in two places:
+        - ``message.id`` carries ``x-request-id`` when present.
+        - ``llm_output["x_headers"]`` keeps the full response headers for
+          debugging, logging, or support escalation.
+        """
         generations = []
         x_headers = None
         for res in response.choices:
@@ -588,8 +598,14 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
     ) -> Tuple[BaseMessageChunk, Dict[str, Any], Any]:
         """Build message chunk and generation_info from a normalized stream chunk dict.
 
-        Usage and x_headers are set here in one place for both _stream and _astream.
-        Caller is responsible for normalizing the raw chunk to a dict and for callbacks.
+        Usage and x_headers are set here in one place for both _stream and
+        _astream. ``x-request-id`` is copied to ``chunk.id`` when present.
+        The first streamed chunk also exposes the full ``x_headers`` payload via
+        ``generation_info`` so callers can keep tracing metadata in streaming and
+        non-streaming paths.
+
+        Caller is responsible for normalizing the raw chunk to a dict and for
+        callbacks.
         """
         choice = chunk["choices"][0]
         content = choice.get("delta", {}).get("content", "")
@@ -631,6 +647,8 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         stream: Optional[bool] = None,
         **kwargs: Any,
     ) -> ChatResult:
+        # Kept in the signature for LangChain compatibility, but wrapper-side
+        # local stop handling was removed in 0.5.x. See MIGRATION.md.
         should_stream = stream if stream is not None else self.streaming
         if should_stream:
             stream_iter = self._stream(
@@ -652,6 +670,8 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         stream: Optional[bool] = None,
         **kwargs: Any,
     ) -> ChatResult:
+        # Kept in the signature for LangChain compatibility, but wrapper-side
+        # local stop handling was removed in 0.5.x. See MIGRATION.md.
         should_stream = stream if stream is not None else self.streaming
         if should_stream:
             stream_iter = self._astream(
@@ -672,6 +692,8 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         run_manager: Optional[CallbackManagerForLLMRun] = None,
         **kwargs: Any,
     ) -> Iterator[ChatGenerationChunk]:
+        # Kept in the signature for LangChain compatibility, but wrapper-side
+        # local stop handling was removed in 0.5.x. See MIGRATION.md.
         self._upload_attachments(messages)
         payload = self._build_payload(messages, **kwargs)
         first_chunk = True
@@ -697,6 +719,8 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         run_manager: Optional[AsyncCallbackManagerForLLMRun] = None,
         **kwargs: Any,
     ) -> AsyncIterator[ChatGenerationChunk]:
+        # Kept in the signature for LangChain compatibility, but wrapper-side
+        # local stop handling was removed in 0.5.x. See MIGRATION.md.
         await self._aupload_attachments(messages)
         payload = self._build_payload(messages, **kwargs)
         first_chunk = True

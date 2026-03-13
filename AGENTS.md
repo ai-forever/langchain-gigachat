@@ -12,7 +12,7 @@ LangChain integration package for GigaChat LLM.
 - `chat_models/` — `GigaChat` class with `_BaseGigaChat` common logic
 - `embeddings/` — `GigaChatEmbeddings` class
 - `utils/function_calling.py` — LangChain tool → GigaChat function conversion
-- `output_parsers/` — Output parsers for function results
+- `MIGRATION.md` / `CHANGELOG.md` — public upgrade and release notes
 
 ## Dependencies
 - **gigachat**: The underlying GigaChat API client library (Pydantic V2, v0.2.0+)
@@ -30,11 +30,7 @@ LangChain integration package for GigaChat LLM.
 - Documentation: English, Google Python Style Guide, imperative mood ("Return..." not "Returns...")
 - Avoid unnecessary comments
 
-## Refactoring
-See `docs/REFACTORING.md` for detailed analysis and solutions.
-Update these docs after solving each issue.
-
 ## Key Considerations
-- **Upstream Dependency**: The `gigachat` package (v0.2.0+) was significantly refactored. See `gigachat/docs/REFACTORING.md` for details. Changes here must align with upstream.
-- **LangChain Compatibility**: Must remain compatible with `langchain-core ^0.3` (Pydantic V2-native).
-- **Git Branch Dependency**: During refactoring, `gigachat` is installed from git branch (not local path or PyPI). See `docs/REFACTORING.md` → "Dependency Management Strategy" for rationale.
+- **Upstream Dependency**: The `gigachat` package (v0.2.0+) was significantly refactored. Changes here must align with the SDK behavior and schema expectations.
+- **LangChain Compatibility**: Must remain compatible with `langchain-core >=1,<2`.
+- **Release Context**: This branch contains intentional breaking changes for the `0.5.x` alpha line. Keep `libs/gigachat/MIGRATION.md` and `libs/gigachat/CHANGELOG.md` in sync with behavior changes.

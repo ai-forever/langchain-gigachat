@@ -16,6 +16,8 @@ class _GigaChatClientMixin(Serializable):
 
     Subclasses inherit shared connection/authentication fields and a cached
     ``_client`` property that creates a ``gigachat.GigaChat`` instance.
+    Keeping this logic in one place avoids chat/embeddings drift for auth,
+    retry, and secret-redaction behavior such as ``lc_secrets``.
 
     Override ``_get_client_init_kwargs`` to inject additional SDK parameters
     (e.g. ``profanity_check`` in the chat model).
