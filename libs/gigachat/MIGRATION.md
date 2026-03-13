@@ -1,10 +1,10 @@
-# Migration Guide: langchain-gigachat 0.3.x → 0.4.0a1
+# Migration Guide: langchain-gigachat 0.3.x → 0.5.0a1
 
-This guide covers all breaking changes in `langchain-gigachat` 0.4.0a1 and explains how to update your code.
+This guide covers all breaking changes in `langchain-gigachat` 0.5.0a1 and explains how to update your code.
 
 ## Requirements
 
-| Dependency | Before (0.3.x) | After (0.4.0a1) |
+| Dependency | Before (0.3.x) | After (0.5.0a1) |
 |------------|-----------------|---------------|
 | Python | >= 3.9 | **>= 3.10** |
 | `langchain-core` | >= 0.3, < 1 | **>= 1, < 2** |
@@ -12,7 +12,7 @@ This guide covers all breaking changes in `langchain-gigachat` 0.4.0a1 and expla
 
 > LangChain Core 1.x dropped Python 3.9 support. GigaChat SDK 0.2.0 migrated to Pydantic V2.
 >
-> `0.4.0a1` is an alpha pre-release. It will not be installed by default by a plain `pip install -U`; users must opt in to pre-releases explicitly.
+> `0.5.0a1` is an alpha pre-release. It will not be installed by default by a plain `pip install -U`; users must opt in to pre-releases explicitly.
 
 ---
 
@@ -329,5 +329,5 @@ def get_weather(city: str) -> str:
 
 ```python
 import langchain_gigachat
-print(langchain_gigachat.__version__)  # "0.4.0a1"
+print(langchain_gigachat.__version__)  # "0.5.0a1"
 ```

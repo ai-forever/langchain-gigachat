@@ -35,6 +35,8 @@ class GigaChatEmbeddings(_GigaChatClientMixin, Embeddings):
         Returns:
             List of embeddings, one for each text.
         """
+        if not texts:
+            return []
         response = self._client.embeddings(texts=texts, **self._get_embed_kwargs())
         return [item.embedding for item in response.data]
 
@@ -47,6 +49,8 @@ class GigaChatEmbeddings(_GigaChatClientMixin, Embeddings):
         Returns:
             List of embeddings, one for each text.
         """
+        if not texts:
+            return []
         response = await self._client.aembeddings(
             texts=texts, **self._get_embed_kwargs()
         )

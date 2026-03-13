@@ -31,11 +31,8 @@ def patch_gigachat_embeddings(
 def patch_gigachat_aembeddings(
     mocker: MockerFixture, mock_embeddings_response: MagicMock
 ) -> MagicMock:
-    async def _aembeddings(**kwargs):  # type: ignore[no-untyped-def]
-        return mock_embeddings_response
-
     mock = mocker.Mock()
-    mock.aembeddings = _aembeddings
+    mock.aembeddings = mocker.AsyncMock(return_value=mock_embeddings_response)
     mocker.patch("gigachat.GigaChat", return_value=mock)
     return mock
 
@@ -49,11 +46,28 @@ def test_embed_documents(patch_gigachat_embeddings: MagicMock) -> None:
     )
 
 
+def test_embed_documents_empty_list(patch_gigachat_embeddings: MagicMock) -> None:
+    emb = GigaChatEmbeddings()
+    result = emb.embed_documents([])
+    assert result == []
+    patch_gigachat_embeddings.embeddings.assert_not_called()
+
+
 @pytest.mark.asyncio()
 async def test_aembed_documents(patch_gigachat_aembeddings: MagicMock) -> None:
     emb = GigaChatEmbeddings()
     result = await emb.aembed_documents(["hello", "world"])
     assert result == [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]
+
+
+@pytest.mark.asyncio()
+async def test_aembed_documents_empty_list(
+    patch_gigachat_aembeddings: MagicMock,
+) -> None:
+    emb = GigaChatEmbeddings()
+    result = await emb.aembed_documents([])
+    assert result == []
+    patch_gigachat_aembeddings.aembeddings.assert_not_called()
 
 
 def test_embed_query_without_prefix(patch_gigachat_embeddings: MagicMock) -> None:
