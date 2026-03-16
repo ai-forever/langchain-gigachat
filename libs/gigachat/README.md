@@ -233,6 +233,8 @@ from langchain_gigachat import GigaChat
 
 
 class Answer(BaseModel):
+    """An answer with confidence score."""
+
     text: str = Field(description="Final answer")
     confidence: float = Field(ge=0, le=1, description="Confidence 0..1")
 
