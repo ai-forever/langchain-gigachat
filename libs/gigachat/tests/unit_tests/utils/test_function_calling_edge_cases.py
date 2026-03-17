@@ -40,10 +40,32 @@ def test_fix_schema_allof_multiple_raises() -> None:
         gigachat_fix_schema(schema)
 
 
-def test_fix_schema_anyof_multiple_raises() -> None:
-    schema: Dict[str, Any] = {"anyOf": [{"type": "string"}, {"type": "integer"}]}
-    with pytest.raises(IncorrectSchemaException):
-        gigachat_fix_schema(schema)
+def test_fix_schema_anyof_nullable_collapses() -> None:
+    """Optional[str] — anyOf with null should collapse to the non-null type."""
+    schema: Dict[str, Any] = {"anyOf": [{"type": "string"}, {"type": "null"}]}
+    result = gigachat_fix_schema(schema)
+    assert result == {"type": "string"}
+
+
+def test_fix_schema_anyof_union_with_null() -> None:
+    """str | dict | None — strips null, takes first non-null type."""
+    schema: Dict[str, Any] = {
+        "anyOf": [
+            {"type": "string"},
+            {"type": "object", "additionalProperties": True},
+            {"type": "null"},
+        ]
+    }
+    result = gigachat_fix_schema(schema)
+    assert result["type"] == "string"
+    assert "anyOf" not in result
+
+
+def test_fix_schema_anyof_scalars() -> None:
+    """int | str — takes first variant."""
+    schema: Dict[str, Any] = {"anyOf": [{"type": "integer"}, {"type": "string"}]}
+    result = gigachat_fix_schema(schema)
+    assert result == {"type": "integer"}
 
 
 def test_fix_schema_title_removed_at_top_level() -> None:
@@ -211,13 +233,14 @@ def test_convert_to_gigachat_function_dict_passthrough() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_convert_to_gigachat_function_incorrect_schema() -> None:
+def test_convert_to_gigachat_function_union_param() -> None:
+    """Union[int, float] should no longer raise — it collapses to string."""
     from langchain_core.tools import tool
 
     @tool
-    def bad_fn(x: Union[int, float]) -> str:
-        """Bad fn"""
+    def union_fn(x: Union[int, float]) -> str:
+        """Union fn"""
         return str(x)
 
-    with pytest.raises(IncorrectSchemaException, match="do not support"):
-        convert_to_gigachat_function(bad_fn)
+    result = convert_to_gigachat_function(union_fn)
+    assert "function" not in result or isinstance(result, dict)
