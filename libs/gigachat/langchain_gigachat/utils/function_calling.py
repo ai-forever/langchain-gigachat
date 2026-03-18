@@ -50,7 +50,8 @@ def gigachat_fix_schema(schema: Any, prev_key: str = "") -> Any:
     Fix schema incompatibilities between JSON Schema and GigaChat API.
 
     - GigaChat does not support allOf/anyOf in JSON schema. Collapses allOf
-      with a single element; raises for multi-element Union types.
+      with a single element; collapses anyOf by stripping null variants and
+      taking the first remaining type.
     - GigaChat requires ``properties`` on every object-typed node. Without this
       normalization, free-form object fields such as ``dict[str, Any]`` can lead
       to provider-side 422 validation errors.
@@ -73,8 +74,13 @@ def gigachat_fix_schema(schema: Any, prev_key: str = "") -> Any:
                     # Outer description takes priority over inner one for ref
                     obj_out["description"] = outer_description
             elif k == "anyOf":
-                if len(v) > 1:
-                    raise IncorrectSchemaException()
+                # GigaChat does not support anyOf — strip null variants and
+                # collapse to the first remaining type (same approach as gpt2giga).
+                non_null = [el for el in v if el != {"type": "null"}]
+                if non_null:
+                    obj_out.update(gigachat_fix_schema(non_null[0], k))
+                else:
+                    obj_out["type"] = "string"
             elif isinstance(v, (list, dict)):
                 obj_out[k] = gigachat_fix_schema(v, k)
             else:
