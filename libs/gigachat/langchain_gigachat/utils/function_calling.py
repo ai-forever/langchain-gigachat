@@ -9,6 +9,7 @@ from typing import (
     Dict,
     List,
     Optional,
+    Set,
     Type,
     Union,
     cast,
@@ -55,13 +56,82 @@ _SCALAR_WIDTH: Dict[str, int] = {
 }
 
 
+def _pick_discriminator_name(all_props: Set[str]) -> str:
+    """Return a discriminator field name that does not collide."""
+    name = "_type"
+    while name in all_props:
+        name = "_" + name
+    return name
+
+
+def _merge_object_variants(
+    variants: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Merge multiple object anyOf variants into one flat object."""
+    # Extract variant names
+    names: List[str] = []
+    for i, v in enumerate(variants):
+        names.append(v.get("title") or f"variant_{i + 1}")
+
+    # Collect all property names for discriminator collision check
+    all_prop_names: Set[str] = set()
+    for v in variants:
+        all_prop_names.update(v.get("properties", {}).keys())
+
+    disc_name = _pick_discriminator_name(all_prop_names)
+
+    # Build merged properties
+    merged: Dict[str, Any] = {}
+    for name, variant in zip(names, variants):
+        props = variant.get("properties", {})
+        for key, schema in props.items():
+            fixed = gigachat_fix_schema(schema, "properties")
+            if key not in merged:
+                desc = fixed.get("description", "")
+                fixed["description"] = f"{name}: {desc}"
+                merged[key] = fixed
+            else:
+                existing = merged[key]
+                # Merge descriptions
+                old_desc = existing.get("description", "")
+                new_desc = fixed.get("description", "")
+                existing["description"] = f"{old_desc} | {name}: {new_desc}"
+                # Widen type on collision
+                et = existing.get("type", "string")
+                ft = fixed.get("type", "string")
+                if et != ft:
+                    ew = _SCALAR_WIDTH.get(et, 3)
+                    fw = _SCALAR_WIDTH.get(ft, 3)
+                    widest_w = max(ew, fw)
+                    for t, w in _SCALAR_WIDTH.items():
+                        if w == widest_w:
+                            existing["type"] = t
+                            break
+                # Merge enums
+                if "enum" in fixed:
+                    old_enum = existing.get("enum", [])
+                    existing["enum"] = old_enum + fixed["enum"]
+
+    disc_field: Dict[str, Any] = {
+        "type": "string",
+        "enum": names,
+        "description": "Which variant to use",
+    }
+
+    return {
+        "type": "object",
+        "properties": {disc_name: disc_field, **merged},
+        "required": [disc_name],
+    }
+
+
 def _collapse_anyof(variants: List[Any]) -> Any:
     """Collapse multiple anyOf variants into a single schema.
 
     Strategy:
     - All scalars → widen to the most permissive type
     - Single variant → use as-is
-    - Otherwise → raise IncorrectSchemaException
+    - Objects/mixed → merge with discriminator field
     """
     non_null = [el for el in variants if el != {"type": "null"}]
     if not non_null:
@@ -87,7 +157,7 @@ def _collapse_anyof(variants: List[Any]) -> Any:
             result["enum"] = all_enums
         return result
 
-    raise IncorrectSchemaException()
+    return _merge_object_variants(non_null)
 
 
 def gigachat_fix_schema(schema: Any, prev_key: str = "") -> Any:

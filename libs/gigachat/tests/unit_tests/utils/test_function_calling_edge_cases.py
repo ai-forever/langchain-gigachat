@@ -48,7 +48,7 @@ def test_fix_schema_anyof_nullable_collapses() -> None:
 
 
 def test_fix_schema_anyof_union_with_null() -> None:
-    """str | dict | None — mixed scalar and non-scalar cannot be widened."""
+    """str | dict | None — merges into object with discriminator."""
     schema: Dict[str, Any] = {
         "anyOf": [
             {"type": "string"},
@@ -56,8 +56,10 @@ def test_fix_schema_anyof_union_with_null() -> None:
             {"type": "null"},
         ]
     }
-    with pytest.raises(IncorrectSchemaException):
-        gigachat_fix_schema(schema)
+    result = gigachat_fix_schema(schema)
+    assert result["type"] == "object"
+    assert "_type" in result["properties"]
+    assert result["required"] == ["_type"]
 
 
 def test_fix_schema_anyof_scalars_widens() -> None:
@@ -103,6 +105,219 @@ def test_fix_schema_anyof_merges_enums() -> None:
     result = gigachat_fix_schema(schema)
     assert result["type"] == "string"
     assert set(result["enum"]) == {"a", "b", "c", "d"}
+
+
+def test_merge_two_object_variants() -> None:
+    """Two object variants with titles merge into flat object."""
+    schema: Dict[str, Any] = {
+        "anyOf": [
+            {
+                "type": "object",
+                "title": "Cat",
+                "properties": {
+                    "meow": {"type": "string", "description": "sound"},
+                },
+            },
+            {
+                "type": "object",
+                "title": "Dog",
+                "properties": {
+                    "bark": {"type": "string", "description": "woof"},
+                },
+            },
+        ]
+    }
+    result = gigachat_fix_schema(schema)
+    assert result["type"] == "object"
+    props = result["properties"]
+    assert "_type" in props
+    assert props["_type"]["enum"] == ["Cat", "Dog"]
+    assert "meow" in props
+    assert "bark" in props
+    assert props["meow"]["description"].startswith("Cat:")
+    assert props["bark"]["description"].startswith("Dog:")
+    assert result["required"] == ["_type"]
+
+
+def test_merge_object_property_collision_same_type() -> None:
+    """Shared property with same type merges descriptions."""
+    schema: Dict[str, Any] = {
+        "anyOf": [
+            {
+                "type": "object",
+                "title": "A",
+                "properties": {
+                    "name": {"type": "string", "description": "a name"},
+                },
+            },
+            {
+                "type": "object",
+                "title": "B",
+                "properties": {
+                    "name": {"type": "string", "description": "b name"},
+                },
+            },
+        ]
+    }
+    result = gigachat_fix_schema(schema)
+    desc = result["properties"]["name"]["description"]
+    assert "A:" in desc
+    assert "B:" in desc
+
+
+def test_merge_object_property_collision_different_type() -> None:
+    """Shared property with different types widens."""
+    schema: Dict[str, Any] = {
+        "anyOf": [
+            {
+                "type": "object",
+                "title": "A",
+                "properties": {
+                    "val": {"type": "integer", "description": "int val"},
+                },
+            },
+            {
+                "type": "object",
+                "title": "B",
+                "properties": {
+                    "val": {"type": "string", "description": "str val"},
+                },
+            },
+        ]
+    }
+    result = gigachat_fix_schema(schema)
+    assert result["properties"]["val"]["type"] == "string"
+
+
+def test_merge_object_no_title_fallback() -> None:
+    """Variants without titles use variant_1, variant_2."""
+    schema: Dict[str, Any] = {
+        "anyOf": [
+            {
+                "type": "object",
+                "properties": {"x": {"type": "integer", "description": "x"}},
+            },
+            {
+                "type": "object",
+                "properties": {"y": {"type": "string", "description": "y"}},
+            },
+        ]
+    }
+    result = gigachat_fix_schema(schema)
+    assert result["properties"]["_type"]["enum"] == [
+        "variant_1",
+        "variant_2",
+    ]
+
+
+def test_merge_mixed_scalar_and_object() -> None:
+    """Scalar + object variants merge into object."""
+    schema: Dict[str, Any] = {
+        "anyOf": [
+            {"type": "string"},
+            {
+                "type": "object",
+                "title": "Obj",
+                "properties": {
+                    "a": {"type": "integer", "description": "num"},
+                },
+            },
+        ]
+    }
+    result = gigachat_fix_schema(schema)
+    assert result["type"] == "object"
+    assert "_type" in result["properties"]
+
+
+def test_merge_discriminator_name_collision() -> None:
+    """If a variant has _type property, discriminator becomes __type."""
+    schema: Dict[str, Any] = {
+        "anyOf": [
+            {
+                "type": "object",
+                "title": "A",
+                "properties": {
+                    "_type": {"type": "string", "description": "type"},
+                },
+            },
+            {
+                "type": "object",
+                "title": "B",
+                "properties": {
+                    "x": {"type": "integer", "description": "x"},
+                },
+            },
+        ]
+    }
+    result = gigachat_fix_schema(schema)
+    assert "__type" in result["properties"]
+    assert result["properties"]["__type"]["enum"] == ["A", "B"]
+
+
+def test_merge_object_enum_fields() -> None:
+    """Enum values on colliding properties are merged."""
+    schema: Dict[str, Any] = {
+        "anyOf": [
+            {
+                "type": "object",
+                "title": "A",
+                "properties": {
+                    "status": {
+                        "type": "string",
+                        "description": "status",
+                        "enum": ["on", "off"],
+                    },
+                },
+            },
+            {
+                "type": "object",
+                "title": "B",
+                "properties": {
+                    "status": {
+                        "type": "string",
+                        "description": "status",
+                        "enum": ["pending", "done"],
+                    },
+                },
+            },
+        ]
+    }
+    result = gigachat_fix_schema(schema)
+    enums = result["properties"]["status"]["enum"]
+    assert set(enums) == {"on", "off", "pending", "done"}
+
+
+def test_merge_end_to_end() -> None:
+    """Full integration: Union[ModelA, ModelB] in a tool."""
+    from langchain_core.tools import tool
+
+    class FileTarget(BaseModel):
+        """Save to file."""
+
+        path: str = Field(description="file path")
+
+    class WebhookTarget(BaseModel):
+        """Post to webhook."""
+
+        url: str = Field(description="endpoint URL")
+
+    @tool
+    def save(dest: Union[FileTarget, WebhookTarget]) -> str:
+        """Save data.
+
+        Args:
+            dest: Where to save."""
+        return "ok"
+
+    result = convert_to_gigachat_function(save)
+    dest_props = result["parameters"]["properties"]["dest"]
+    assert dest_props["type"] == "object"
+    assert "_type" in dest_props["properties"]
+    disc = dest_props["properties"]["_type"]
+    assert "FileTarget" in disc["enum"]
+    assert "WebhookTarget" in disc["enum"]
+    assert "path" in dest_props["properties"]
+    assert "url" in dest_props["properties"]
 
 
 def test_fix_schema_title_removed_at_top_level() -> None:
