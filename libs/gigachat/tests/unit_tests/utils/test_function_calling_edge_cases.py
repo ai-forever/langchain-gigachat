@@ -165,8 +165,8 @@ def test_merge_object_property_collision_same_type() -> None:
     assert "B:" in desc
 
 
-def test_merge_object_property_collision_different_type() -> None:
-    """Shared property with different types widens."""
+def test_merge_object_property_collision_different_type_raises() -> None:
+    """Shared property with different types raises."""
     schema: Dict[str, Any] = {
         "anyOf": [
             {
@@ -185,8 +185,8 @@ def test_merge_object_property_collision_different_type() -> None:
             },
         ]
     }
-    result = gigachat_fix_schema(schema)
-    assert result["properties"]["val"]["type"] == "string"
+    with pytest.raises(IncorrectSchemaException):
+        gigachat_fix_schema(schema)
 
 
 def test_merge_object_no_title_fallback() -> None:

@@ -96,17 +96,11 @@ def _merge_object_variants(
                 old_desc = existing.get("description", "")
                 new_desc = fixed.get("description", "")
                 existing["description"] = f"{old_desc} | {name}: {new_desc}"
-                # Widen type on collision
-                et = existing.get("type", "string")
-                ft = fixed.get("type", "string")
+                # Raise on type mismatch
+                et = existing.get("type")
+                ft = fixed.get("type")
                 if et != ft:
-                    ew = _SCALAR_WIDTH.get(et, 3)
-                    fw = _SCALAR_WIDTH.get(ft, 3)
-                    widest_w = max(ew, fw)
-                    for t, w in _SCALAR_WIDTH.items():
-                        if w == widest_w:
-                            existing["type"] = t
-                            break
+                    raise IncorrectSchemaException()
                 # Merge enums
                 if "enum" in fixed:
                     old_enum = existing.get("enum", [])
