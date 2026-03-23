@@ -937,3 +937,137 @@ def test_connection_settings_none_forwarded_to_sdk(mocker: MockerFixture) -> Non
     assert call_kwargs["max_connections"] is None
     assert call_kwargs["retry_backoff_factor"] is None
     assert call_kwargs["retry_on_status_codes"] is None
+
+
+# ── repeated tool-call loop breaker ──────────────────────────────────────
+
+
+def _make_tool_call_completion(
+    tool_name: str, tool_args: dict,
+) -> ChatCompletion:
+    """Helper: build a ChatCompletion whose assistant message calls one tool."""
+    from gigachat.models import FunctionCall
+
+    return ChatCompletion(
+        choices=[
+            Choices(
+                message=Messages(
+                    role=MessagesRole.ASSISTANT,
+                    content="",
+                    function_call=FunctionCall(
+                        name=tool_name, arguments=tool_args,
+                    ),
+                ),
+                index=0,
+                finish_reason="stop",
+            )
+        ],
+        created=1,
+        model="GigaChat:v1.2.19.2",
+        usage=Usage(
+            prompt_tokens=10, completion_tokens=5, total_tokens=15,
+            precached_prompt_tokens=0,
+        ),
+        object="chat.completion",
+    )
+
+
+def test_repeated_tool_call_loop_is_broken(mocker: MockerFixture) -> None:
+    """After N identical tool calls the model response is stripped of tool_calls."""
+    completion = _make_tool_call_completion("write_todos", {"todos": []})
+    mock = mocker.Mock()
+    mock.chat.return_value = completion
+    mocker.patch("gigachat.GigaChat", return_value=mock)
+
+    from langchain_core.messages import ToolCall, ToolMessage
+
+    llm = GigaChat(repeated_tool_call_limit=3)
+
+    # Build a history with 3 prior identical tool calls (above limit).
+    prior_messages: list = []
+    for _ in range(3):
+        prior_messages.append(
+            AIMessage(
+                content="",
+                tool_calls=[
+                    ToolCall(name="write_todos", args={"todos": []}, id="abc")
+                ],
+            )
+        )
+        prior_messages.append(
+            ToolMessage(content="Updated todo list to []", tool_call_id="abc")
+        )
+
+    result = llm._generate(
+        [HumanMessage(content="hello"), *prior_messages],
+    )
+    ai_msg = result.generations[0].message
+    assert isinstance(ai_msg, AIMessage)
+    assert ai_msg.tool_calls == [], "tool_calls should be stripped to break the loop"
+
+
+def test_repeated_tool_call_below_limit_is_kept(mocker: MockerFixture) -> None:
+    """Below the limit the tool call is preserved."""
+    completion = _make_tool_call_completion("write_todos", {"todos": []})
+    mock = mocker.Mock()
+    mock.chat.return_value = completion
+    mocker.patch("gigachat.GigaChat", return_value=mock)
+
+    from langchain_core.messages import ToolCall, ToolMessage
+
+    llm = GigaChat(repeated_tool_call_limit=3)
+
+    # Only 2 prior identical calls — below limit of 3.
+    prior_messages: list = []
+    for _ in range(2):
+        prior_messages.append(
+            AIMessage(
+                content="",
+                tool_calls=[
+                    ToolCall(name="write_todos", args={"todos": []}, id="abc")
+                ],
+            )
+        )
+        prior_messages.append(
+            ToolMessage(content="Updated todo list to []", tool_call_id="abc")
+        )
+
+    result = llm._generate(
+        [HumanMessage(content="hello"), *prior_messages],
+    )
+    ai_msg = result.generations[0].message
+    assert isinstance(ai_msg, AIMessage)
+    assert len(ai_msg.tool_calls) == 1, "tool_calls should be preserved below limit"
+
+
+def test_repeated_tool_call_disabled_when_zero(mocker: MockerFixture) -> None:
+    """Setting repeated_tool_call_limit=0 disables the feature."""
+    completion = _make_tool_call_completion("write_todos", {"todos": []})
+    mock = mocker.Mock()
+    mock.chat.return_value = completion
+    mocker.patch("gigachat.GigaChat", return_value=mock)
+
+    from langchain_core.messages import ToolCall, ToolMessage
+
+    llm = GigaChat(repeated_tool_call_limit=0)
+
+    prior_messages: list = []
+    for _ in range(10):
+        prior_messages.append(
+            AIMessage(
+                content="",
+                tool_calls=[
+                    ToolCall(name="write_todos", args={"todos": []}, id="abc")
+                ],
+            )
+        )
+        prior_messages.append(
+            ToolMessage(content="Updated todo list to []", tool_call_id="abc")
+        )
+
+    result = llm._generate(
+        [HumanMessage(content="hello"), *prior_messages],
+    )
+    ai_msg = result.generations[0].message
+    assert isinstance(ai_msg, AIMessage)
+    assert len(ai_msg.tool_calls) == 1, "feature disabled — tool_calls kept"
