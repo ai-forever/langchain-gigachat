@@ -61,7 +61,7 @@ def _collapse_anyof(variants: List[Any]) -> Any:
     Strategy:
     - All scalars → widen to the most permissive type
     - Single variant → use as-is
-    - Otherwise → take the first variant (best-effort)
+    - Otherwise → raise IncorrectSchemaException
     """
     non_null = [el for el in variants if el != {"type": "null"}]
     if not non_null:
@@ -87,9 +87,7 @@ def _collapse_anyof(variants: List[Any]) -> Any:
             result["enum"] = all_enums
         return result
 
-    # Fallback: take first variant (preserves current behavior for objects
-    # until object merge with discriminator is implemented)
-    return gigachat_fix_schema(non_null[0], "anyOf")
+    raise IncorrectSchemaException()
 
 
 def gigachat_fix_schema(schema: Any, prev_key: str = "") -> Any:

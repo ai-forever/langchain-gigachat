@@ -48,8 +48,7 @@ def test_fix_schema_anyof_nullable_collapses() -> None:
 
 
 def test_fix_schema_anyof_union_with_null() -> None:
-    """str | dict | None — strips null, widens scalars; object is not scalar so
-    falls back to first variant (string)."""
+    """str | dict | None — mixed scalar and non-scalar cannot be widened."""
     schema: Dict[str, Any] = {
         "anyOf": [
             {"type": "string"},
@@ -57,9 +56,8 @@ def test_fix_schema_anyof_union_with_null() -> None:
             {"type": "null"},
         ]
     }
-    result = gigachat_fix_schema(schema)
-    assert result["type"] == "string"
-    assert "anyOf" not in result
+    with pytest.raises(IncorrectSchemaException):
+        gigachat_fix_schema(schema)
 
 
 def test_fix_schema_anyof_scalars_widens() -> None:
