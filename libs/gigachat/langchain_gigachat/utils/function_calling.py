@@ -70,7 +70,11 @@ def _collapse_anyof(variants: List[Any]) -> Any:
         return gigachat_fix_schema(non_null[0], "anyOf")
 
     # Try scalar widening
-    types: List[str] = [el["type"] for el in non_null if isinstance(el, dict) and isinstance(el.get("type"), str)]
+    types: List[str] = [
+        el["type"]
+        for el in non_null
+        if isinstance(el, dict) and isinstance(el.get("type"), str)
+    ]
     if len(types) == len(non_null) and all(t in _SCALAR_WIDTH for t in types):
         widest = max(types, key=lambda t: _SCALAR_WIDTH[t])
         result: Dict[str, Any] = {"type": widest}
