@@ -412,6 +412,9 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         reasoning_effort: Reasoning effort for reasoning-capable models
             (e.g. GigaChat-2-Reasoning). When set, the API may return
             reasoning_content in the assistant message (see additional_kwargs).
+        repeated_tool_call_limit: Maximum number of consecutive identical
+            tool calls allowed before stripping tool_calls from the response
+            to break agent loops. Set to 0 to disable. Default: 3.
     """
 
     auto_upload_attachments: bool = False
@@ -421,6 +424,9 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
     Allow automatic fallback from tool_choice='any' to 'auto'.
     GigaChat API doesn't support 'any', so by default it raises an error.
     """
+    repeated_tool_call_limit: int = 3
+    """Max consecutive identical tool calls before stripping them to break loops.
+    Set to 0 to disable."""
 
     _cached_uploads: Dict[str, str] = PrivateAttr(default_factory=dict)
 
@@ -433,6 +439,56 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 "Use instead GigaChat.upload_file for uploading files."
             )
         return values
+
+    @staticmethod
+    def _tool_call_signature(tc: ToolCall) -> Tuple[str, str]:
+        """Return (name, canonical_args_json) for deduplication."""
+        return (tc["name"], json.dumps(tc["args"], sort_keys=True, ensure_ascii=False))
+
+    def _count_trailing_identical_tool_calls(
+        self,
+        messages: List[BaseMessage],
+        signature: Tuple[str, str],
+    ) -> int:
+        """Count how many consecutive trailing AI messages have the same sole tool call."""
+        count = 0
+        for msg in reversed(messages):
+            if not isinstance(msg, AIMessage):
+                continue
+            calls = msg.tool_calls
+            if len(calls) == 1 and self._tool_call_signature(calls[0]) == signature:
+                count += 1
+            else:
+                break
+        return count
+
+    def _strip_tool_calls_if_looping(
+        self, result: ChatResult, messages: List[BaseMessage]
+    ) -> ChatResult:
+        """Strip tool_calls from the result if the same call has repeated too many times."""
+        if self.repeated_tool_call_limit <= 0:
+            return result
+        for gen in result.generations:
+            msg = gen.message
+            if not isinstance(msg, AIMessage) or not msg.tool_calls:
+                continue
+            if len(msg.tool_calls) != 1:
+                continue
+            sig = self._tool_call_signature(msg.tool_calls[0])
+            prior = self._count_trailing_identical_tool_calls(messages, sig)
+            if prior >= self.repeated_tool_call_limit:
+                tool_name = msg.tool_calls[0]["name"]
+                logger.warning(
+                    "Detected %d consecutive identical '%s' tool calls. "
+                    "Stripping tool_calls to break the loop.",
+                    prior + 1,
+                    tool_name,
+                )
+                msg.tool_calls = []
+                msg.additional_kwargs.pop("function_call", None)
+                if not msg.content:
+                    msg.content = ""
+        return result
 
     def _set_cached_upload(self, hashed: str, file_id: str) -> None:
         """Store file_id for hashed content url; evict oldest entry if at capacity."""
@@ -654,12 +710,14 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             stream_iter = self._stream(
                 messages, stop=stop, run_manager=run_manager, **kwargs
             )
-            return generate_from_stream(stream_iter)
+            result = generate_from_stream(stream_iter)
+            return self._strip_tool_calls_if_looping(result, messages)
 
         self._upload_attachments(messages)
         payload = self._build_payload(messages, **kwargs)
         response = self._client.chat(payload)
-        return self._create_chat_result(response)
+        result = self._create_chat_result(response)
+        return self._strip_tool_calls_if_looping(result, messages)
 
     @override
     async def _agenerate(
@@ -677,12 +735,14 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             stream_iter = self._astream(
                 messages, stop=stop, run_manager=run_manager, **kwargs
             )
-            return await agenerate_from_stream(stream_iter)
+            result = await agenerate_from_stream(stream_iter)
+            return self._strip_tool_calls_if_looping(result, messages)
 
         await self._aupload_attachments(messages)
         payload = self._build_payload(messages, **kwargs)
         response = await self._client.achat(payload)
-        return self._create_chat_result(response)
+        result = self._create_chat_result(response)
+        return self._strip_tool_calls_if_looping(result, messages)
 
     @override
     def _stream(
