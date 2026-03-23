@@ -62,49 +62,12 @@ def test_fix_schema_anyof_union_with_null() -> None:
     assert result["required"] == ["_type"]
 
 
-def test_fix_schema_anyof_scalars_widens() -> None:
-    """int | str — widens to string (most permissive scalar)."""
+def test_fix_schema_anyof_multiple_scalars_merges() -> None:
+    """int | str — merges into object with discriminator."""
     schema: Dict[str, Any] = {"anyOf": [{"type": "integer"}, {"type": "string"}]}
     result = gigachat_fix_schema(schema)
-    assert result == {"type": "string"}
-
-
-def test_fix_schema_anyof_int_float_widens_to_number() -> None:
-    """int | float — widens to number."""
-    schema: Dict[str, Any] = {"anyOf": [{"type": "integer"}, {"type": "number"}]}
-    result = gigachat_fix_schema(schema)
-    assert result == {"type": "number"}
-
-
-def test_fix_schema_anyof_bool_int_str_widens_to_string() -> None:
-    """bool | int | str — widens to string."""
-    schema: Dict[str, Any] = {
-        "anyOf": [{"type": "boolean"}, {"type": "integer"}, {"type": "string"}]
-    }
-    result = gigachat_fix_schema(schema)
-    assert result == {"type": "string"}
-
-
-def test_fix_schema_anyof_int_float_nullable_widens() -> None:
-    """int | float | None — strips null, widens to number."""
-    schema: Dict[str, Any] = {
-        "anyOf": [{"type": "integer"}, {"type": "number"}, {"type": "null"}]
-    }
-    result = gigachat_fix_schema(schema)
-    assert result == {"type": "number"}
-
-
-def test_fix_schema_anyof_merges_enums() -> None:
-    """Two enum-bearing scalar variants — enum values are merged."""
-    schema: Dict[str, Any] = {
-        "anyOf": [
-            {"type": "string", "enum": ["a", "b"]},
-            {"type": "string", "enum": ["c", "d"]},
-        ]
-    }
-    result = gigachat_fix_schema(schema)
-    assert result["type"] == "string"
-    assert set(result["enum"]) == {"a", "b", "c", "d"}
+    assert result["type"] == "object"
+    assert "_type" in result["properties"]
 
 
 def test_merge_two_object_variants() -> None:
@@ -486,7 +449,7 @@ def test_convert_to_gigachat_function_dict_passthrough() -> None:
 
 
 def test_convert_to_gigachat_function_union_param() -> None:
-    """Union[int, float] should widen to number."""
+    """Union[int, float] merges into object with discriminator."""
     from langchain_core.tools import tool
 
     @tool
@@ -496,4 +459,6 @@ def test_convert_to_gigachat_function_union_param() -> None:
 
     result = convert_to_gigachat_function(union_fn)
     assert isinstance(result, dict)
-    assert result["parameters"]["properties"]["x"]["type"] == "number"
+    x_schema = result["parameters"]["properties"]["x"]
+    assert x_schema["type"] == "object"
+    assert "_type" in x_schema["properties"]

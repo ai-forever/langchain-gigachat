@@ -421,15 +421,17 @@ def test_function_no_params() -> None:
     assert not req
 
 
-def test_convert_union_collapses() -> None:
+def test_convert_union_merges() -> None:
     @tool
     def magic_function(input: Union[int, float]) -> str:  # type: ignore
         """Compute a magic function."""
 
-    # Union[int, float] should widen to number
+    # Union[int, float] should merge into object with discriminator
     result = convert_to_gigachat_function(magic_function)
     assert isinstance(result, dict)
-    assert result["parameters"]["properties"]["input"]["type"] == "number"
+    input_schema = result["parameters"]["properties"]["input"]
+    assert input_schema["type"] == "object"
+    assert "_type" in input_schema["properties"]
 
 
 def test_function_with_title_parameters(

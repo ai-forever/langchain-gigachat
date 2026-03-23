@@ -46,16 +46,6 @@ class IncorrectSchemaException(Exception):
     pass
 
 
-# Scalar type widening hierarchy: each type subsumes the ones before it.
-# When collapsing anyOf with multiple scalar types, we pick the widest.
-_SCALAR_WIDTH: Dict[str, int] = {
-    "boolean": 0,
-    "integer": 1,
-    "number": 2,
-    "string": 3,
-}
-
-
 def _pick_discriminator_name(all_props: Set[str]) -> str:
     """Return a discriminator field name that does not collide."""
     name = "_type"
@@ -123,33 +113,14 @@ def _collapse_anyof(variants: List[Any]) -> Any:
     """Collapse multiple anyOf variants into a single schema.
 
     Strategy:
-    - All scalars → widen to the most permissive type
     - Single variant → use as-is
-    - Objects/mixed → merge with discriminator field
+    - Multiple variants → merge with discriminator field
     """
     non_null = [el for el in variants if el != {"type": "null"}]
     if not non_null:
         return {"type": "string"}
     if len(non_null) == 1:
         return gigachat_fix_schema(non_null[0], "anyOf")
-
-    # Try scalar widening
-    types: List[str] = [
-        el["type"]
-        for el in non_null
-        if isinstance(el, dict) and isinstance(el.get("type"), str)
-    ]
-    if len(types) == len(non_null) and all(t in _SCALAR_WIDTH for t in types):
-        widest = max(types, key=lambda t: _SCALAR_WIDTH[t])
-        result: Dict[str, Any] = {"type": widest}
-        # Merge enum values if any variants have them
-        all_enums: List[Any] = []
-        for el in non_null:
-            if "enum" in el:
-                all_enums.extend(el["enum"])
-        if all_enums:
-            result["enum"] = all_enums
-        return result
 
     return _merge_object_variants(non_null)
 
