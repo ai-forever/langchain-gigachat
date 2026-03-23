@@ -426,9 +426,10 @@ def test_convert_union_collapses() -> None:
     def magic_function(input: Union[int, float]) -> str:  # type: ignore
         """Compute a magic function."""
 
-    # Union[int, float] should now collapse gracefully instead of raising
+    # Union[int, float] should widen to number
     result = convert_to_gigachat_function(magic_function)
     assert isinstance(result, dict)
+    assert result["parameters"]["properties"]["input"]["type"] == "number"
 
 
 def test_function_with_title_parameters(
