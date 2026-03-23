@@ -2,11 +2,9 @@
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [0.5.0a1] — 2026-03-11
+## [0.5.0] — 2026-03-11
 
-Alpha pre-release: LangChain Core 1.x, Pydantic V2, multimodal support, and extensive cleanup.
-
-This is a pre-release and will not be installed by default via a plain `pip install -U langchain-gigachat`.
+Stable release: LangChain Core 1.x, Pydantic V2, multimodal support, and extensive cleanup.
 
 ### Breaking Changes
 
