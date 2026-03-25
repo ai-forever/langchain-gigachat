@@ -11,6 +11,7 @@ from langchain_gigachat.utils.function_calling import (
     _model_to_schema,
     _parse_google_docstring,
     convert_to_gigachat_function,
+    convert_to_gigachat_tool,
     gigachat_fix_schema,
 )
 
@@ -462,3 +463,31 @@ def test_convert_to_gigachat_function_union_param() -> None:
     x_schema = result["parameters"]["properties"]["x"]
     assert x_schema["type"] == "object"
     assert "_type" in x_schema["properties"]
+
+
+def test_convert_to_gigachat_tool_preformatted_fixes_schema() -> None:
+    """Pre-formatted tool dict with type=function should still be fixed."""
+    tool = {
+        "type": "function",
+        "function": {
+            "name": "update_files",
+            "description": "Updates a file",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "fileId": {"type": "string", "description": "File ID"},
+                    "properties": {
+                        "type": "object",
+                        "description": "Key-value pairs",
+                    },
+                },
+                "required": ["fileId"],
+            },
+        },
+    }
+    result = convert_to_gigachat_tool(tool)
+    # The nested "properties" field (type: object) must get an empty properties dict
+    inner = result["function"]["parameters"]["properties"]["properties"]
+    assert inner["type"] == "object"
+    assert "properties" in inner
+    assert inner["properties"] == {}

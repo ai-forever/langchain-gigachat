@@ -538,6 +538,8 @@ def convert_to_gigachat_tool(
             GigaChat tool-calling API.
     """
     if isinstance(tool, dict) and tool.get("type") == "function" and "function" in tool:
-        return tool
+        function_body = tool["function"]
+        fixed_function = convert_to_gigachat_function(function_body)
+        return {"type": "function", "function": fixed_function}
     function = convert_to_gigachat_function(tool)
     return {"type": "function", "function": function}
