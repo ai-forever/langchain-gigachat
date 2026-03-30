@@ -5,7 +5,6 @@ from typing import TypedDict as TypingTypedDict
 
 import pytest
 from typing_extensions import TypedDict as ExtensionsTypedDict
-from typing_extensions import is_typeddict
 
 try:
     from typing import Annotated as TypingAnnotated  # type: ignore[attr-defined]
@@ -303,7 +302,10 @@ def test_convert_to_gigachat_function(
             "required": ["arg2"],
         },
     }
-    _dict_schema_fixtures = {"dummy_structured_tool_with_dict_args_schema", "json_schema"}
+    _dict_schema_fixtures = {
+        "dummy_structured_tool_with_dict_args_schema",
+        "json_schema",
+    }
     if not (isinstance(func, str) and func in _dict_schema_fixtures):
         # Raw dict schemas pass through unchanged; all other inputs go through Pydantic
         # model generation where Optional fields without explicit default get
@@ -650,7 +652,9 @@ def test_function_with_return_parameters(
         },
         "required": ["arg2"],
     }
-    if not (isinstance(func, str) and func == "json_schema_return_parameters_with_fews"):
+    if not (
+        isinstance(func, str) and func == "json_schema_return_parameters_with_fews"
+    ):
         # Raw dict schemas keep arg1 as-is; Pydantic-based return types get
         # "default": null for Optional fields without explicit default.
         return_params_expected["properties"]["arg1"]["default"] = None  # type: ignore
