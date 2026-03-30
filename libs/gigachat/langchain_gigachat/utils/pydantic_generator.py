@@ -31,3 +31,24 @@ class GigaChatJsonSchema(GenerateJsonSchema):
             return null_schema
         else:
             return inner_json_schema
+
+    def model_schema(self, schema: core_schema.ModelSchema) -> JsonSchemaValue:
+        """
+        Add ``"default": null`` for nullable fields that have no explicit default.
+
+        GigaChat omits Optional fields from tool-call responses instead of
+        returning ``null``.  Without a ``"default": null`` hint in the schema,
+        PydanticToolsParser raises ``ValidationError: Field required`` when such
+        a field is missing from the response.
+        """
+        result = super().model_schema(schema)
+        if isinstance(result, dict) and "properties" in result:
+            required = result.get("required", [])
+            for prop_name, prop_schema in result["properties"].items():
+                if (
+                    isinstance(prop_schema, dict)
+                    and prop_name not in required
+                    and "default" not in prop_schema
+                ):
+                    prop_schema["default"] = None
+        return result
