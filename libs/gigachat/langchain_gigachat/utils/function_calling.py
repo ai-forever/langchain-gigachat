@@ -139,13 +139,13 @@ def _convert_any_typed_dicts_to_pydantic(
         )
         fields: dict = {}
         for arg, arg_type in annotations_.items():
+            field_kwargs: dict[str, Any]
             if get_origin(arg_type) is Annotated:
                 annotated_args = get_args(arg_type)
                 new_arg_type = _convert_any_typed_dicts_to_pydantic(
                     annotated_args[0], depth=depth + 1, visited=visited
                 )
                 extra = annotated_args[1:]
-                field_kwargs: dict[str, Any]
                 if len(extra) == 1:
                     # Annotated[type, description] or Annotated[type, default]
                     if isinstance(extra[0], str):
@@ -177,7 +177,6 @@ def _convert_any_typed_dicts_to_pydantic(
                 new_arg_type = _convert_any_typed_dicts_to_pydantic(
                     arg_type, depth=depth + 1, visited=visited
                 )
-                field_kwargs: dict[str, Any]
                 if _is_optional(new_arg_type):
                     field_kwargs = {"default": None}
                 else:
