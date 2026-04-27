@@ -63,7 +63,13 @@ from langchain_core.output_parsers import (
 )
 from langchain_core.output_parsers.base import OutputParserLike
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
-from langchain_core.runnables import Runnable, RunnableMap, RunnablePassthrough
+from langchain_core.prompt_values import ChatPromptValue
+from langchain_core.runnables import (
+    Runnable,
+    RunnableLambda,
+    RunnableMap,
+    RunnablePassthrough,
+)
 from langchain_core.tools import BaseTool
 from langchain_core.utils.pydantic import is_basemodel_subclass, pre_init
 from pydantic import BaseModel, PrivateAttr
@@ -795,8 +801,15 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 ``parsing_error`` keys.
             **kwargs: Additional options for structured output.
                 Supported key:
-                - ``method``: ``"function_calling"`` (default) or
-                  ``"json_mode"``.
+                - ``method``: one of
+                  ``"function_calling"`` (default; strict schema enforced via
+                  tool calls),
+                  ``"json_mode"`` (provider returns valid JSON, no schema
+                  enforcement), or
+                  ``"format_instructions"`` (schema description injected into
+                  the prompt, response parsed as plain-text JSON; bypasses
+                  tool-call argument limits, useful for long list extraction,
+                  but schema conformance is only prompt-enforced).
 
         Raises:
             ValueError: If ``method`` is unsupported or unknown kwargs are passed.
@@ -807,10 +820,10 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             ``include_raw=True``).
         """
         method = kwargs.pop("method", "function_calling")
-        if method not in ("function_calling", "json_mode"):
+        if method not in ("function_calling", "json_mode", "format_instructions"):
             raise ValueError(
-                "Unrecognized method. Expected 'function_calling' or 'json_mode'. "
-                f"Received: {method}"
+                "Unrecognized method. Expected 'function_calling', 'json_mode', "
+                f"or 'format_instructions'. Received: {method}"
             )
         if kwargs:
             raise ValueError(f"Received unsupported arguments {kwargs}")
@@ -842,6 +855,15 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 if is_pydantic_schema
                 else JsonOutputParser()
             )
+            if method == "format_instructions":
+                format_instructions = _format_instructions_for_schema(schema)
+
+                def _inject_fi(
+                    _input: LanguageModelInput,
+                ) -> LanguageModelInput:
+                    return _add_format_instructions(_input, format_instructions)
+
+                llm = RunnableLambda(_inject_fi) | llm  # type: ignore[assignment]
 
         if include_raw:
             parser_assign = RunnablePassthrough.assign(
@@ -910,3 +932,59 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
 
 def _is_pydantic_class(obj: Any) -> bool:
     return isinstance(obj, type) and is_basemodel_subclass(obj)
+
+
+# Template for prompt-based structured output. Matches the shape emitted by
+# PydanticOutputParser.get_format_instructions() so behavior is consistent
+# across Pydantic and raw JSON-schema inputs.
+_FORMAT_INSTRUCTIONS_TEMPLATE = (
+    "The output should be formatted as a JSON instance that conforms to the "
+    "JSON schema below.\n\n"
+    'As an example, for the schema {{"properties": {{"foo": {{"title": "Foo", '
+    '"description": "a list of strings", "type": "array", "items": {{"type": '
+    '"string"}}}}}}, "required": ["foo"]}}\nthe object {{"foo": ["bar", "baz"]}} '
+    'is a well-formatted instance of the schema. The object {{"properties": '
+    '{{"foo": ["bar", "baz"]}}}} is not well-formatted.\n\n'
+    "Here is the output schema:\n```\n{schema}\n```"
+)
+
+
+def _format_instructions_for_schema(schema: Dict[str, Any] | type) -> str:
+    """Build format instructions for Pydantic or raw JSON-schema input."""
+    if _is_pydantic_class(schema):
+        return PydanticOutputParser(
+            pydantic_object=schema  # type: ignore[arg-type]
+        ).get_format_instructions()
+    if isinstance(schema, dict):
+        # Match PydanticOutputParser: drop top-level "title" and "type" for brevity.
+        reduced = {k: v for k, v in schema.items() if k not in ("title", "type")}
+        return _FORMAT_INSTRUCTIONS_TEMPLATE.format(
+            schema=json.dumps(reduced, ensure_ascii=False)
+        )
+    raise TypeError(
+        "schema must be a Pydantic class or a dict (JSON Schema); "
+        f"got {type(schema).__name__}."
+    )
+
+
+def _add_format_instructions(
+    _input: LanguageModelInput, format_instructions: str
+) -> LanguageModelInput:
+    """Append format_instructions as a trailing human message to the LLM input.
+
+    Preserves the container type where meaningful: string in, string out;
+    ChatPromptValue in, ChatPromptValue out; otherwise a list of messages.
+    """
+    fi_message = HumanMessage(content=format_instructions)
+    if isinstance(_input, str):
+        return f"{_input}\n\n{format_instructions}"
+    if isinstance(_input, ChatPromptValue):
+        return ChatPromptValue(messages=[*_input.messages, fi_message])
+    if isinstance(_input, BaseMessage):
+        return [_input, fi_message]
+    if isinstance(_input, Sequence):
+        return [*_input, fi_message]
+    raise TypeError(
+        f"Unsupported LanguageModelInput type: {type(_input).__name__}. "
+        "Expected str, BaseMessage, Sequence[BaseMessage], or ChatPromptValue."
+    )

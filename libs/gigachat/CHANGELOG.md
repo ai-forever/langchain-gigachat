@@ -2,6 +2,13 @@
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- **`with_structured_output(method="format_instructions")` restored**. Useful when `function_calling` truncates long list outputs (tool-call argument budget); the response is returned as plain-text JSON instead, which empirically extracts longer lists more reliably. Schema conformance is still only prompt-enforced, so prefer `function_calling` when strict API-level guarantees are required.
+- **Full format instructions for raw JSON-schema dicts**. Previously passing a dict schema produced the generic `"Return a JSON object."` default; now the schema is rendered into the prompt exactly like a Pydantic schema would be.
+
 ## [0.5.0] — 2026-03-11
 
 Stable release: LangChain Core 1.x, Pydantic V2, multimodal support, and extensive cleanup.

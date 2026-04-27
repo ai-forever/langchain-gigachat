@@ -539,6 +539,32 @@ def test_structured_output_json() -> None:
     assert llm.steps[0].kwargs["tools"][0]["function"] is not None  # type: ignore[attr-defined]
 
 
+def test_structured_output_format_instructions() -> None:
+    llm = GigaChat().with_structured_output(SomeResult, method="format_instructions")
+    assert (
+        llm.steps[0].invoke(input="Hello")  # type: ignore[attr-defined]
+        == 'Hello\n\nThe output should be formatted as a JSON instance that conforms to the JSON schema below.\n\nAs an example, for the schema {"properties": {"foo": {"title": "Foo", "description": "a list of strings", "type": "array", "items": {"type": "string"}}}, "required": ["foo"]}\nthe object {"foo": ["bar", "baz"]} is a well-formatted instance of the schema. The object {"properties": {"foo": ["bar", "baz"]}} is not well-formatted.\n\nHere is the output schema:\n```\n{"description": "My desc", "properties": {"value": {"description": "some value", "title": "Value", "type": "integer"}, "description": {"description": "some descriptin", "title": "Description", "type": "string"}}, "required": ["value", "description"]}\n```'  # noqa: E501
+    )
+
+
+def test_structured_output_format_instructions_dict_schema() -> None:
+    """A raw JSON schema dict should produce full format instructions, not the
+    generic 'Return a JSON object.' default of an unparameterized JsonOutputParser.
+    """
+    schema = SomeResult.model_json_schema()
+    llm = GigaChat().with_structured_output(schema, method="format_instructions")
+    rendered = llm.steps[0].invoke(input="Hello")  # type: ignore[attr-defined]
+    assert rendered.startswith("Hello\n\nThe output should be formatted")
+    assert '"value"' in rendered and '"description"' in rendered
+    assert '"required": ["value", "description"]' in rendered
+    assert "Return a JSON object." not in rendered
+
+
+def test_structured_output_format_instructions_unknown_schema_type() -> None:
+    with pytest.raises(TypeError, match="Pydantic class or a dict"):
+        GigaChat().with_structured_output("not-a-schema", method="format_instructions")  # type: ignore[arg-type]
+
+
 def test_ai_message_json_serialization(patch_gigachat: None) -> None:
     llm = GigaChat()
     response = llm.invoke("hello")
