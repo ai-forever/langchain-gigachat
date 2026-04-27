@@ -168,3 +168,7 @@ cython_debug/
 # ruff
 .ruff_cache/
 .cursor/
+.free-code-logs/
+
+# Local runnable examples/scratch files
+libs/gigachat/examples/

@@ -192,6 +192,14 @@ msg = llm_with_tools.invoke("What's the weather in Tokyo?")
 print(msg.tool_calls)
 ```
 
+To configure function/tool ranking, pass `function_ranker` to `GigaChat`. For
+example, disable ranking when binding tools:
+
+```python
+llm = GigaChat(function_ranker={"enabled": False})
+llm_with_tools = llm.bind_tools([get_weather], tool_choice="auto")
+```
+
 > **Note:** `tool_choice="any"` is not supported by the GigaChat API. Use `"auto"`, `"none"`, or a specific tool name. If upstream code passes `"any"`, set `allow_any_tool_choice_fallback=True` to silently convert it to `"auto"`.
 
 > **Note:** GigaChat API does not support parallel tool calls in a single assistant message. If `AIMessage` contains more than one `tool_calls` entry, a `ValueError` is raised.
@@ -246,7 +254,13 @@ parsed = chain.invoke("What is the capital of France? Rate your confidence.")
 print(parsed)
 ```
 
-JSON mode is also available: `llm.with_structured_output(Answer, method="json_mode")`.
+By default, `with_structured_output()` uses GigaChat function calling for
+backward-compatible schema extraction. Native API-level JSON Schema constraints
+are also available explicitly:
+
+```python
+llm.with_structured_output(Answer, method="json_schema")
+```
 
 ## Attachments
 
@@ -327,6 +341,7 @@ Most commonly used parameters (all are optional):
 | `top_p` | `float` | `None` | Nucleus sampling threshold (0.0–1.0) |
 | `repetition_penalty` | `float` | `None` | Penalty applied to repeated tokens |
 | `reasoning_effort` | `str` | `None` | Reasoning effort for reasoning models |
+| `function_ranker` | `dict` | `None` | Function/tool ranking settings, e.g. `{"enabled": False}` to disable ranking |
 | `credentials` | `str` | `None` | OAuth authorization key |
 | `access_token` | `str` | `None` | Pre-obtained JWT token (bypasses OAuth) |
 | `scope` | `str` | `None` | API scope (`GIGACHAT_API_PERS` / `_B2B` / `_CORP`) |

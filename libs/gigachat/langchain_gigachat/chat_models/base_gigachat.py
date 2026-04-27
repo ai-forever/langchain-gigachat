@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Union
 
 import gigachat.models as gm
 from gigachat._types import FileTypes
@@ -32,6 +32,8 @@ class _BaseGigaChat(_GigaChatClientMixin):
     Reasoning effort for reasoning-capable models (e.g. GigaChat-2-Reasoning).
     When set, the API may return reasoning_content in the assistant message.
     """
+    function_ranker: Optional[Union[Dict[str, Any], gm.FunctionRanker]] = None
+    """Function/tool ranking settings. Use ``{"enabled": False}`` to disable."""
 
     @property
     def _llm_type(self) -> str:
@@ -55,6 +57,7 @@ class _BaseGigaChat(_GigaChatClientMixin):
             "top_p": self.top_p,
             "repetition_penalty": self.repetition_penalty,
             "reasoning_effort": self.reasoning_effort,
+            "function_ranker": self.function_ranker,
         }
 
     def tokens_count(
