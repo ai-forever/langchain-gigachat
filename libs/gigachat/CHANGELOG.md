@@ -4,14 +4,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [0.5.1a1] — Unreleased
 
-### Breaking Changes
-
-- **`gigachat >= 0.2.1, < 0.3`** — required for native `response_format` and function ranker settings.
-
 ### Added
 
 - **Native structured output**: `with_structured_output(method="json_schema")` binds `JsonSchemaResponseFormat` to the chat request. The default remains `method="function_calling"` for backward compatibility.
 - **Function ranker settings**: `GigaChat(function_ranker={"enabled": False})` forwards function/tool ranking settings to the API payload.
+
+### Dependencies
+
+- Bumped minimum `gigachat` SDK to `>=0.2.1,<0.3` to enable the new `response_format` and `FunctionRanker` payload fields. No source-level breaking change — existing call sites continue to work unchanged.
 
 ## [0.5.0] — 2026-03-11
 
