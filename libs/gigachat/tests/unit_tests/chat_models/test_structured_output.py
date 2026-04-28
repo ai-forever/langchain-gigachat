@@ -112,7 +112,8 @@ def test_structured_output_json_schema_invalid_schema(llm: GigaChat) -> None:
 
 
 def test_structured_output_json_mode_pydantic(llm: GigaChat) -> None:
-    chain = llm.with_structured_output(Answer, method="json_mode")
+    with pytest.warns(DeprecationWarning, match="json_mode.*deprecated"):
+        chain = llm.with_structured_output(Answer, method="json_mode")
     assert chain is not None
 
 
@@ -122,7 +123,8 @@ def test_structured_output_json_mode_dict(llm: GigaChat) -> None:
         "type": "object",
         "properties": {"value": {"type": "integer"}},
     }
-    chain = llm.with_structured_output(schema, method="json_mode")
+    with pytest.warns(DeprecationWarning, match="json_mode.*deprecated"):
+        chain = llm.with_structured_output(schema, method="json_mode")
     assert chain is not None
 
 

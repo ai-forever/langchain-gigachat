@@ -824,6 +824,12 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 "or 'json_mode'. "
                 f"Received: {method}"
             )
+        if method == "json_mode":
+            warnings.warn(
+                "method='json_mode' is deprecated; use method='json_schema'.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         strict = kwargs.pop("strict", None)
         if strict is not None and method != "json_schema":
             raise ValueError("`strict` is only supported with method='json_schema'.")
@@ -858,7 +864,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                     )
                 response_format = gm.JsonSchemaResponseFormat(
                     schema=response_format_schema,
-                    strict=True if strict is None else strict,
+                    strict=strict if strict is not None else True,
                 )
                 llm = self.bind(response_format=response_format)
             else:
