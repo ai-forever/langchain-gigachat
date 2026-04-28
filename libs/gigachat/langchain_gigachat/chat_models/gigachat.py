@@ -926,6 +926,13 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 if not formatted_tools:
                     raise ValueError("tool_choice can not be bool if tools are empty")
                 tool_choice = {"name": _get_tool_name(formatted_tools[0])}
+            elif isinstance(tool_choice, dict):
+                pass
+            else:
+                raise ValueError(
+                    f"Unrecognized tool_choice type. Expected str, bool or dict. "
+                    f"Received: {tool_choice}"
+                )
             kwargs["function_call"] = tool_choice
         return super().bind(tools=formatted_tools, **kwargs)
 

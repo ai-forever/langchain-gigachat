@@ -210,3 +210,8 @@ def test_bind_tools_dict_passthrough(llm: GigaChat) -> None:
 def test_bind_tools_none_choice(llm: GigaChat) -> None:
     bound = llm.bind_tools([MyTool], tool_choice="none")
     assert bound.kwargs["function_call"] == "none"  # type: ignore[attr-defined]
+
+
+def test_bind_tools_unrecognized_type(llm: GigaChat) -> None:
+    with pytest.raises(ValueError, match="Unrecognized tool_choice type"):
+        llm.bind_tools([MyTool], tool_choice=42)  # type: ignore[arg-type]
