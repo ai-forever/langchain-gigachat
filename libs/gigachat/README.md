@@ -262,6 +262,15 @@ are also available explicitly:
 llm.with_structured_output(Answer, method="json_schema")
 ```
 
+> **Note:** `method="json_schema"` requires `gigachat>=0.2.1` and a model that
+> supports the `response_format` API field. Support is currently in beta on
+> GigaChat side and may not be available for every model — fall back to the
+> default `method="function_calling"` if the API rejects the request.
+
+The legacy `method="json_mode"` is still accepted for backward compatibility,
+but it emits a `DeprecationWarning` — prefer `method="json_schema"` for new
+code.
+
 ## Attachments
 
 Upload a file via the Files API, then reference it in `content_blocks`:

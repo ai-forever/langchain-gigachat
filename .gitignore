@@ -169,5 +169,3 @@ cython_debug/
 .ruff_cache/
 .cursor/
 
-# Local runnable examples/scratch files
-libs/gigachat/examples/

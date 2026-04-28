@@ -800,8 +800,10 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             **kwargs: Additional options for structured output.
                 Supported keys:
                 - ``method``: ``"function_calling"`` (default),
-                  or ``"json_schema"`` (native API-level JSON Schema
-                  constraint).
+                  ``"json_schema"`` (native API-level JSON Schema
+                  constraint; requires a model that supports
+                  ``response_format``), or ``"json_mode"`` (deprecated,
+                  still accepted for backward compatibility).
                 - ``strict``: best-effort strict schema adherence. Only
                   valid with ``method="json_schema"``. Defaults to ``True``.
 
