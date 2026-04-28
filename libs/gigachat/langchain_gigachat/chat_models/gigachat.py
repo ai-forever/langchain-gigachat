@@ -826,9 +826,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             )
         strict = kwargs.pop("strict", None)
         if strict is not None and method != "json_schema":
-            raise ValueError(
-                "`strict` is only supported with method='json_schema'."
-            )
+            raise ValueError("`strict` is only supported with method='json_schema'.")
         if kwargs:
             raise ValueError(f"Received unsupported arguments {kwargs}")
         output_parser: OutputParserLike
