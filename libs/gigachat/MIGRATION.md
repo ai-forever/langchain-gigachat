@@ -1,14 +1,14 @@
-# Migration Guide: langchain-gigachat 0.3.x → 0.5.1
+# Migration Guide: langchain-gigachat 0.3.x → 0.5.0
 
-This guide covers breaking changes in `langchain-gigachat` 0.5.0 and 0.5.1.
+This guide covers all breaking changes in `langchain-gigachat` 0.5.0 and explains how to update your code.
 
 ## Requirements
 
-| Dependency | Before (0.3.x) | After (0.5.1) |
+| Dependency | Before (0.3.x) | After (0.5.0) |
 |------------|-----------------|---------------|
 | Python | >= 3.9 | **>= 3.10** |
 | `langchain-core` | >= 0.3, < 1 | **>= 1, < 2** |
-| `gigachat` (SDK) | >= 0.1.41 | **>= 0.2.1, < 0.3** |
+| `gigachat` (SDK) | >= 0.1.41 | **>= 0.2.0, < 0.3** |
 
 > LangChain Core 1.x dropped Python 3.9 support. GigaChat SDK 0.2.0 migrated to Pydantic V2.
 
@@ -107,8 +107,9 @@ The `format_instructions` method for structured output has been removed.
 # Before
 chain = llm.with_structured_output(MyModel, method="format_instructions")
 
-# After — use function_calling
+# After — use function_calling (preferred) or json_mode
 chain = llm.with_structured_output(MyModel, method="function_calling")
+chain = llm.with_structured_output(MyModel, method="json_mode")
 ```
 
 **Why:** The `format_instructions` method was a legacy prompt-injection approach with weak schema guarantees. The `function_calling` method provides strict schema extraction via the API. See [issue #40](https://github.com/ai-forever/langchain-gigachat/issues/40).
@@ -145,22 +146,6 @@ The `langchain_gigachat.tools.load_prompt` module has been deleted.
 ---
 
 ## Changed Behaviour
-
-### Native JSON Schema structured output
-
-`with_structured_output()` still defaults to `method="function_calling"` for
-backward compatibility. To use native API-level JSON Schema constraints, pass
-`method="json_schema"` explicitly:
-
-```python
-chain = llm.with_structured_output(MyModel, method="json_schema")
-```
-
-**Why:** `gigachat` SDK 0.2.1 added native `response_format` support for JSON
-Schema. The wrapper exposes it as an opt-in mode without changing existing
-`.with_structured_output()` call sites.
-
----
 
 ### `stop` support removed
 
@@ -250,15 +235,6 @@ These are additive and require no migration, but are worth knowing about.
 llm = GigaChat(model="GigaChat-2-Reasoning", reasoning_effort="medium")
 msg = llm.invoke([HumanMessage(content="Реши задачу...")])
 reasoning = msg.additional_kwargs.get("reasoning_content")
-```
-
-### Function ranker settings
-
-`function_ranker` is forwarded to the chat request payload. To disable
-function/tool ranking for tool calls:
-
-```python
-llm = GigaChat(function_ranker={"enabled": False})
 ```
 
 ### Connection settings
