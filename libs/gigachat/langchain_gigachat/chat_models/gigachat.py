@@ -22,6 +22,7 @@ from typing import (
     Sequence,
     Tuple,
     Type,
+    TypeGuard,
     Union,
 )
 from uuid import uuid4
@@ -412,6 +413,8 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         reasoning_effort: Reasoning effort for reasoning-capable models
             (e.g. GigaChat-2-Reasoning). When set, the API may return
             reasoning_content in the assistant message (see additional_kwargs).
+        function_ranker: Function/tool ranking settings. Pass
+            ``{"enabled": False}`` to disable function ranking for tool calls.
     """
 
     auto_upload_attachments: bool = False
@@ -541,6 +544,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             "max_tokens": self.max_tokens,
             "repetition_penalty": self.repetition_penalty,
             "update_interval": self.update_interval,
+            "function_ranker": self.function_ranker,
             **kwargs,
         }
         if self.reasoning_effort is not None:
@@ -794,12 +798,21 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 If ``True``, return a dict with ``raw``, ``parsed``, and
                 ``parsing_error`` keys.
             **kwargs: Additional options for structured output.
-                Supported key:
-                - ``method``: ``"function_calling"`` (default) or
-                  ``"json_mode"``.
+                Supported keys:
+                - ``method``: ``"function_calling"`` (default),
+                  ``"json_schema"`` (native API-level JSON Schema
+                  constraint; requires a model that supports
+                  ``response_format``), or ``"json_mode"`` (deprecated,
+                  still accepted for backward compatibility).
+                - ``strict``: best-effort strict schema adherence. Only
+                  valid with ``method="json_schema"``. Defaults to ``True``.
 
         Raises:
-            ValueError: If ``method`` is unsupported or unknown kwargs are passed.
+            ValueError: If ``method`` is unsupported, ``strict`` is passed
+                with a method other than ``"json_schema"``, or unknown
+                kwargs are provided.
+            TypeError: If ``method="json_schema"`` and ``schema`` is neither
+                a ``dict`` nor a ``pydantic.BaseModel`` subclass.
 
         Returns:
             Runnable that keeps the same input type as this chat model and
@@ -807,27 +820,32 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             ``include_raw=True``).
         """
         method = kwargs.pop("method", "function_calling")
-        if method not in ("function_calling", "json_mode"):
+        if method not in ("function_calling", "json_schema", "json_mode"):
             raise ValueError(
-                "Unrecognized method. Expected 'function_calling' or 'json_mode'. "
+                "Unrecognized method. Expected 'function_calling', 'json_schema' "
+                "or 'json_mode'. "
                 f"Received: {method}"
             )
+        if method == "json_mode":
+            warnings.warn(
+                "method='json_mode' is deprecated; use method='json_schema'.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        strict = kwargs.pop("strict", None)
+        if strict is not None and method != "json_schema":
+            raise ValueError("`strict` is only supported with method='json_schema'.")
         if kwargs:
             raise ValueError(f"Received unsupported arguments {kwargs}")
-        is_pydantic_schema = _is_pydantic_class(schema)
+        output_parser: OutputParserLike
         if method == "function_calling":
-            if schema is None:
-                raise ValueError(
-                    "schema must be specified when method is 'function_calling'. "
-                    "Received None."
-                )
             func = convert_to_gigachat_tool(schema)["function"]
             key_name = func.get(
                 "name", func.get("title")
             )  # In case of pydantic from JSON (For openai capability)
-            if is_pydantic_schema:
-                output_parser: OutputParserLike = PydanticToolsParser(
-                    tools=[schema],  # type: ignore
+            if _is_pydantic_class(schema):
+                output_parser = PydanticToolsParser(
+                    tools=[schema],
                     first_tool_only=True,
                 )
             else:
@@ -836,12 +854,27 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 )
             llm = self.bind_tools([schema], tool_choice=key_name)
         else:
-            llm = self
-            output_parser = (
-                PydanticOutputParser(pydantic_object=schema)  # type: ignore[arg-type]
-                if is_pydantic_schema
-                else JsonOutputParser()
-            )
+            if method == "json_schema":
+                if _is_pydantic_class(schema):
+                    response_format_schema = schema.model_json_schema()
+                elif isinstance(schema, dict):
+                    response_format_schema = copy.deepcopy(schema)
+                else:
+                    raise TypeError(
+                        "schema must be a dict or a pydantic.BaseModel "
+                        f"subclass; got {type(schema).__name__}"
+                    )
+                response_format = gm.JsonSchemaResponseFormat(
+                    schema=response_format_schema,
+                    strict=strict if strict is not None else True,
+                )
+                llm = self.bind(response_format=response_format)
+            else:
+                llm = self
+            if _is_pydantic_class(schema):
+                output_parser = PydanticOutputParser(pydantic_object=schema)
+            else:
+                output_parser = JsonOutputParser()
 
         if include_raw:
             parser_assign = RunnablePassthrough.assign(
@@ -858,9 +891,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
     @override
     def bind_tools(
         self,
-        tools: Sequence[
-            Union[Dict[str, Any], Type, Type[BaseModel], Callable, BaseTool]
-        ],  #  noqa
+        tools: Sequence[Union[Dict[str, Any], Type, Callable, BaseTool]],
         *,
         tool_choice: Optional[
             Union[dict, str, Literal["auto", "any", "none"], bool]
@@ -908,5 +939,5 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         return super().bind(tools=formatted_tools, **kwargs)
 
 
-def _is_pydantic_class(obj: Any) -> bool:
+def _is_pydantic_class(obj: Any) -> TypeGuard[Type[BaseModel]]:
     return isinstance(obj, type) and is_basemodel_subclass(obj)

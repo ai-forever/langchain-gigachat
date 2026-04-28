@@ -191,11 +191,17 @@ async def test_adelete_file(async_sdk_mock: MagicMock) -> None:
 
 
 def test_identifying_params() -> None:
-    llm = GigaChat(temperature=0.5, model="GigaChat-Pro", max_tokens=100)
+    llm = GigaChat(
+        temperature=0.5,
+        model="GigaChat-Pro",
+        max_tokens=100,
+        function_ranker={"enabled": False},
+    )
     params = llm._identifying_params
     assert params["temperature"] == 0.5
     assert params["model"] == "GigaChat-Pro"
     assert params["max_tokens"] == 100
+    assert params["function_ranker"] == {"enabled": False}
 
 
 def test_llm_type() -> None:

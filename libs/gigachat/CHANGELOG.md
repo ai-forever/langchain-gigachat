@@ -2,6 +2,21 @@
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.1a1] — Unreleased
+
+### Added
+
+- **Native structured output**: `with_structured_output(method="json_schema")` binds `JsonSchemaResponseFormat` to the chat request. Requires a model with `response_format` support (currently in beta). The default remains `method="function_calling"` for backward compatibility.
+- **Function ranker settings**: `GigaChat(function_ranker={"enabled": False})` forwards function/tool ranking settings to the API payload.
+
+### Deprecated
+
+- `with_structured_output(method="json_mode")` now emits a `DeprecationWarning`. The mode still works; prefer `method="json_schema"` for native API-level constraints.
+
+### Dependencies
+
+- Bumped minimum `gigachat` SDK to `>=0.2.1,<0.3` to enable the new `response_format` and `FunctionRanker` payload fields. No source-level breaking change — existing call sites continue to work unchanged.
+
 ## [0.5.0] — 2026-03-11
 
 Stable release: LangChain Core 1.x, Pydantic V2, multimodal support, and extensive cleanup.
@@ -14,7 +29,7 @@ Stable release: LangChain Core 1.x, Pydantic V2, multimodal support, and extensi
 - **Removed `verbose` parameter** — use Python `logging` at `DEBUG` level instead.
 - **Removed `profanity` field** — use `profanity_check` instead.
 - **Removed `predict()` / `apredict()`** (dropped by LangChain 1.x) — use `invoke()` / `ainvoke()`.
-- **Removed `with_structured_output(method="format_instructions")`** — use `method="function_calling"` or `method="json_mode"`.
+- **Removed `with_structured_output(method="format_instructions")`** — use `method="function_calling"`.
 - **Removed `auto_upload_images`** — use `auto_upload_attachments` (covers images, audio, documents).
 - **Removed `GigaChatEmbeddings.one_by_one_mode` and `_debug_delay`** — API handles batching natively.
 - **Removed `output_parsers.gigachat_functions` module** — use `PydanticToolsParser` / `JsonOutputKeyToolsParser` from `langchain_core`.

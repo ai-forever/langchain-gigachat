@@ -385,6 +385,13 @@ def test_gigachat_build_payload_existing_parameter() -> None:
     assert payload.max_tokens == 1
 
 
+def test_gigachat_build_payload_function_ranker() -> None:
+    llm = GigaChat(function_ranker={"enabled": False})
+    payload = llm._build_payload([])
+    assert payload.function_ranker is not None
+    assert payload.function_ranker.enabled is False
+
+
 def test_gigachat_build_payload_non_existing_parameter() -> None:
     llm = GigaChat()
     payload = llm._build_payload([], fake_parameter=1)
@@ -533,10 +540,37 @@ def test_structured_output() -> None:
     }
 
 
-def test_structured_output_json() -> None:
-    llm = GigaChat().with_structured_output(SomeResult.model_json_schema())
+def test_structured_output_function_calling() -> None:
+    llm = GigaChat().with_structured_output(SomeResult, method="function_calling")
     assert llm.steps[0].kwargs["function_call"] == {"name": "SomeResult"}  # type: ignore[attr-defined]
-    assert llm.steps[0].kwargs["tools"][0]["function"] is not None  # type: ignore[attr-defined]
+    assert llm.steps[0].kwargs["tools"][0]["function"] == {  # type: ignore[attr-defined]
+        "name": "SomeResult",
+        "description": "My desc",
+        "parameters": {
+            "properties": {
+                "value": {"description": "some value", "type": "integer"},
+                "description": {"description": "some descriptin", "type": "string"},
+            },
+            "required": ["value", "description"],
+            "type": "object",
+        },
+        "return_parameters": None,
+        "few_shot_examples": [
+            {
+                "request": "request example",
+                "params": {"is_valid": 1, "description": "correct message"},
+            }
+        ],
+    }
+
+
+def test_structured_output_json() -> None:
+    llm = GigaChat().with_structured_output(
+        SomeResult.model_json_schema(), method="json_schema"
+    )
+    response_format = llm.steps[0].kwargs["response_format"]  # type: ignore[attr-defined]
+    assert response_format.type == "json_schema"
+    assert response_format.schema_["properties"]["value"]["type"] == "integer"
 
 
 def test_ai_message_json_serialization(patch_gigachat: None) -> None:
