@@ -898,7 +898,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 ) -> LanguageModelInput:
                     return _add_format_instructions(_input, format_instructions)
 
-                llm = RunnableLambda(_inject_fi) | llm  # type: ignore[assignment]
+                llm = RunnableLambda(_inject_fi) | llm
 
         if include_raw:
             parser_assign = RunnablePassthrough.assign(

@@ -5,6 +5,7 @@ from typing import Any, Dict
 import gigachat.models as gm
 import pytest
 from langchain_core.prompt_values import ChatPromptValue, StringPromptValue
+from langchain_core.runnables import RunnableBinding, RunnableSequence
 from pydantic import BaseModel, Field
 from pytest_mock import MockerFixture
 
@@ -64,10 +65,12 @@ def test_structured_output_strict_with_format_instructions(llm: GigaChat) -> Non
 
 def test_structured_output_function_calling_pydantic_default(llm: GigaChat) -> None:
     chain = llm.with_structured_output(Answer)
-    bound = chain.steps[0]  # type: ignore[attr-defined]
+    assert isinstance(chain, RunnableSequence)
+    bound = chain.steps[0]
+    assert isinstance(bound, RunnableBinding)
 
-    assert bound.kwargs["function_call"] == {"name": "Answer"}  # type: ignore[attr-defined]
-    assert bound.kwargs["tools"][0]["function"]["name"] == "Answer"  # type: ignore[attr-defined]
+    assert bound.kwargs["function_call"] == {"name": "Answer"}
+    assert bound.kwargs["tools"][0]["function"]["name"] == "Answer"
 
 
 # ---------------------------------------------------------------------------
@@ -77,9 +80,11 @@ def test_structured_output_function_calling_pydantic_default(llm: GigaChat) -> N
 
 def test_structured_output_json_schema_explicit(llm: GigaChat) -> None:
     chain = llm.with_structured_output(Answer, method="json_schema", strict=False)
-    bound = chain.steps[0]  # type: ignore[attr-defined]
+    assert isinstance(chain, RunnableSequence)
+    bound = chain.steps[0]
+    assert isinstance(bound, RunnableBinding)
 
-    response_format = bound.kwargs["response_format"]  # type: ignore[attr-defined]
+    response_format = bound.kwargs["response_format"]
     assert isinstance(response_format, gm.JsonSchemaResponseFormat)
     assert response_format.strict is False
 
@@ -91,9 +96,11 @@ def test_structured_output_json_schema_dict(llm: GigaChat) -> None:
         "properties": {"value": {"type": "integer"}},
     }
     chain = llm.with_structured_output(schema, method="json_schema")
-    bound = chain.steps[0]  # type: ignore[attr-defined]
+    assert isinstance(chain, RunnableSequence)
+    bound = chain.steps[0]
+    assert isinstance(bound, RunnableBinding)
 
-    response_format = bound.kwargs["response_format"]  # type: ignore[attr-defined]
+    response_format = bound.kwargs["response_format"]
     assert isinstance(response_format, gm.JsonSchemaResponseFormat)
     assert response_format.schema_["properties"]["value"]["type"] == "integer"
 
@@ -144,7 +151,8 @@ def test_structured_output_json_mode_dict(llm: GigaChat) -> None:
 
 def test_structured_output_format_instructions_pydantic(llm: GigaChat) -> None:
     chain = llm.with_structured_output(Answer, method="format_instructions")
-    rendered = chain.steps[0].invoke(input="Hello")  # type: ignore[attr-defined]
+    assert isinstance(chain, RunnableSequence)
+    rendered = chain.steps[0].invoke(input="Hello")
 
     assert rendered.startswith("Hello\n\nSTRICT OUTPUT FORMAT:")
     assert "The output should be formatted as a JSON instance" in rendered
@@ -155,7 +163,8 @@ def test_structured_output_format_instructions_pydantic(llm: GigaChat) -> None:
 def test_structured_output_format_instructions_dict_schema(llm: GigaChat) -> None:
     schema = Answer.model_json_schema()
     chain = llm.with_structured_output(schema, method="format_instructions")
-    rendered = chain.steps[0].invoke(input="Hello")  # type: ignore[attr-defined]
+    assert isinstance(chain, RunnableSequence)
+    rendered = chain.steps[0].invoke(input="Hello")
 
     assert rendered.startswith("Hello\n\nSTRICT OUTPUT FORMAT:")
     assert "The output should be formatted as a JSON instance" in rendered
@@ -165,9 +174,8 @@ def test_structured_output_format_instructions_dict_schema(llm: GigaChat) -> Non
 
 def test_structured_output_format_instructions_prompt_value(llm: GigaChat) -> None:
     chain = llm.with_structured_output(Answer, method="format_instructions")
-    rendered = chain.steps[0].invoke(  # type: ignore[attr-defined]
-        input=StringPromptValue(text="Hello")
-    )
+    assert isinstance(chain, RunnableSequence)
+    rendered = chain.steps[0].invoke(input=StringPromptValue(text="Hello"))
 
     assert isinstance(rendered, ChatPromptValue)
     assert rendered.messages[0].content == "Hello"
