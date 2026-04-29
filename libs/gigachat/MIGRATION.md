@@ -99,20 +99,6 @@ llm = GigaChat(auto_upload_attachments=True)
 
 ---
 
-### `with_structured_output(method="format_instructions")`
-
-**Removed in 0.5.0, restored in a later release.** `method="format_instructions"` was initially dropped because `function_calling` is the preferred structured-output path (strict, API-level schema enforcement via tool calls). It was restored after production usage showed that on long list extractions `function_calling` can truncate output inside tool-call arguments, while the plain-text JSON response produced by `format_instructions` extracts such lists more reliably.
-
-Usage is unchanged:
-
-```python
-chain = llm.with_structured_output(MyModel, method="format_instructions")
-```
-
-Prefer `function_calling` when strict API-level schema guarantees are required.
-
----
-
 ### `output_parsers` module
 
 The entire `langchain_gigachat.output_parsers` module has been deleted, including:

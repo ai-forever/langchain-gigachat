@@ -67,7 +67,7 @@ from langchain_core.output_parsers.format_instructions import (
     JSON_FORMAT_INSTRUCTIONS,
 )
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
-from langchain_core.prompt_values import ChatPromptValue
+from langchain_core.prompt_values import ChatPromptValue, PromptValue
 from langchain_core.runnables import (
     Runnable,
     RunnableLambda,
@@ -813,10 +813,11 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                   constraint; requires a model that supports
                   ``response_format``), ``"json_mode"`` (deprecated,
                   still accepted for backward compatibility), or
-                  ``"format_instructions"`` (schema description injected into
-                  the prompt, response parsed as plain-text JSON; bypasses
-                  tool-call argument limits, useful for long list extraction,
-                  but schema conformance is only prompt-enforced).
+                  ``"format_instructions"`` (legacy prompt-based fallback:
+                  schema description is injected into the prompt and the
+                  plain-text response is parsed as JSON. Prefer
+                  ``"json_schema"`` or ``"function_calling"`` when API-level
+                  schema guarantees are required).
                 - ``strict``: best-effort strict schema adherence. Only
                   valid with ``method="json_schema"``. Defaults to ``True``.
 
@@ -999,18 +1000,20 @@ def _add_format_instructions(
     """Append format_instructions as a trailing human message to the LLM input.
 
     Preserves the container type where meaningful: string in, string out;
-    ChatPromptValue in, ChatPromptValue out; otherwise a list of messages.
+    PromptValue in, ChatPromptValue out; otherwise a list of messages.
     """
     fi_message = HumanMessage(content=format_instructions)
     if isinstance(_input, str):
         return f"{_input}\n\n{format_instructions}"
     if isinstance(_input, ChatPromptValue):
         return ChatPromptValue(messages=[*_input.messages, fi_message])
+    if isinstance(_input, PromptValue):
+        return ChatPromptValue(messages=[*_input.to_messages(), fi_message])
     if isinstance(_input, BaseMessage):
         return [_input, fi_message]
     if isinstance(_input, Sequence):
         return [*_input, fi_message]
     raise TypeError(
         f"Unsupported LanguageModelInput type: {type(_input).__name__}. "
-        "Expected str, BaseMessage, Sequence[BaseMessage], or ChatPromptValue."
+        "Expected str, BaseMessage, Sequence[BaseMessage], or PromptValue."
     )

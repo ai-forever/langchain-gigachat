@@ -4,6 +4,7 @@ from typing import Any, Dict
 
 import gigachat.models as gm
 import pytest
+from langchain_core.prompt_values import ChatPromptValue, StringPromptValue
 from pydantic import BaseModel, Field
 from pytest_mock import MockerFixture
 
@@ -160,6 +161,17 @@ def test_structured_output_format_instructions_dict_schema(llm: GigaChat) -> Non
     assert "The output should be formatted as a JSON instance" in rendered
     assert '"value"' in rendered
     assert "Return a JSON object." not in rendered
+
+
+def test_structured_output_format_instructions_prompt_value(llm: GigaChat) -> None:
+    chain = llm.with_structured_output(Answer, method="format_instructions")
+    rendered = chain.steps[0].invoke(  # type: ignore[attr-defined]
+        input=StringPromptValue(text="Hello")
+    )
+
+    assert isinstance(rendered, ChatPromptValue)
+    assert rendered.messages[0].content == "Hello"
+    assert "STRICT OUTPUT FORMAT:" in str(rendered.messages[-1].content)
 
 
 def test_structured_output_format_instructions_unknown_schema_type(

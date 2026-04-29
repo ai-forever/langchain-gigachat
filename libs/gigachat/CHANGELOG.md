@@ -7,8 +7,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 - **Native structured output**: `with_structured_output(method="json_schema")` binds `JsonSchemaResponseFormat` to the chat request. Requires a model with `response_format` support (currently in beta). The default remains `method="function_calling"` for backward compatibility.
-- **`with_structured_output(method="format_instructions")` restored**. Useful when `function_calling` truncates long list outputs (tool-call argument budget); the response is returned as plain-text JSON instead, which empirically extracts longer lists more reliably. Schema conformance is still only prompt-enforced, so prefer `function_calling` when strict API-level guarantees are required.
-- **Full format instructions for raw JSON-schema dicts**. Previously passing a dict schema produced the generic `"Return a JSON object."` default; now the schema is rendered into the prompt exactly like a Pydantic schema would be.
 - **Function ranker settings**: `GigaChat(function_ranker={"enabled": False})` forwards function/tool ranking settings to the API payload.
 
 ### Deprecated
