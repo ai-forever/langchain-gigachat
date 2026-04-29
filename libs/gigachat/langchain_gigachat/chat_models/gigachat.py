@@ -62,6 +62,9 @@ from langchain_core.output_parsers import (
     PydanticToolsParser,
 )
 from langchain_core.output_parsers.base import OutputParserLike
+from langchain_core.output_parsers.format_instructions import (
+    JSON_FORMAT_INSTRUCTIONS,
+)
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 from langchain_core.prompt_values import ChatPromptValue
 from langchain_core.runnables import (
@@ -934,36 +937,26 @@ def _is_pydantic_class(obj: Any) -> bool:
     return isinstance(obj, type) and is_basemodel_subclass(obj)
 
 
-# Template for prompt-based structured output. Matches the shape emitted by
-# PydanticOutputParser.get_format_instructions() so behavior is consistent
-# across Pydantic and raw JSON-schema inputs.
-_FORMAT_INSTRUCTIONS_TEMPLATE = (
-    "The output should be formatted as a JSON instance that conforms to the "
-    "JSON schema below.\n\n"
-    'As an example, for the schema {{"properties": {{"foo": {{"title": "Foo", '
-    '"description": "a list of strings", "type": "array", "items": {{"type": '
-    '"string"}}}}}}, "required": ["foo"]}}\nthe object {{"foo": ["bar", "baz"]}} '
-    'is a well-formatted instance of the schema. The object {{"properties": '
-    '{{"foo": ["bar", "baz"]}}}} is not well-formatted.\n\n'
-    "Here is the output schema:\n```\n{schema}\n```"
-)
-
-
 def _format_instructions_for_schema(schema: Dict[str, Any] | type) -> str:
-    """Build format instructions for Pydantic or raw JSON-schema input."""
+    """Build format instructions for Pydantic or raw JSON-schema input.
+
+    Both branches funnel through the public ``JSON_FORMAT_INSTRUCTIONS``
+    template from langchain-core, so the prompt is identical for Pydantic
+    classes and raw JSON-schema dicts.
+    """
     if _is_pydantic_class(schema):
-        return PydanticOutputParser(
-            pydantic_object=schema  # type: ignore[arg-type]
-        ).get_format_instructions()
-    if isinstance(schema, dict):
-        # Match PydanticOutputParser: drop top-level "title" and "type" for brevity.
-        reduced = {k: v for k, v in schema.items() if k not in ("title", "type")}
-        return _FORMAT_INSTRUCTIONS_TEMPLATE.format(
-            schema=json.dumps(reduced, ensure_ascii=False)
+        json_schema = schema.model_json_schema()  # type: ignore[union-attr]
+    elif isinstance(schema, dict):
+        json_schema = schema
+    else:
+        raise TypeError(
+            "schema must be a Pydantic class or a dict (JSON Schema); "
+            f"got {type(schema).__name__}."
         )
-    raise TypeError(
-        "schema must be a Pydantic class or a dict (JSON Schema); "
-        f"got {type(schema).__name__}."
+    # Drop top-level "title" and "type" for brevity, matching PydanticOutputParser.
+    reduced = {k: v for k, v in json_schema.items() if k not in ("title", "type")}
+    return JSON_FORMAT_INSTRUCTIONS.format(
+        schema=json.dumps(reduced, ensure_ascii=False)
     )
 
 

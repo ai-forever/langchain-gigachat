@@ -543,7 +543,7 @@ def test_structured_output_format_instructions() -> None:
     llm = GigaChat().with_structured_output(SomeResult, method="format_instructions")
     assert (
         llm.steps[0].invoke(input="Hello")  # type: ignore[attr-defined]
-        == 'Hello\n\nThe output should be formatted as a JSON instance that conforms to the JSON schema below.\n\nAs an example, for the schema {"properties": {"foo": {"title": "Foo", "description": "a list of strings", "type": "array", "items": {"type": "string"}}}, "required": ["foo"]}\nthe object {"foo": ["bar", "baz"]} is a well-formatted instance of the schema. The object {"properties": {"foo": ["bar", "baz"]}} is not well-formatted.\n\nHere is the output schema:\n```\n{"description": "My desc", "properties": {"value": {"description": "some value", "title": "Value", "type": "integer"}, "description": {"description": "some descriptin", "title": "Description", "type": "string"}}, "required": ["value", "description"]}\n```'  # noqa: E501
+        == 'Hello\n\nSTRICT OUTPUT FORMAT:\n- Return only the JSON value that conforms to the schema. Do not include any additional text, explanations, headings, or separators.\n- Do not wrap the JSON in Markdown or code fences (no ``` or ```json).\n- Do not prepend or append any text (e.g., do not write "Here is the JSON:").\n- The response must be a single top-level JSON value exactly as required by the schema (object/array/etc.), with no trailing commas or comments.\n\nThe output should be formatted as a JSON instance that conforms to the JSON schema below.\n\nAs an example, for the schema {"properties": {"foo": {"title": "Foo", "description": "a list of strings", "type": "array", "items": {"type": "string"}}}, "required": ["foo"]} the object {"foo": ["bar", "baz"]} is a well-formatted instance of the schema. The object {"properties": {"foo": ["bar", "baz"]}} is not well-formatted.\n\nHere is the output schema (shown in a code block for readability only — do not include any backticks or Markdown in your output):\n```\n{"description": "My desc", "properties": {"value": {"description": "some value", "title": "Value", "type": "integer"}, "description": {"description": "some descriptin", "title": "Description", "type": "string"}}, "required": ["value", "description"]}\n```'  # noqa: E501
     )
 
 
@@ -554,7 +554,8 @@ def test_structured_output_format_instructions_dict_schema() -> None:
     schema = SomeResult.model_json_schema()
     llm = GigaChat().with_structured_output(schema, method="format_instructions")
     rendered = llm.steps[0].invoke(input="Hello")  # type: ignore[attr-defined]
-    assert rendered.startswith("Hello\n\nThe output should be formatted")
+    assert rendered.startswith("Hello\n\nSTRICT OUTPUT FORMAT:")
+    assert "The output should be formatted as a JSON instance" in rendered
     assert '"value"' in rendered and '"description"' in rendered
     assert '"required": ["value", "description"]' in rendered
     assert "Return a JSON object." not in rendered
