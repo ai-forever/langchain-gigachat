@@ -4,6 +4,8 @@ from typing import Any, Dict
 
 import gigachat.models as gm
 import pytest
+from langchain_core.prompt_values import ChatPromptValue, StringPromptValue
+from langchain_core.runnables import RunnableBinding, RunnableSequence
 from pydantic import BaseModel, Field
 from pytest_mock import MockerFixture
 
@@ -30,7 +32,7 @@ def llm(mocker: MockerFixture) -> GigaChat:
 def test_structured_output_invalid_method(llm: GigaChat) -> None:
     with pytest.raises(
         ValueError,
-        match="Expected 'function_calling', 'json_schema' or 'json_mode'",
+        match="'format_instructions'",
     ):
         llm.with_structured_output(Answer, method="bad_method")
 
@@ -48,6 +50,14 @@ def test_structured_output_strict_with_wrong_method(llm: GigaChat) -> None:
         llm.with_structured_output(Answer, method="function_calling", strict=True)
 
 
+def test_structured_output_strict_with_format_instructions(llm: GigaChat) -> None:
+    with pytest.raises(
+        ValueError,
+        match="`strict` is only supported with method='json_schema'",
+    ):
+        llm.with_structured_output(Answer, method="format_instructions", strict=True)
+
+
 # ---------------------------------------------------------------------------
 # with_structured_output — function_calling (default)
 # ---------------------------------------------------------------------------
@@ -55,10 +65,12 @@ def test_structured_output_strict_with_wrong_method(llm: GigaChat) -> None:
 
 def test_structured_output_function_calling_pydantic_default(llm: GigaChat) -> None:
     chain = llm.with_structured_output(Answer)
-    bound = chain.steps[0]  # type: ignore[attr-defined]
+    assert isinstance(chain, RunnableSequence)
+    bound = chain.steps[0]
+    assert isinstance(bound, RunnableBinding)
 
-    assert bound.kwargs["function_call"] == {"name": "Answer"}  # type: ignore[attr-defined]
-    assert bound.kwargs["tools"][0]["function"]["name"] == "Answer"  # type: ignore[attr-defined]
+    assert bound.kwargs["function_call"] == {"name": "Answer"}
+    assert bound.kwargs["tools"][0]["function"]["name"] == "Answer"
 
 
 # ---------------------------------------------------------------------------
@@ -68,9 +80,11 @@ def test_structured_output_function_calling_pydantic_default(llm: GigaChat) -> N
 
 def test_structured_output_json_schema_explicit(llm: GigaChat) -> None:
     chain = llm.with_structured_output(Answer, method="json_schema", strict=False)
-    bound = chain.steps[0]  # type: ignore[attr-defined]
+    assert isinstance(chain, RunnableSequence)
+    bound = chain.steps[0]
+    assert isinstance(bound, RunnableBinding)
 
-    response_format = bound.kwargs["response_format"]  # type: ignore[attr-defined]
+    response_format = bound.kwargs["response_format"]
     assert isinstance(response_format, gm.JsonSchemaResponseFormat)
     assert response_format.strict is False
 
@@ -82,9 +96,11 @@ def test_structured_output_json_schema_dict(llm: GigaChat) -> None:
         "properties": {"value": {"type": "integer"}},
     }
     chain = llm.with_structured_output(schema, method="json_schema")
-    bound = chain.steps[0]  # type: ignore[attr-defined]
+    assert isinstance(chain, RunnableSequence)
+    bound = chain.steps[0]
+    assert isinstance(bound, RunnableBinding)
 
-    response_format = bound.kwargs["response_format"]  # type: ignore[attr-defined]
+    response_format = bound.kwargs["response_format"]
     assert isinstance(response_format, gm.JsonSchemaResponseFormat)
     assert response_format.schema_["properties"]["value"]["type"] == "integer"
 
@@ -126,6 +142,52 @@ def test_structured_output_json_mode_dict(llm: GigaChat) -> None:
     with pytest.warns(DeprecationWarning, match="json_mode.*deprecated"):
         chain = llm.with_structured_output(schema, method="json_mode")
     assert chain is not None
+
+
+# ---------------------------------------------------------------------------
+# with_structured_output — format_instructions (prompt-based legacy)
+# ---------------------------------------------------------------------------
+
+
+def test_structured_output_format_instructions_pydantic(llm: GigaChat) -> None:
+    chain = llm.with_structured_output(Answer, method="format_instructions")
+    assert isinstance(chain, RunnableSequence)
+    rendered = chain.steps[0].invoke(input="Hello")
+
+    assert rendered.startswith("Hello\n\nSTRICT OUTPUT FORMAT:")
+    assert "The output should be formatted as a JSON instance" in rendered
+    assert '"value"' in rendered
+    assert "Return a JSON object." not in rendered
+
+
+def test_structured_output_format_instructions_dict_schema(llm: GigaChat) -> None:
+    schema = Answer.model_json_schema()
+    chain = llm.with_structured_output(schema, method="format_instructions")
+    assert isinstance(chain, RunnableSequence)
+    rendered = chain.steps[0].invoke(input="Hello")
+
+    assert rendered.startswith("Hello\n\nSTRICT OUTPUT FORMAT:")
+    assert "The output should be formatted as a JSON instance" in rendered
+    assert '"value"' in rendered
+    assert "Return a JSON object." not in rendered
+
+
+def test_structured_output_format_instructions_prompt_value(llm: GigaChat) -> None:
+    chain = llm.with_structured_output(Answer, method="format_instructions")
+    assert isinstance(chain, RunnableSequence)
+    rendered = chain.steps[0].invoke(input=StringPromptValue(text="Hello"))
+
+    assert isinstance(rendered, ChatPromptValue)
+    assert rendered.messages[0].content == "Hello"
+    assert "STRICT OUTPUT FORMAT:" in str(rendered.messages[-1].content)
+
+
+def test_structured_output_format_instructions_unknown_schema_type(
+    llm: GigaChat,
+) -> None:
+    bad_schema: Any = "not-a-schema"
+    with pytest.raises(TypeError, match="Pydantic class or a dict"):
+        llm.with_structured_output(bad_schema, method="format_instructions")
 
 
 # ---------------------------------------------------------------------------

@@ -99,23 +99,6 @@ llm = GigaChat(auto_upload_attachments=True)
 
 ---
 
-### `with_structured_output(method="format_instructions")`
-
-The `format_instructions` method for structured output has been removed.
-
-```python
-# Before
-chain = llm.with_structured_output(MyModel, method="format_instructions")
-
-# After — use function_calling (preferred) or json_mode
-chain = llm.with_structured_output(MyModel, method="function_calling")
-chain = llm.with_structured_output(MyModel, method="json_mode")
-```
-
-**Why:** The `format_instructions` method was a legacy prompt-injection approach with weak schema guarantees. The `function_calling` method provides strict schema extraction via the API. See [issue #40](https://github.com/ai-forever/langchain-gigachat/issues/40).
-
----
-
 ### `output_parsers` module
 
 The entire `langchain_gigachat.output_parsers` module has been deleted, including:
