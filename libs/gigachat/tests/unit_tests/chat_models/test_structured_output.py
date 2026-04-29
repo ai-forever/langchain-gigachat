@@ -2,6 +2,7 @@
 
 from typing import Any, Dict
 
+import gigachat.models as gm
 import pytest
 from pydantic import BaseModel, Field
 from pytest_mock import MockerFixture
@@ -27,7 +28,10 @@ def llm(mocker: MockerFixture) -> GigaChat:
 
 
 def test_structured_output_invalid_method(llm: GigaChat) -> None:
-    with pytest.raises(ValueError, match="Unrecognized method"):
+    with pytest.raises(
+        ValueError,
+        match="'format_instructions'",
+    ):
         llm.with_structured_output(Answer, method="bad_method")
 
 
@@ -36,13 +40,88 @@ def test_structured_output_extra_kwargs(llm: GigaChat) -> None:
         llm.with_structured_output(Answer, unknown_key=True)
 
 
+def test_structured_output_strict_with_wrong_method(llm: GigaChat) -> None:
+    with pytest.raises(
+        ValueError,
+        match="`strict` is only supported with method='json_schema'",
+    ):
+        llm.with_structured_output(Answer, method="function_calling", strict=True)
+
+
+def test_structured_output_strict_with_format_instructions(llm: GigaChat) -> None:
+    with pytest.raises(
+        ValueError,
+        match="`strict` is only supported with method='json_schema'",
+    ):
+        llm.with_structured_output(Answer, method="format_instructions", strict=True)
+
+
 # ---------------------------------------------------------------------------
-# with_structured_output — json_mode (Pydantic)
+# with_structured_output — function_calling (default)
+# ---------------------------------------------------------------------------
+
+
+def test_structured_output_function_calling_pydantic_default(llm: GigaChat) -> None:
+    chain = llm.with_structured_output(Answer)
+    bound = chain.steps[0]  # type: ignore[attr-defined]
+
+    assert bound.kwargs["function_call"] == {"name": "Answer"}  # type: ignore[attr-defined]
+    assert bound.kwargs["tools"][0]["function"]["name"] == "Answer"  # type: ignore[attr-defined]
+
+
+# ---------------------------------------------------------------------------
+# with_structured_output — json_schema (native API, explicit)
+# ---------------------------------------------------------------------------
+
+
+def test_structured_output_json_schema_explicit(llm: GigaChat) -> None:
+    chain = llm.with_structured_output(Answer, method="json_schema", strict=False)
+    bound = chain.steps[0]  # type: ignore[attr-defined]
+
+    response_format = bound.kwargs["response_format"]  # type: ignore[attr-defined]
+    assert isinstance(response_format, gm.JsonSchemaResponseFormat)
+    assert response_format.strict is False
+
+
+def test_structured_output_json_schema_dict(llm: GigaChat) -> None:
+    schema: Dict[str, Any] = {
+        "title": "Answer",
+        "type": "object",
+        "properties": {"value": {"type": "integer"}},
+    }
+    chain = llm.with_structured_output(schema, method="json_schema")
+    bound = chain.steps[0]  # type: ignore[attr-defined]
+
+    response_format = bound.kwargs["response_format"]  # type: ignore[attr-defined]
+    assert isinstance(response_format, gm.JsonSchemaResponseFormat)
+    assert response_format.schema_["properties"]["value"]["type"] == "integer"
+
+
+def test_structured_output_json_schema_include_raw(llm: GigaChat) -> None:
+    chain = llm.with_structured_output(
+        Answer,
+        method="json_schema",
+        include_raw=True,
+    )
+    assert chain is not None
+
+
+def test_structured_output_json_schema_invalid_schema(llm: GigaChat) -> None:
+    class NotAModel:
+        pass
+
+    with pytest.raises(TypeError, match="dict or a pydantic.BaseModel"):
+        llm.with_structured_output(NotAModel, method="json_schema")
+
+
+# ---------------------------------------------------------------------------
+# with_structured_output — json_mode (deprecated legacy)
 # ---------------------------------------------------------------------------
 
 
 def test_structured_output_json_mode_pydantic(llm: GigaChat) -> None:
-    chain = llm.with_structured_output(Answer, method="json_mode")
+    with pytest.warns(DeprecationWarning, match="json_mode.*deprecated"):
+        chain = llm.with_structured_output(Answer, method="json_mode")
     assert chain is not None
 
 
@@ -52,8 +131,43 @@ def test_structured_output_json_mode_dict(llm: GigaChat) -> None:
         "type": "object",
         "properties": {"value": {"type": "integer"}},
     }
-    chain = llm.with_structured_output(schema, method="json_mode")
+    with pytest.warns(DeprecationWarning, match="json_mode.*deprecated"):
+        chain = llm.with_structured_output(schema, method="json_mode")
     assert chain is not None
+
+
+# ---------------------------------------------------------------------------
+# with_structured_output — format_instructions (prompt-based legacy)
+# ---------------------------------------------------------------------------
+
+
+def test_structured_output_format_instructions_pydantic(llm: GigaChat) -> None:
+    chain = llm.with_structured_output(Answer, method="format_instructions")
+    rendered = chain.steps[0].invoke(input="Hello")  # type: ignore[attr-defined]
+
+    assert rendered.startswith("Hello\n\nSTRICT OUTPUT FORMAT:")
+    assert "The output should be formatted as a JSON instance" in rendered
+    assert '"value"' in rendered
+    assert "Return a JSON object." not in rendered
+
+
+def test_structured_output_format_instructions_dict_schema(llm: GigaChat) -> None:
+    schema = Answer.model_json_schema()
+    chain = llm.with_structured_output(schema, method="format_instructions")
+    rendered = chain.steps[0].invoke(input="Hello")  # type: ignore[attr-defined]
+
+    assert rendered.startswith("Hello\n\nSTRICT OUTPUT FORMAT:")
+    assert "The output should be formatted as a JSON instance" in rendered
+    assert '"value"' in rendered
+    assert "Return a JSON object." not in rendered
+
+
+def test_structured_output_format_instructions_unknown_schema_type(
+    llm: GigaChat,
+) -> None:
+    bad_schema: Any = "not-a-schema"
+    with pytest.raises(TypeError, match="Pydantic class or a dict"):
+        llm.with_structured_output(bad_schema, method="format_instructions")
 
 
 # ---------------------------------------------------------------------------
@@ -61,20 +175,23 @@ def test_structured_output_json_mode_dict(llm: GigaChat) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_structured_output_include_raw(llm: GigaChat) -> None:
-    chain = llm.with_structured_output(Answer, include_raw=True)
+def test_structured_output_function_calling_include_raw(llm: GigaChat) -> None:
+    chain = llm.with_structured_output(
+        Answer,
+        method="function_calling",
+        include_raw=True,
+    )
     assert chain is not None
 
 
-def test_structured_output_include_raw_dict(llm: GigaChat) -> None:
+def test_structured_output_function_calling_include_raw_dict(llm: GigaChat) -> None:
     schema = Answer.model_json_schema()
-    chain = llm.with_structured_output(schema, include_raw=True)
+    chain = llm.with_structured_output(
+        schema,
+        method="function_calling",
+        include_raw=True,
+    )
     assert chain is not None
-
-
-def test_structured_output_function_calling_none_schema(llm: GigaChat) -> None:
-    with pytest.raises(ValueError, match="schema must be specified"):
-        llm.with_structured_output(None, method="function_calling")  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------

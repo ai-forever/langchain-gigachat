@@ -385,6 +385,13 @@ def test_gigachat_build_payload_existing_parameter() -> None:
     assert payload.max_tokens == 1
 
 
+def test_gigachat_build_payload_function_ranker() -> None:
+    llm = GigaChat(function_ranker={"enabled": False})
+    payload = llm._build_payload([])
+    assert payload.function_ranker is not None
+    assert payload.function_ranker.enabled is False
+
+
 def test_gigachat_build_payload_non_existing_parameter() -> None:
     llm = GigaChat()
     payload = llm._build_payload([], fake_parameter=1)
@@ -533,37 +540,37 @@ def test_structured_output() -> None:
     }
 
 
-def test_structured_output_json() -> None:
-    llm = GigaChat().with_structured_output(SomeResult.model_json_schema())
+def test_structured_output_function_calling() -> None:
+    llm = GigaChat().with_structured_output(SomeResult, method="function_calling")
     assert llm.steps[0].kwargs["function_call"] == {"name": "SomeResult"}  # type: ignore[attr-defined]
-    assert llm.steps[0].kwargs["tools"][0]["function"] is not None  # type: ignore[attr-defined]
+    assert llm.steps[0].kwargs["tools"][0]["function"] == {  # type: ignore[attr-defined]
+        "name": "SomeResult",
+        "description": "My desc",
+        "parameters": {
+            "properties": {
+                "value": {"description": "some value", "type": "integer"},
+                "description": {"description": "some descriptin", "type": "string"},
+            },
+            "required": ["value", "description"],
+            "type": "object",
+        },
+        "return_parameters": None,
+        "few_shot_examples": [
+            {
+                "request": "request example",
+                "params": {"is_valid": 1, "description": "correct message"},
+            }
+        ],
+    }
 
 
-def test_structured_output_format_instructions() -> None:
-    llm = GigaChat().with_structured_output(SomeResult, method="format_instructions")
-    assert (
-        llm.steps[0].invoke(input="Hello")  # type: ignore[attr-defined]
-        == 'Hello\n\nSTRICT OUTPUT FORMAT:\n- Return only the JSON value that conforms to the schema. Do not include any additional text, explanations, headings, or separators.\n- Do not wrap the JSON in Markdown or code fences (no ``` or ```json).\n- Do not prepend or append any text (e.g., do not write "Here is the JSON:").\n- The response must be a single top-level JSON value exactly as required by the schema (object/array/etc.), with no trailing commas or comments.\n\nThe output should be formatted as a JSON instance that conforms to the JSON schema below.\n\nAs an example, for the schema {"properties": {"foo": {"title": "Foo", "description": "a list of strings", "type": "array", "items": {"type": "string"}}}, "required": ["foo"]} the object {"foo": ["bar", "baz"]} is a well-formatted instance of the schema. The object {"properties": {"foo": ["bar", "baz"]}} is not well-formatted.\n\nHere is the output schema (shown in a code block for readability only — do not include any backticks or Markdown in your output):\n```\n{"description": "My desc", "properties": {"value": {"description": "some value", "title": "Value", "type": "integer"}, "description": {"description": "some descriptin", "title": "Description", "type": "string"}}, "required": ["value", "description"]}\n```'  # noqa: E501
+def test_structured_output_json() -> None:
+    llm = GigaChat().with_structured_output(
+        SomeResult.model_json_schema(), method="json_schema"
     )
-
-
-def test_structured_output_format_instructions_dict_schema() -> None:
-    """A raw JSON schema dict should produce full format instructions, not the
-    generic 'Return a JSON object.' default of an unparameterized JsonOutputParser.
-    """
-    schema = SomeResult.model_json_schema()
-    llm = GigaChat().with_structured_output(schema, method="format_instructions")
-    rendered = llm.steps[0].invoke(input="Hello")  # type: ignore[attr-defined]
-    assert rendered.startswith("Hello\n\nSTRICT OUTPUT FORMAT:")
-    assert "The output should be formatted as a JSON instance" in rendered
-    assert '"value"' in rendered and '"description"' in rendered
-    assert '"required": ["value", "description"]' in rendered
-    assert "Return a JSON object." not in rendered
-
-
-def test_structured_output_format_instructions_unknown_schema_type() -> None:
-    with pytest.raises(TypeError, match="Pydantic class or a dict"):
-        GigaChat().with_structured_output("not-a-schema", method="format_instructions")  # type: ignore[arg-type]
+    response_format = llm.steps[0].kwargs["response_format"]  # type: ignore[attr-defined]
+    assert response_format.type == "json_schema"
+    assert response_format.schema_["properties"]["value"]["type"] == "integer"
 
 
 def test_ai_message_json_serialization(patch_gigachat: None) -> None:
