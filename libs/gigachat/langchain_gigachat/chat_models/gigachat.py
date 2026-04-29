@@ -813,11 +813,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                   constraint; requires a model that supports
                   ``response_format``), ``"json_mode"`` (deprecated,
                   still accepted for backward compatibility), or
-                  ``"format_instructions"`` (legacy prompt-based fallback:
-                  schema description is injected into the prompt and the
-                  plain-text response is parsed as JSON. Prefer
-                  ``"json_schema"`` or ``"function_calling"`` when API-level
-                  schema guarantees are required).
+                  ``"format_instructions"`` (legacy).
                 - ``strict``: best-effort strict schema adherence. Only
                   valid with ``method="json_schema"``. Defaults to ``True``.
 
@@ -979,7 +975,7 @@ def _format_instructions_for_schema(schema: Dict[str, Any] | type) -> str:
     classes and raw JSON-schema dicts.
     """
     if _is_pydantic_class(schema):
-        json_schema = schema.model_json_schema()  # type: ignore[union-attr]
+        json_schema = schema.model_json_schema()
     elif isinstance(schema, dict):
         json_schema = schema
     else:
