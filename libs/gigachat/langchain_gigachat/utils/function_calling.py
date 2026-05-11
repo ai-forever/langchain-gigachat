@@ -45,12 +45,58 @@ class IncorrectSchemaException(Exception):
     pass
 
 
+# Scalar type widening hierarchy: each type subsumes the ones before it.
+# When collapsing anyOf with multiple scalar types, we pick the widest.
+_SCALAR_WIDTH: Dict[str, int] = {
+    "boolean": 0,
+    "integer": 1,
+    "number": 2,
+    "string": 3,
+}
+
+
+def _collapse_anyof(variants: List[Any]) -> Any:
+    """Collapse multiple anyOf variants into a single schema.
+
+    Strategy:
+    - All scalars → widen to the most permissive type
+    - Single variant → use as-is
+    - Otherwise → raise IncorrectSchemaException
+    """
+    non_null = [el for el in variants if el != {"type": "null"}]
+    if not non_null:
+        return {"type": "string"}
+    if len(non_null) == 1:
+        return gigachat_fix_schema(non_null[0], "anyOf")
+
+    # Try scalar widening
+    types: List[str] = [
+        el["type"]
+        for el in non_null
+        if isinstance(el, dict) and isinstance(el.get("type"), str)
+    ]
+    if len(types) == len(non_null) and all(t in _SCALAR_WIDTH for t in types):
+        widest = max(types, key=lambda t: _SCALAR_WIDTH[t])
+        result: Dict[str, Any] = {"type": widest}
+        # Merge enum values if any variants have them
+        all_enums: List[Any] = []
+        for el in non_null:
+            if "enum" in el:
+                all_enums.extend(el["enum"])
+        if all_enums:
+            result["enum"] = all_enums
+        return result
+
+    raise IncorrectSchemaException()
+
+
 def gigachat_fix_schema(schema: Any, prev_key: str = "") -> Any:
     """
     Fix schema incompatibilities between JSON Schema and GigaChat API.
 
     - GigaChat does not support allOf/anyOf in JSON schema. Collapses allOf
-      with a single element; raises for multi-element Union types.
+      with a single element; collapses anyOf by stripping null variants and
+      widening to the most permissive compatible type.
     - GigaChat requires ``properties`` on every object-typed node. Without this
       normalization, free-form object fields such as ``dict[str, Any]`` can lead
       to provider-side 422 validation errors.
@@ -73,8 +119,7 @@ def gigachat_fix_schema(schema: Any, prev_key: str = "") -> Any:
                     # Outer description takes priority over inner one for ref
                     obj_out["description"] = outer_description
             elif k == "anyOf":
-                if len(v) > 1:
-                    raise IncorrectSchemaException()
+                obj_out.update(_collapse_anyof(v))
             elif isinstance(v, (list, dict)):
                 obj_out[k] = gigachat_fix_schema(v, k)
             else:
@@ -314,10 +359,11 @@ def convert_pydantic_to_gigachat_function(
     title = schema.pop("title", None)
     if "properties" in schema:
         for key in schema["properties"]:
-            if "type" not in schema["properties"][key]:
-                schema["properties"][key]["type"] = "object"
-            if "description" not in schema["properties"][key]:
-                schema["properties"][key]["description"] = ""
+            prop = schema["properties"][key]
+            if "type" not in prop and "anyOf" not in prop and "allOf" not in prop:
+                prop["type"] = "object"
+            if "description" not in prop:
+                prop["description"] = ""
 
     if return_model:
         return_schema = _convert_return_schema(return_model)
