@@ -9,6 +9,7 @@ from typing import (
     Dict,
     List,
     Optional,
+    Set,
     Type,
     Union,
     cast,
@@ -45,12 +46,92 @@ class IncorrectSchemaException(Exception):
     pass
 
 
+def _pick_discriminator_name(all_props: Set[str]) -> str:
+    """Return a discriminator field name that does not collide."""
+    name = "_type"
+    while name in all_props:
+        name = "_" + name
+    return name
+
+
+def _merge_object_variants(
+    variants: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Merge multiple object anyOf variants into one flat object."""
+    # Extract variant names
+    names: List[str] = []
+    for i, v in enumerate(variants):
+        names.append(v.get("title") or f"variant_{i + 1}")
+
+    # Collect all property names for discriminator collision check
+    all_prop_names: Set[str] = set()
+    for v in variants:
+        all_prop_names.update(v.get("properties", {}).keys())
+
+    disc_name = _pick_discriminator_name(all_prop_names)
+
+    # Build merged properties
+    merged: Dict[str, Any] = {}
+    for name, variant in zip(names, variants):
+        props = variant.get("properties", {})
+        for key, schema in props.items():
+            fixed = gigachat_fix_schema(schema, "properties")
+            if key not in merged:
+                desc = fixed.get("description", "")
+                fixed["description"] = f"{name}: {desc}"
+                merged[key] = fixed
+            else:
+                existing = merged[key]
+                # Merge descriptions
+                old_desc = existing.get("description", "")
+                new_desc = fixed.get("description", "")
+                existing["description"] = f"{old_desc} | {name}: {new_desc}"
+                # Raise on type mismatch
+                et = existing.get("type")
+                ft = fixed.get("type")
+                if et != ft:
+                    raise IncorrectSchemaException()
+                # Merge enums
+                if "enum" in fixed:
+                    old_enum = existing.get("enum", [])
+                    existing["enum"] = old_enum + fixed["enum"]
+
+    disc_field: Dict[str, Any] = {
+        "type": "string",
+        "enum": names,
+        "description": "Which variant to use",
+    }
+
+    return {
+        "type": "object",
+        "properties": {disc_name: disc_field, **merged},
+        "required": [disc_name],
+    }
+
+
+def _collapse_anyof(variants: List[Any]) -> Any:
+    """Collapse multiple anyOf variants into a single schema.
+
+    Strategy:
+    - Single variant → use as-is
+    - Multiple variants → merge with discriminator field
+    """
+    non_null = [el for el in variants if el != {"type": "null"}]
+    if not non_null:
+        return {"type": "string"}
+    if len(non_null) == 1:
+        return gigachat_fix_schema(non_null[0], "anyOf")
+
+    return _merge_object_variants(non_null)
+
+
 def gigachat_fix_schema(schema: Any, prev_key: str = "") -> Any:
     """
     Fix schema incompatibilities between JSON Schema and GigaChat API.
 
     - GigaChat does not support allOf/anyOf in JSON schema. Collapses allOf
-      with a single element; raises for multi-element Union types.
+      with a single element; collapses anyOf by stripping null variants and
+      widening to the most permissive compatible type.
     - GigaChat requires ``properties`` on every object-typed node. Without this
       normalization, free-form object fields such as ``dict[str, Any]`` can lead
       to provider-side 422 validation errors.
@@ -73,8 +154,7 @@ def gigachat_fix_schema(schema: Any, prev_key: str = "") -> Any:
                     # Outer description takes priority over inner one for ref
                     obj_out["description"] = outer_description
             elif k == "anyOf":
-                if len(v) > 1:
-                    raise IncorrectSchemaException()
+                obj_out.update(_collapse_anyof(v))
             elif isinstance(v, (list, dict)):
                 obj_out[k] = gigachat_fix_schema(v, k)
             else:
@@ -314,10 +394,11 @@ def convert_pydantic_to_gigachat_function(
     title = schema.pop("title", None)
     if "properties" in schema:
         for key in schema["properties"]:
-            if "type" not in schema["properties"][key]:
-                schema["properties"][key]["type"] = "object"
-            if "description" not in schema["properties"][key]:
-                schema["properties"][key]["description"] = ""
+            prop = schema["properties"][key]
+            if "type" not in prop and "anyOf" not in prop and "allOf" not in prop:
+                prop["type"] = "object"
+            if "description" not in prop:
+                prop["description"] = ""
 
     if return_model:
         return_schema = _convert_return_schema(return_model)
@@ -457,6 +538,8 @@ def convert_to_gigachat_tool(
             GigaChat tool-calling API.
     """
     if isinstance(tool, dict) and tool.get("type") == "function" and "function" in tool:
-        return tool
+        function_body = tool["function"]
+        fixed_function = convert_to_gigachat_function(function_body)
+        return {"type": "function", "function": fixed_function}
     function = convert_to_gigachat_function(tool)
     return {"type": "function", "function": function}

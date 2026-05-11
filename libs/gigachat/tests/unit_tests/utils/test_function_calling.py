@@ -17,7 +17,6 @@ from langchain_core.tools import BaseTool, StructuredTool, Tool, tool
 from pydantic import BaseModel, Field
 
 from langchain_gigachat.utils.function_calling import (
-    IncorrectSchemaException,
     convert_to_gigachat_function,
 )
 
@@ -422,13 +421,17 @@ def test_function_no_params() -> None:
     assert not req
 
 
-def test_convert_union_fail() -> None:
+def test_convert_union_merges() -> None:
     @tool
     def magic_function(input: Union[int, float]) -> str:  # type: ignore
         """Compute a magic function."""
 
-    with pytest.raises(IncorrectSchemaException):
-        convert_to_gigachat_function(magic_function)
+    # Union[int, float] should merge into object with discriminator
+    result = convert_to_gigachat_function(magic_function)
+    assert isinstance(result, dict)
+    input_schema = result["parameters"]["properties"]["input"]
+    assert input_schema["type"] == "object"
+    assert "_type" in input_schema["properties"]
 
 
 def test_function_with_title_parameters(
