@@ -5,7 +5,6 @@ from typing import TypedDict as TypingTypedDict
 
 import pytest
 from typing_extensions import TypedDict as ExtensionsTypedDict
-from typing_extensions import is_typeddict
 
 try:
     from typing import Annotated as TypingAnnotated  # type: ignore[attr-defined]
@@ -303,11 +302,18 @@ def test_convert_to_gigachat_function(
             "required": ["arg2"],
         },
     }
+    _dict_schema_fixtures = {
+        "dummy_structured_tool_with_dict_args_schema",
+        "json_schema",
+    }
+    if not (isinstance(func, str) and func in _dict_schema_fixtures):
+        # Raw dict schemas pass through unchanged; all other inputs go through Pydantic
+        # model generation where Optional fields without explicit default get
+        # "default": null injected so GigaChat returns null instead of omitting the key.
+        expected["parameters"]["properties"]["arg1"]["default"] = None  # type: ignore
+
     if isinstance(func, str):
         func = request.getfixturevalue(func)
-
-    if is_typeddict(func):
-        expected["parameters"]["properties"]["arg1"]["default"] = None  # type: ignore
 
     actual = convert_to_gigachat_function(func)  # type: ignore
     assert actual == expected
@@ -322,7 +328,7 @@ def test_runnable(runnable: Runnable) -> None:
         "parameters": {
             "type": "object",
             "properties": {
-                "arg1": {"type": "integer", "description": ""},
+                "arg1": {"type": "integer", "description": "", "default": None},
                 "arg2": {"enum": ["bar", "baz"], "type": "string", "description": ""},
             },
             "required": ["arg2"],
@@ -646,6 +652,13 @@ def test_function_with_return_parameters(
         },
         "required": ["arg2"],
     }
+    if not (
+        isinstance(func, str) and func == "json_schema_return_parameters_with_fews"
+    ):
+        # Raw dict schemas keep arg1 as-is; Pydantic-based return types get
+        # "default": null for Optional fields without explicit default.
+        return_params_expected["properties"]["arg1"]["default"] = None  # type: ignore
+
     if isinstance(func, str):
         func = request.getfixturevalue(func)
 
@@ -803,3 +816,82 @@ def test_raw_dict_schema_title_fallback_behavior(
     actual = convert_to_gigachat_function(raw_schema)
     assert actual["name"] == expected_name
     assert actual.get("title") == expected_title
+
+
+# --- Tests for TypedDict single-arg Annotated (bug fix) ---
+
+
+def test_typed_dict_single_annotated_arg_is_description() -> None:
+    """Single string in Annotated should be description, not default."""
+
+    class BookDict(ExtensionsTypedDict):
+        """Book info"""
+
+        title: ExtensionsAnnotated[str, "Название книги"]
+        author: ExtensionsAnnotated[str, "Автор книги"]
+
+    result = convert_to_gigachat_function(BookDict)
+    props = result["parameters"]["properties"]
+    # Both fields should have description set, not default
+    assert props["title"]["description"] == "Название книги"
+    assert props["author"]["description"] == "Автор книги"
+    assert "default" not in props["title"]
+    assert "default" not in props["author"]
+    # Both fields should be required (no default = required)
+    assert "title" in result["parameters"].get("required", [])
+    assert "author" in result["parameters"].get("required", [])
+
+
+def test_typed_dict_two_annotated_args_default_and_description() -> None:
+    """Two args in Annotated: first is default, second is description."""
+
+    class BookDict(ExtensionsTypedDict):
+        """Book info"""
+
+        title: ExtensionsAnnotated[str, ..., "Название книги"]
+        author: ExtensionsAnnotated[Optional[str], None, "Автор книги"]
+
+    result = convert_to_gigachat_function(BookDict)
+    props = result["parameters"]["properties"]
+    assert props["title"]["description"] == "Название книги"
+    assert props["author"]["description"] == "Автор книги"
+    assert props["author"]["default"] is None
+
+
+# --- Tests for JSON Schema "title" property collision (bug fix) ---
+
+
+def test_json_schema_with_title_property() -> None:
+    """A property named 'title' inside 'properties' must not be stripped."""
+
+    json_schema = {
+        "title": "Movie",
+        "description": "Информация о фильме",
+        "type": "object",
+        "properties": {
+            "title": {"type": "string", "description": "Название фильма"},
+            "director": {"type": "string", "description": "Режиссёр"},
+        },
+        "required": ["title", "director"],
+    }
+    # Dict input is returned as-is (no wrapping in "parameters")
+    result = convert_to_gigachat_function(json_schema)
+    props = result["properties"]
+    assert "title" in props, "property named 'title' was incorrectly stripped"
+    assert "director" in props
+    assert props["title"]["description"] == "Название фильма"
+
+
+def test_pydantic_model_with_title_field() -> None:
+    """A Pydantic model with a field named 'title' should keep it."""
+
+    class Resource(BaseModel):
+        """A resource"""
+
+        title: str = Field(description="Resource title")
+        url: str = Field(description="Resource URL")
+
+    result = convert_to_gigachat_function(Resource)
+    props = result["parameters"]["properties"]
+    assert "title" in props, "property named 'title' was incorrectly stripped"
+    assert props["title"]["description"] == "Resource title"
