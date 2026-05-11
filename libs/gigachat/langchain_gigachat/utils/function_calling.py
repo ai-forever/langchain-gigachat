@@ -59,9 +59,11 @@ def gigachat_fix_schema(schema: Any, prev_key: str = "") -> Any:
         obj_out: Any = {}
         for k, v in schema.items():
             if k == "title":
-                if isinstance(v, dict) and prev_key == "properties" and "title" in v:
+                if prev_key == "properties":
+                    # "title" is a property name inside "properties" — keep it
                     obj_out[k] = gigachat_fix_schema(v, k)
                 else:
+                    # Top-level or nested schema "title" metadata — strip it
                     continue
             elif k == "allOf":
                 if len(v) > 1:
@@ -142,13 +144,28 @@ def _convert_any_typed_dicts_to_pydantic(
                 new_arg_type = _convert_any_typed_dicts_to_pydantic(
                     annotated_args[0], depth=depth + 1, visited=visited
                 )
-                field_kwargs = dict(zip(("default", "description"), annotated_args[1:]))
+                extra = annotated_args[1:]
+                if len(extra) == 1:
+                    # Annotated[type, description] or Annotated[type, default]
+                    if isinstance(extra[0], str):
+                        field_kwargs = {"description": extra[0]}
+                    elif extra[0] is Ellipsis:
+                        field_kwargs = {"default": ...}
+                    else:
+                        field_kwargs = {"default": extra[0]}
+                elif len(extra) >= 2:
+                    # Annotated[type, default, description]
+                    field_kwargs: dict = {"default": extra[0]}
+                    if isinstance(extra[1], str):
+                        field_kwargs["description"] = extra[1]
+                else:
+                    field_kwargs = {}
                 if (field_desc := field_kwargs.get("description")) and not isinstance(
                     field_desc, str
                 ):
                     msg = (
-                        f"Invalid annotation for field {arg}. Third argument to "
-                        f"Annotated must be a string description, received value of "
+                        f"Invalid annotation for field {arg}. Description argument to "
+                        f"Annotated must be a string, received value of "
                         f"type {type(field_desc)}."
                     )
                     raise ValueError(msg)
