@@ -333,6 +333,21 @@ def test_gigachat_stream(patch_gigachat: None) -> None:
     assert actual == expected
 
 
+def test_gigachat_stream_without_streaming_flag_yields_all_chunks(
+    patch_gigachat: None,
+) -> None:
+    """`.stream()` must stream even when ``streaming`` is not set.
+
+    Regression: forcing the ``streaming=False`` default into ``model_fields_set``
+    made newer langchain-core hard-disable streaming, collapsing ``.stream()``
+    to a single chunk. Constructing without ``streaming`` must not opt out.
+    """
+    llm = GigaChat()
+    assert "streaming" not in llm.model_fields_set
+    chunks = list(llm.stream("bar"))
+    assert len(chunks) > 1
+
+
 @pytest.mark.asyncio()
 async def test_gigachat_astream(patch_gigachat_astream: None) -> None:
     expected = [

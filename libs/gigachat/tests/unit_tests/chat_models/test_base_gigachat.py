@@ -209,6 +209,30 @@ def test_llm_type() -> None:
     assert llm._llm_type == "giga-chat-model"
 
 
+# ---------------------------------------------------------------------------
+# model_fields_set hygiene (streaming regression)
+# ---------------------------------------------------------------------------
+
+
+def test_unset_fields_not_in_fields_set() -> None:
+    """Unset fields must not be force-populated into ``model_fields_set``.
+
+    Regression: the validator used to inject every field default, so
+    ``streaming`` looked explicitly set to ``False``. Newer langchain-core
+    then treated that as a hard streaming opt-out (``_streaming_disabled``)
+    and ``.stream()`` collapsed to a single chunk.
+    """
+    llm = GigaChat()
+    assert "streaming" not in llm.model_fields_set
+    assert "temperature" not in llm.model_fields_set
+
+
+def test_explicit_fields_are_in_fields_set() -> None:
+    """Explicitly passed fields are still recorded in ``model_fields_set``."""
+    assert "streaming" in GigaChat(streaming=False).model_fields_set
+    assert "streaming" in GigaChat(streaming=True).model_fields_set
+
+
 def test_get_client_init_kwargs_includes_base(sdk_mock: MagicMock) -> None:
     llm = GigaChat(profanity_check=True, flags=["flag1"])
     kwargs = llm._get_client_init_kwargs()
