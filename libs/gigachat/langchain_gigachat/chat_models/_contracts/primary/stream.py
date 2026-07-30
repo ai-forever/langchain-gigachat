@@ -206,17 +206,7 @@ def _tool_call_chunk(
     if is_first_fragment:
         if not incoming_name:
             raise ValueError("First primary client tool fragment must include a name")
-        call_id = (
-            explicit_id
-            or incoming_tools_state_id
-            or state.tools_state_id
-            or state.provider_message_id
-            or (
-                f"{state.message_id}:tool"
-                if state.message_id is not None
-                else f"tool-{uuid4()}"
-            )
-        )
+        call_id = explicit_id or incoming_tools_state_id or state.tools_state_id
         if explicit_index is not None and not isinstance(explicit_index, int):
             raise TypeError("Primary client tool fragment index must be an integer")
         index: int = (
@@ -234,13 +224,25 @@ def _tool_call_chunk(
     else:
         stored_call_id = state.client_tool_id
         stored_index = state.client_tool_index
-        if stored_call_id is None or stored_index is None:
+        if stored_index is None:
             raise RuntimeError("Primary client tool stream state is incomplete")
-        call_id = stored_call_id
+        call_id = (
+            stored_call_id
+            or explicit_id
+            or incoming_tools_state_id
+            or state.tools_state_id
+        )
+        if stored_call_id is None and call_id is not None:
+            state.client_tool_id = call_id
         index = stored_index
-        if explicit_id is not None and explicit_id != call_id:
+        if (
+            stored_call_id is not None
+            and explicit_id is not None
+            and explicit_id != stored_call_id
+        ):
             raise ValueError(
-                f"Conflicting primary client tool IDs: {call_id!r} and {explicit_id!r}"
+                "Conflicting primary client tool IDs: "
+                f"{stored_call_id!r} and {explicit_id!r}"
             )
         if incoming_name is not None and incoming_name != state.client_tool_name:
             raise ValueError(
@@ -260,6 +262,41 @@ def _tool_call_chunk(
         id=call_id,
         index=index,
     )
+
+
+def _client_tool_identity_update(
+    state: StreamState,
+) -> tuple[list[ToolCallChunk], dict[str, Any]]:
+    if (
+        not state.client_tool_started
+        or state.tools_state_id is None
+        or state.client_tool_index is None
+    ):
+        return [], {}
+
+    if state.client_tool_id is None:
+        state.client_tool_id = state.tools_state_id
+        return [
+            tool_call_chunk(
+                name=None,
+                args="",
+                id=state.tools_state_id,
+                index=state.client_tool_index,
+            )
+        ], {}
+
+    if (
+        state.client_tool_id == state.tools_state_id
+        or state.client_tool_state_mapping_emitted
+    ):
+        return [], {}
+
+    state.client_tool_state_mapping_emitted = True
+    return [], {
+        "provider_tool_state_by_call_id": {
+            state.client_tool_id: state.tools_state_id,
+        }
+    }
 
 
 def _tool_execution_block(
@@ -780,12 +817,13 @@ def convert_stream_event(
         x_headers=x_headers,
     )
 
-    if state.message_id is None:
-        state.message_id = (
-            _request_id(state.x_headers)
-            or state.provider_message_id
-            or f"primary-stream-{uuid4()}"
-        )
+    request_id = _request_id(state.x_headers)
+    if request_id is not None:
+        state.message_id = request_id
+    elif state.message_id is None:
+        state.message_id = f"lc_primary-stream-{uuid4()}"
+    elif event_name == "response.message.done" and state.provider_message_id is not None:
+        state.message_id = state.provider_message_id
 
     content, tool_calls, has_nested_tool_execution = _convert_messages(
         normalized_messages,
@@ -804,6 +842,19 @@ def convert_stream_event(
             state=state,
         )
         content.append(block)
+
+    if (
+        event_name == "response.message.done"
+        and state.client_tool_started
+        and state.tools_state_id is None
+    ):
+        raise ValueError(
+            "Primary client tool call completed without tools_state_id; "
+            "the call cannot be replayed."
+        )
+
+    identity_chunks, identity_kwargs = _client_tool_identity_update(state)
+    tool_calls.extend(identity_chunks)
 
     if event_name in {
         "response.message.done",
@@ -830,7 +881,7 @@ def convert_stream_event(
         return None
 
     state.first_chunk = False
-    additional_kwargs: dict[str, Any] = {}
+    additional_kwargs: dict[str, Any] = identity_kwargs
     reasoning = reasoning_content(content)
     if reasoning is not None:
         additional_kwargs["reasoning_content"] = reasoning

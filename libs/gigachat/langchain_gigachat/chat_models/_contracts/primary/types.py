@@ -54,6 +54,7 @@ class StreamState:
     client_tool_name: Optional[str] = None
     client_tool_id: Optional[str] = None
     client_tool_index: Optional[int] = None
+    client_tool_state_mapping_emitted: bool = False
 
     server_tool_indexes: dict[str, int] = field(default_factory=dict)
     server_tool_result_indexes: dict[str, int] = field(default_factory=dict)

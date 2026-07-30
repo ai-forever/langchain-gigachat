@@ -146,7 +146,9 @@ def test_fragmented_text_aggregates_and_callback_text_is_only_text() -> None:
     assert aggregate.message.content == [
         {"type": "text", "text": "one two", "index": 0},
     ]
-    assert {chunk.message.id for chunk in chunks} == {"message-1"}
+    assert len({chunk.message.id for chunk in chunks}) == 1
+    assert chunks[0].message.id is not None
+    assert chunks[0].message.id.startswith("lc_")
 
 
 def test_fragmented_reasoning_is_available_in_additional_kwargs() -> None:
@@ -991,7 +993,10 @@ def test_late_metadata_is_emitted_once_and_survives_aggregation() -> None:
     aggregate = reduce(add, [first, final, repeated])
     metadata = aggregate.message.response_metadata
 
-    assert first.message.id == final.message.id == repeated.message.id
+    assert first.message.id is not None
+    assert first.message.id.startswith("lc_")
+    assert final.message.id == repeated.message.id == "late-request"
+    assert aggregate.message.id == "late-request"
     assert final.message.response_metadata["message_id"] == "provider-message"
     assert "message_id" not in repeated.message.response_metadata
     assert metadata["message_id"] == "provider-message"
