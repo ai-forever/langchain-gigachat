@@ -66,6 +66,26 @@ def _without_none(values: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in values.items() if value is not None}
 
 
+def _attach_tool_context(
+    blocks: list[dict[str, Any]],
+    *,
+    inline_data: gm.ChatInlineData | None,
+    provider_data: dict[str, Any] | None = None,
+) -> None:
+    """Attach provider result context to its standard server-tool block."""
+    if not blocks:
+        return
+
+    extras = blocks[-1].setdefault("extras", {})
+    if inline_data is not None:
+        extras["inline_data"] = inline_data.model_dump(
+            exclude_none=True,
+            by_alias=True,
+        )
+    if provider_data:
+        extras["provider_data"] = provider_data
+
+
 def _part_blocks(
     part: gm.ChatContentPart,
     *,
@@ -102,15 +122,24 @@ def _part_blocks(
             }
         )
 
-    if part.tool_execution is not None:
-        blocks.extend(
-            convert_tool_execution(
-                part.tool_execution,
-                tool_call_id=server_tool_id,
-            )
+    has_tool_execution = part.tool_execution is not None
+    if has_tool_execution:
+        tool_blocks = convert_tool_execution(
+            part.tool_execution,
+            tool_call_id=server_tool_id,
         )
+        _attach_tool_context(
+            tool_blocks,
+            inline_data=inline_data,
+            provider_data=unknown,
+        )
+        blocks.extend(tool_blocks)
 
-    if part.text is None and (inline_data is not None or unknown):
+    if (
+        part.text is None
+        and not has_tool_execution
+        and (inline_data is not None or unknown)
+    ):
         value = {}
         if inline_data is not None:
             value["inline_data"] = inline_data.model_dump(
@@ -192,6 +221,14 @@ def _content_blocks(
     raw_function_calls: list[dict[str, Any]] = []
     tool_calls: list[ToolCall] = []
     invalid_tool_calls: list[InvalidToolCall] = []
+    has_part_tool_execution = any(
+        part.tool_execution is not None
+        for message in response.messages
+        for part in message.content or []
+    )
+    has_message_tool_execution = not has_part_tool_execution and any(
+        message.tool_execution is not None for message in response.messages
+    )
 
     for message_index, message in enumerate(response.messages):
         tool_call_id = _message_tool_id(
@@ -235,15 +272,25 @@ def _content_blocks(
             if invalid_call is not None:
                 invalid_tool_calls.append(invalid_call)
 
-        if message.tool_execution is not None:
-            blocks.extend(
-                convert_tool_execution(
-                    message.tool_execution,
-                    tool_call_id=tool_call_id,
-                )
+        emitted_message_tool_execution = (
+            has_message_tool_execution and message.tool_execution is not None
+        )
+        if emitted_message_tool_execution:
+            tool_blocks = convert_tool_execution(
+                message.tool_execution,
+                tool_call_id=tool_call_id,
             )
+            _attach_tool_context(
+                tool_blocks,
+                inline_data=message.inline_data,
+            )
+            blocks.extend(tool_blocks)
 
-        if not message.content and message.inline_data is not None:
+        if (
+            not message.content
+            and message.inline_data is not None
+            and not emitted_message_tool_execution
+        ):
             blocks.append(
                 {
                     "type": "non_standard",
@@ -261,7 +308,11 @@ def _content_blocks(
         if message_unknown:
             blocks.append({"type": "non_standard", "value": message_unknown})
 
-    if response.tool_execution is not None:
+    if (
+        response.tool_execution is not None
+        and not has_part_tool_execution
+        and not has_message_tool_execution
+    ):
         blocks.extend(
             convert_tool_execution(
                 response.tool_execution,
