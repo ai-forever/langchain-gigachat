@@ -448,7 +448,7 @@ def test_unknown_provider_content_and_event_are_preserved() -> None:
 
     assert _semantic_content(streamed) == _semantic_content(non_stream)
     assert result.llm_output is not None
-    assert result.llm_output["provider_response"]["provider_metadata"] == {
+    assert non_stream.response_metadata["provider_fields"]["provider_metadata"] == {
         "preserve": True
     }
     assert streamed.response_metadata["provider_fields"] == {

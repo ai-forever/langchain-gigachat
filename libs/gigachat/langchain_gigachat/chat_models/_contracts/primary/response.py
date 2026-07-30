@@ -39,6 +39,20 @@ _PART_FIELDS = {
     "text",
     "tool_execution",
 }
+_RESPONSE_FIELDS = {
+    "additional_data",
+    "created_at",
+    "finish_reason",
+    "logprobs",
+    "message_id",
+    "messages",
+    "model",
+    "thread_id",
+    "tool_execution",
+    "tools_state_id",
+    "usage",
+    "x_headers",
+}
 
 
 def _dump(value: BaseModel | None) -> dict[str, Any] | None:
@@ -315,6 +329,9 @@ def _response_metadata(
             "x_headers": x_headers,
         }
     )
+    provider_fields = unknown_provider_fields(response, _RESPONSE_FIELDS)
+    if provider_fields:
+        metadata["provider_fields"] = provider_fields
     return metadata
 
 
@@ -346,12 +363,7 @@ def create_chat_result(response: gm.ChatCompletionResponse) -> ChatResult:
     )
     usage_metadata = create_usage_metadata(response.usage)
 
-    additional_kwargs: dict[str, Any] = {
-        "provider_messages": [
-            message.model_dump(exclude_none=True, by_alias=True)
-            for message in response.messages
-        ]
-    }
+    additional_kwargs: dict[str, Any] = {}
     tools_state_ids = _tools_state_ids(response)
     if tools_state_ids:
         additional_kwargs["tools_state_ids"] = tools_state_ids
@@ -389,12 +401,10 @@ def create_chat_result(response: gm.ChatCompletionResponse) -> ChatResult:
         message.id = request_id
 
     generation_info = dict(metadata)
-    provider_response = response.model_dump(exclude_none=True, by_alias=True)
     llm_output = {
         "token_usage": _dump(response.usage) or {},
         "model_name": response.model,
         "x_headers": x_headers,
-        "provider_response": provider_response,
     }
     return ChatResult(
         generations=[ChatGeneration(message=message, generation_info=generation_info)],

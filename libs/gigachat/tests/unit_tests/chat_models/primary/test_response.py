@@ -8,6 +8,9 @@ import pytest
 from gigachat import models as gm
 from langchain_core.messages import AIMessage
 
+from langchain_gigachat.chat_models._contracts.primary.messages import (
+    convert_messages,
+)
 from langchain_gigachat.chat_models._contracts.primary.response import (
     create_chat_result,
 )
@@ -192,6 +195,17 @@ def test_client_function_call_uses_tools_state_id() -> None:
     }
     assert message.content == []
     assert message.content_blocks == message.tool_calls
+
+    provider_message = convert_messages([message], cached_uploads={})[0]
+    assert provider_message.tools_state_id == "tools-state-1"
+    assert provider_message.function_call is not None
+    assert provider_message.function_call.model_dump(
+        exclude_none=True,
+        by_alias=True,
+    ) == {
+        "name": "get_weather",
+        "arguments": {"location": "Moscow"},
+    }
 
 
 def test_message_level_function_call_is_supported() -> None:
@@ -437,9 +451,7 @@ def test_usage_headers_and_ids_are_preserved() -> None:
         "prompt_tokens": 10,
         "cached_tokens": 2,
     }
-    assert result.llm_output["provider_response"]["additional_data"] == [
-        {"kind": "provider-extra"}
-    ]
+    assert message.response_metadata["additional_data"] == [{"kind": "provider-extra"}]
 
 
 def test_message_finish_reason_is_used_as_fallback() -> None:
@@ -461,7 +473,7 @@ def test_message_finish_reason_is_used_as_fallback() -> None:
     assert generation_info["finish_reason"] == "length"
 
 
-def test_message_level_metadata_is_promoted_without_losing_raw_message() -> None:
+def test_message_level_metadata_is_promoted_without_raw_message_copy() -> None:
     response = _response(
         message_id=None,
         messages=[
@@ -493,9 +505,7 @@ def test_message_level_metadata_is_promoted_without_losing_raw_message() -> None
     assert message.response_metadata["tools_state_id"] == "tools-state-1"
     assert message.response_metadata["tool_execution"]["name"] == "web_search"
     assert message.response_metadata["logprobs"][0]["chosen"]["token"] == "Hello"
-    assert message.additional_kwargs["provider_messages"][0]["message_id"] == (
-        "message-in-array-1"
-    )
+    assert "provider_messages" not in message.additional_kwargs
 
 
 def test_unknown_content_and_provider_fields_are_preserved() -> None:
@@ -523,9 +533,10 @@ def test_unknown_content_and_provider_fields_are_preserved() -> None:
         },
     ]
     assert result.llm_output is not None
-    assert result.llm_output["provider_response"]["future_response_field"] == {
+    assert message.response_metadata["provider_fields"]["future_response_field"] == {
         "enabled": True
     }
+    assert "provider_response" not in result.llm_output
 
 
 def test_empty_messages_raise_clear_error() -> None:
