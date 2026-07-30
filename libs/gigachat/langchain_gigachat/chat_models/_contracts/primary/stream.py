@@ -7,7 +7,7 @@ from typing import Any
 from uuid import uuid4
 
 import gigachat.models as gm
-from langchain_core.messages import AIMessageChunk, ToolCallChunk
+from langchain_core.messages import AIMessageChunk, ToolCallChunk, UsageMetadata
 from langchain_core.messages.tool import tool_call_chunk
 from langchain_core.outputs import ChatGenerationChunk
 
@@ -792,14 +792,14 @@ def _single_provider_id(
 def _usage_update(
     state: StreamState,
     usage_value: Any,
-) -> dict[str, Any] | None:
+) -> UsageMetadata | None:
     usage_metadata = create_usage_metadata(usage_value)
     if usage_metadata is None:
         return None
     normalized = dict(usage_metadata)
     if state.usage_metadata is None:
         state.usage_metadata = normalized
-        return normalized
+        return usage_metadata
     if state.usage_metadata == normalized:
         return None
     raise ValueError(
@@ -829,12 +829,13 @@ def convert_stream_event(
         field="messages",
     )
     top_level_tool_execution = event_data.get("tool_execution")
-    terminal_continuation = state.completion_event is not None
-    if terminal_continuation:
+    completion_event = state.completion_event
+    terminal_continuation = completion_event is not None
+    if completion_event is not None:
         if event_name == "response.message.done":
-            if event_data == state.completion_event:
+            if event_data == completion_event:
                 return None
-            previous_finish = state.completion_event.get("finish_reason")
+            previous_finish = completion_event.get("finish_reason")
             incoming_finish = event_data.get("finish_reason")
             if (
                 (
