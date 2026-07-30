@@ -27,6 +27,8 @@ _HAS_AUTH = any(os.getenv(name) for name in _AUTH_ENV_NAMES) or bool(
 )
 _MODEL = os.getenv("GIGACHAT_V2_TEST_MODEL", "GigaChat")
 _V1_BASE_URL = os.getenv("GIGACHAT_V2_TEST_BASE_URL", "https://api.giga.chat/v1")
+_ASSISTANT_ID = os.getenv("GIGACHAT_V2_TEST_ASSISTANT_ID")
+_THREAD_ID = os.getenv("GIGACHAT_V2_TEST_THREAD_ID")
 _FILE_ID = os.getenv("GIGACHAT_V2_TEST_FILE_ID")
 
 pytestmark = [
@@ -229,9 +231,9 @@ def test_client_function_two_turn_roundtrip(primary_llm: GigaChat) -> None:
 def test_web_search_preserves_server_tool_and_sources(
     primary_llm: GigaChat,
 ) -> None:
-    runnable = primary_llm.bind(
-        tools=[{"type": "web_search"}],
-        function_call="web_search",
+    runnable = primary_llm.bind_tools(
+        [{"type": "web_search"}],
+        tool_choice="web_search",
     )
 
     result = runnable.invoke(
@@ -255,6 +257,56 @@ def test_web_search_preserves_server_tool_and_sources(
         annotation.get("type") == "citation" and annotation.get("url")
         for annotation in annotations
     )
+
+
+def test_code_interpreter_through_bind_tools(primary_llm: GigaChat) -> None:
+    runnable = primary_llm.bind_tools(
+        [{"type": "code_interpreter"}],
+        tool_choice="code_interpreter",
+    )
+
+    result = runnable.invoke(
+        "Use the code interpreter to calculate 37 * 41, then return the result."
+    )
+
+    assert isinstance(result, AIMessage)
+    blocks: list[dict[str, Any]] = [dict(block) for block in result.content_blocks]
+    assert any(
+        block.get("type") in {"server_tool_call", "server_tool_result"}
+        for block in blocks
+    )
+    assert "1517" in _message_text(result)
+
+
+@pytest.mark.skipif(
+    not _ASSISTANT_ID,
+    reason=("assistant coverage requires a pre-existing GIGACHAT_V2_TEST_ASSISTANT_ID"),
+)
+def test_existing_assistant_id(primary_llm: GigaChat) -> None:
+    result = primary_llm.invoke(
+        "Reply briefly to confirm the assistant request succeeded.",
+        assistant_id=_ASSISTANT_ID,
+    )
+
+    assert isinstance(result, AIMessage)
+    assert _message_text(result).strip()
+    _assert_primary_metadata(result)
+
+
+@pytest.mark.skipif(
+    not _THREAD_ID,
+    reason="thread coverage requires a pre-existing GIGACHAT_V2_TEST_THREAD_ID",
+)
+def test_existing_thread_continuation(primary_llm: GigaChat) -> None:
+    result = primary_llm.invoke(
+        "Reply briefly to confirm the thread continuation succeeded.",
+        storage={"thread_id": _THREAD_ID},
+    )
+
+    assert isinstance(result, AIMessage)
+    assert _message_text(result).strip()
+    assert result.response_metadata["thread_id"] == _THREAD_ID
+    _assert_primary_metadata(result)
 
 
 @pytest.mark.skipif(
