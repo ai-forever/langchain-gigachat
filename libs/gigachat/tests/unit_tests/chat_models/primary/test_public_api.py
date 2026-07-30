@@ -8,6 +8,8 @@ from unittest.mock import MagicMock
 
 import gigachat.models as gm
 import pytest
+from langchain_core.exceptions import OutputParserException
+from langchain_core.messages import AIMessage
 from pydantic import BaseModel
 
 from langchain_gigachat.chat_models.gigachat import GigaChat
@@ -15,7 +17,7 @@ from langchain_gigachat.chat_models.gigachat import GigaChat
 from .fixtures import CREATED_AT, MESSAGE_ID, MODEL, build_function_call_response
 
 
-def _primary_json_response() -> gm.ChatCompletionResponse:
+def _primary_json_response(content: str = '{"value": 7}') -> gm.ChatCompletionResponse:
     return gm.ChatCompletionResponse(
         model=MODEL,
         created_at=CREATED_AT,
@@ -23,7 +25,7 @@ def _primary_json_response() -> gm.ChatCompletionResponse:
             gm.ChatMessage(
                 role="assistant",
                 message_id=MESSAGE_ID,
-                content=[gm.ChatContentPart(text='{"value": 7}')],
+                content=[gm.ChatContentPart(text=content)],
             )
         ],
         message_id=MESSAGE_ID,
@@ -311,6 +313,80 @@ def test_json_schema_structured_output_uses_route_specific_format(
         assert isinstance(payload, gm.Chat)
         assert isinstance(payload.response_format, gm.JsonSchemaResponseFormat)
         assert payload.response_format.type == "json_schema"
+
+
+def test_json_schema_structured_output_executes_pydantic_parser(
+    sdk_client: MagicMock,
+) -> None:
+    sdk_client.chat.create.return_value = _primary_json_response()
+
+    result = (
+        GigaChat(model=MODEL, use_api_v2=True)
+        .with_structured_output(OutputSchema, method="json_schema")
+        .invoke("Hello")
+    )
+
+    assert result == OutputSchema(value=7)
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "not JSON",
+        '{"value": "not an integer"}',
+    ],
+)
+def test_json_schema_include_raw_preserves_invalid_response(
+    sdk_client: MagicMock,
+    content: str,
+) -> None:
+    sdk_client.chat.create.return_value = _primary_json_response(content)
+
+    result = (
+        GigaChat(model=MODEL, use_api_v2=True)
+        .with_structured_output(
+            OutputSchema,
+            method="json_schema",
+            include_raw=True,
+        )
+        .invoke("Hello")
+    )
+
+    assert isinstance(result, dict)
+    assert isinstance(result["raw"], AIMessage)
+    assert result["raw"].text == content
+    assert result["parsed"] is None
+    assert isinstance(result["parsing_error"], OutputParserException)
+
+
+def test_json_schema_invalid_response_without_raw_still_raises_parser_error(
+    sdk_client: MagicMock,
+) -> None:
+    sdk_client.chat.create.return_value = _primary_json_response("not JSON")
+
+    chain = GigaChat(model=MODEL, use_api_v2=True).with_structured_output(
+        OutputSchema,
+        method="json_schema",
+    )
+
+    with pytest.raises(OutputParserException):
+        chain.invoke("Hello")
+
+
+def test_bind_response_format_preserves_invalid_raw_message(
+    sdk_client: MagicMock,
+) -> None:
+    sdk_client.chat.create.return_value = _primary_json_response("not JSON")
+
+    result = (
+        GigaChat(model=MODEL, use_api_v2=True)
+        .bind(response_format=OutputSchema)
+        .invoke("Hello")
+    )
+
+    assert isinstance(result, AIMessage)
+    assert result.text == "not JSON"
+    assert "parsed" not in result.additional_kwargs
 
 
 @pytest.mark.parametrize("use_api_v2", [False, True])
