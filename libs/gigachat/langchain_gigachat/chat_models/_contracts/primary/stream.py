@@ -661,7 +661,7 @@ def _response_metadata(
 ) -> dict[str, Any]:
     metadata: dict[str, Any] = {}
     if event_name is not None:
-        metadata["event"] = event_name
+        metadata["events"] = [event_name]
     metadata.update(observed_metadata)
 
     for field in ("additional_data", "finish_reason", "logprobs"):

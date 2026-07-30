@@ -56,7 +56,7 @@ def test_converts_sdk_message_delta_and_uses_request_id() -> None:
     assert chunk.message.content == "Привет"
     assert chunk.message.id == "request-1"
     assert chunk.message.response_metadata == {
-        "event": "response.message.delta",
+        "events": ["response.message.delta"],
         "message_id": "provider-message",
         "model": "GigaChat-3-Ultra",
         "thread_id": "thread-1",
@@ -95,6 +95,26 @@ def test_sdk_event_timestamps_are_not_stream_identity() -> None:
     assert "created_at" not in done.message.response_metadata
     assert aggregate.message.response_metadata["created_at"] == 1760434637
     assert state.created_at == 1760434637
+
+
+def test_event_names_aggregate_as_an_ordered_list() -> None:
+    state = primary.StreamState()
+    chunks = [
+        _convert({"event": event_name}, state)
+        for event_name in (
+            "response.message.delta",
+            "response.message.delta",
+            "response.message.done",
+        )
+    ]
+
+    aggregate = reduce(add, chunks)
+
+    assert aggregate.message.response_metadata["events"] == [
+        "response.message.delta",
+        "response.message.delta",
+        "response.message.done",
+    ]
 
 
 def test_fragmented_text_aggregates_and_callback_text_is_only_text() -> None:
@@ -448,7 +468,7 @@ def test_tool_completed_is_a_metadata_only_server_tool_result() -> None:
             },
         }
     ]
-    assert chunk.message.response_metadata["event"] == "response.tool.completed"
+    assert chunk.message.response_metadata["events"] == ["response.tool.completed"]
 
 
 def test_sdk_tool_completed_event_deduplicates_execution_and_keeps_sources(
@@ -557,7 +577,7 @@ def test_done_without_messages_preserves_finish_usage_and_metadata() -> None:
     assert chunk.message.content == []
     assert chunk.generation_info == {"finish_reason": "stop"}
     assert chunk.message.response_metadata == {
-        "event": "response.message.done",
+        "events": ["response.message.done"],
         "finish_reason": "stop",
         "message_id": "message-1",
         "thread_id": "thread-1",
@@ -685,7 +705,7 @@ def test_unknown_event_preserves_raw_provider_payload() -> None:
     chunk = _convert(event)
 
     assert chunk.text == ""
-    assert chunk.message.response_metadata["event"] == "response.future.delta"
+    assert chunk.message.response_metadata["events"] == ["response.future.delta"]
     assert chunk.message.response_metadata["provider_fields"] == {
         "future_field": {"answer": 42}
     }
