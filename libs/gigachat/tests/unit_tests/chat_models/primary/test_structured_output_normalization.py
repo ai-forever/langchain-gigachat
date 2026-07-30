@@ -62,6 +62,42 @@ def test_normalizes_mapping_without_mutation() -> None:
     assert normalized.model_dump(exclude_none=True, by_alias=True) == original
 
 
+def test_unwraps_openai_nested_json_schema_format() -> None:
+    normalized = primary.normalize_response_format(
+        {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "answer",
+                "schema": Answer.model_json_schema(),
+                "strict": True,
+            },
+        }
+    )
+
+    assert normalized == gm.ChatResponseFormat(
+        type="json_schema",
+        schema=Answer.model_json_schema(),
+        strict=True,
+    )
+
+
+@pytest.mark.parametrize(
+    ("response_format", "expected"),
+    [
+        ({"type": "text"}, gm.ChatResponseFormat(type="text")),
+        (
+            {"type": "regex", "regex": r"[A-Z]{2}-[0-9]{4}"},
+            gm.ChatResponseFormat(type="regex", regex=r"[A-Z]{2}-[0-9]{4}"),
+        ),
+    ],
+)
+def test_preserves_explicit_sdk_response_formats(
+    response_format: dict[str, Any],
+    expected: gm.ChatResponseFormat,
+) -> None:
+    assert primary.normalize_response_format(response_format) == expected
+
+
 def test_normalizes_pydantic_class_with_strict() -> None:
     normalized = primary.normalize_response_format(Answer, strict=True)
 
@@ -74,6 +110,20 @@ def test_normalizes_pydantic_class_with_strict() -> None:
 
 def test_normalizes_raw_json_schema_mapping() -> None:
     schema = Answer.model_json_schema()
+
+    normalized = primary.normalize_response_format(schema)
+
+    assert normalized == gm.ChatResponseFormat(
+        type="json_schema",
+        schema=schema,
+    )
+
+
+def test_normalizes_raw_json_schema_with_type_keyword() -> None:
+    schema = {
+        "type": "object",
+        "properties": {"value": {"type": "integer"}},
+    }
 
     normalized = primary.normalize_response_format(schema)
 
@@ -98,6 +148,14 @@ def test_none_response_format_is_omitted() -> None:
     assert primary.normalize_response_format(None) is None
 
 
+def test_strict_without_response_format_raises() -> None:
+    with pytest.raises(
+        ValueError,
+        match="strict is supported only together with response_format",
+    ):
+        primary.normalize_response_format(None, strict=True)
+
+
 def test_invalid_response_format_type_raises() -> None:
     with pytest.raises(TypeError, match="response_format must be"):
         primary.normalize_response_format("json_schema")
@@ -111,3 +169,19 @@ def test_invalid_response_format_mapping_raises() -> None:
                 "schema": object(),
             }
         )
+
+
+def test_unknown_explicit_response_format_type_raises() -> None:
+    with pytest.raises(
+        ValueError,
+        match="Unsupported primary response_format type 'yaml'",
+    ):
+        primary.normalize_response_format({"type": "yaml"})
+
+
+def test_regex_response_format_requires_regex() -> None:
+    with pytest.raises(
+        ValueError,
+        match="response_format type 'regex' requires a string 'regex' field",
+    ):
+        primary.normalize_response_format({"type": "regex"})

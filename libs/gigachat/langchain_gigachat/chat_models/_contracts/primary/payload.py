@@ -44,7 +44,21 @@ _LOCAL_CONTROL_KEYS = frozenset(
     }
 )
 _RANKER_FIELDS = frozenset(gm.ChatRankerOptions.model_fields)
+_SDK_RESPONSE_FORMAT_TYPES = frozenset({"json_schema", "regex", "text"})
+_JSON_SCHEMA_TYPES = frozenset(
+    {"array", "boolean", "integer", "null", "number", "object", "string"}
+)
 _MISSING = object()
+
+
+def _is_json_schema_type(value: Any) -> bool:
+    if isinstance(value, str):
+        return value in _JSON_SCHEMA_TYPES
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        return bool(value) and all(
+            isinstance(item, str) and item in _JSON_SCHEMA_TYPES for item in value
+        )
+    return False
 
 
 def normalize_response_format(
@@ -54,6 +68,8 @@ def normalize_response_format(
 ) -> gm.ChatResponseFormat | None:
     """Normalize every primary response-format entry point to the SDK model."""
     if response_format is None:
+        if strict is not None:
+            raise ValueError("strict is supported only together with response_format.")
         return None
     candidate: dict[str, Any]
     if isinstance(response_format, type) and is_basemodel_subclass(response_format):
@@ -84,21 +100,39 @@ def normalize_response_format(
                     else {}
                 ),
             }
-        elif not (
-            candidate.get("type") in {"json_schema", "text"}
-            and ("schema" in candidate or candidate.get("type") == "text")
-        ):
+        elif candidate.get("type") in _SDK_RESPONSE_FORMAT_TYPES:
+            pass
+        elif "type" not in candidate or _is_json_schema_type(candidate["type"]):
             candidate = {
                 "type": "json_schema",
                 "schema": candidate,
             }
+        else:
+            format_type = candidate["type"]
+            raise ValueError(
+                f"Unsupported primary response_format type {format_type!r}. "
+                "Use 'text', 'json_schema', or 'regex'; pass a raw JSON Schema "
+                "mapping for schema-based output."
+            )
     else:
         raise TypeError(
             "response_format must be a ChatResponseFormat, "
             "JsonSchemaResponseFormat, Pydantic BaseModel class, mapping, or None."
         )
 
+    format_type = candidate.get("type")
+    if format_type not in _SDK_RESPONSE_FORMAT_TYPES:
+        raise ValueError(
+            f"Unsupported primary response_format type {format_type!r}. "
+            "Use 'text', 'json_schema', or 'regex'; pass a raw JSON Schema "
+            "mapping for schema-based output."
+        )
+
     if strict is not None:
+        if format_type != "json_schema":
+            raise ValueError(
+                "strict is supported only with a JSON Schema response_format."
+            )
         existing_strict = candidate.get("strict")
         if existing_strict is not None and existing_strict != strict:
             raise ValueError(
@@ -106,6 +140,17 @@ def normalize_response_format(
                 f"{existing_strict}, but strict={strict} was also provided."
             )
         candidate["strict"] = strict
+
+    if candidate.get("strict") is not None and format_type != "json_schema":
+        raise ValueError("strict is supported only with a JSON Schema response_format.")
+    if format_type == "json_schema" and "schema" not in candidate:
+        raise ValueError(
+            "response_format type 'json_schema' requires a 'schema' field."
+        )
+    if format_type == "regex" and not isinstance(candidate.get("regex"), str):
+        raise ValueError(
+            "response_format type 'regex' requires a string 'regex' field."
+        )
 
     try:
         return gm.ChatResponseFormat.model_validate(candidate)
