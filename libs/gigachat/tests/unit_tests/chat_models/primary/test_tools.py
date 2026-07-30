@@ -185,6 +185,65 @@ def test_explicit_tool_config_must_reference_available_tool() -> None:
 
 
 @pytest.mark.parametrize(
+    ("tool_config", "match"),
+    [
+        ({"mode": "auto", "function_name": "weather"}, "mode='auto'.*cannot"),
+        ({"mode": "forced"}, "mode='forced'.*exactly one"),
+        (
+            {
+                "mode": "forced",
+                "function_name": "weather",
+                "tool_name": "web_search",
+            },
+            "mode='forced'.*exactly one",
+        ),
+        ({"mode": "disabled"}, "Unsupported tool_config mode"),
+        ({"mode": "forced", "function_name": ""}, "non-empty string"),
+    ],
+)
+def test_explicit_tool_config_validates_mode_target_semantics(
+    tool_config: dict[str, Any],
+    match: str,
+) -> None:
+    with pytest.raises(ValueError, match=match):
+        primary.build_tool_binding(
+            functions=[_function()],
+            tools=[{"web_search": {}}],
+            function_call=None,
+            explicit_tool_config=tool_config,
+        )
+
+
+@pytest.mark.parametrize(
+    ("choice", "expected"),
+    [
+        (False, None),
+        ("", "Unrecognized function/tool choice"),
+        ({}, "must contain a function name"),
+    ],
+)
+def test_falsey_tool_choices_are_handled_explicitly(
+    choice: Any,
+    expected: str | None,
+) -> None:
+    if expected is None:
+        binding = primary.build_tool_binding(
+            functions=[_function()],
+            tools=[],
+            function_call=choice,
+        )
+        assert binding.tool_config is None
+        return
+
+    with pytest.raises(ValueError, match=expected):
+        primary.build_tool_binding(
+            functions=[_function()],
+            tools=[],
+            function_call=choice,
+        )
+
+
+@pytest.mark.parametrize(
     ("choice", "message"),
     [
         ("any", "does not have a confirmed"),

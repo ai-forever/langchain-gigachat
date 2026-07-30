@@ -171,10 +171,30 @@ def _explicit_tool_config(value: Any) -> Optional[gm.ChatToolConfig]:
         raise ValueError(
             f"tool_config contains unsupported fields: {', '.join(sorted(unknown))}."
         )
-    if candidate.get("tool_name") and candidate.get("function_name"):
+    mode = candidate.get("mode")
+    if mode not in {"auto", "forced"}:
         raise ValueError(
-            "tool_config cannot force a provider tool and a client function "
-            "at the same time."
+            f"Unsupported tool_config mode {mode!r}; expected 'auto' or 'forced'."
+        )
+
+    target_names = [
+        field_name
+        for field_name in ("tool_name", "function_name")
+        if candidate.get(field_name) is not None
+    ]
+    for field_name in target_names:
+        target = candidate[field_name]
+        if not isinstance(target, str) or not target:
+            raise ValueError(f"tool_config {field_name} must be a non-empty string.")
+
+    if mode == "auto" and target_names:
+        raise ValueError(
+            "tool_config mode='auto' cannot include tool_name or function_name."
+        )
+    if mode == "forced" and len(target_names) != 1:
+        raise ValueError(
+            "tool_config mode='forced' requires exactly one of tool_name or "
+            "function_name."
         )
     try:
         return gm.ChatToolConfig.model_validate(candidate)
