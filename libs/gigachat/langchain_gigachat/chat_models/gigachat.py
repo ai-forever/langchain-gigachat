@@ -758,8 +758,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         self._upload_attachments(messages)
         if self._resolve_chat_contract(kwargs) == "primary":
             primary_payload = self._build_primary_payload(messages, kwargs)
-            primary_client: Any = self._client.chat
-            primary_response = primary_client.create(primary_payload)
+            primary_response = self._client.chat.create(primary_payload)
             return primary.create_chat_result(primary_response)
         self._validate_legacy_kwargs(kwargs)
         payload = self._build_payload(messages, **kwargs)
@@ -787,8 +786,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         await self._aupload_attachments(messages)
         if self._resolve_chat_contract(kwargs) == "primary":
             primary_payload = self._build_primary_payload(messages, kwargs)
-            primary_client: Any = self._client.achat
-            primary_response = await primary_client.create(primary_payload)
+            primary_response = await self._client.achat.create(primary_payload)
             return primary.create_chat_result(primary_response)
         self._validate_legacy_kwargs(kwargs)
         payload = self._build_payload(messages, **kwargs)
@@ -809,8 +807,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         if self._resolve_chat_contract(kwargs) == "primary":
             primary_payload = self._build_primary_payload(messages, kwargs)
             state = primary.StreamState()
-            primary_client: Any = self._client.chat
-            for event in primary_client.stream(primary_payload):
+            for event in self._client.chat.stream(primary_payload):
                 primary_chunk = primary.convert_stream_event(event, state=state)
                 if primary_chunk is None:
                     continue
@@ -858,8 +855,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         if self._resolve_chat_contract(kwargs) == "primary":
             primary_payload = self._build_primary_payload(messages, kwargs)
             state = primary.StreamState()
-            primary_client: Any = self._client.achat
-            async for event in primary_client.stream(primary_payload):
+            async for event in self._client.achat.stream(primary_payload):
                 primary_chunk = primary.convert_stream_event(event, state=state)
                 if primary_chunk is None:
                     continue
