@@ -1,4 +1,5 @@
 import collections.abc
+import copy
 import inspect
 import types
 import typing
@@ -57,11 +58,55 @@ class IncorrectSchemaException(Exception):
 
 def is_primary_builtin_tool(tool: Any) -> bool:
     """Return whether a mapping uses a primary-contract built-in tool."""
-    if not isinstance(tool, dict):
+    if not isinstance(tool, collections.abc.Mapping):
         return False
-    if tool.get("type") in PRIMARY_BUILTIN_TOOL_NAMES:
-        return True
-    return bool(PRIMARY_BUILTIN_TOOL_NAMES.intersection(tool))
+
+    tool_type = tool.get("type")
+    type_name = (
+        tool_type
+        if isinstance(tool_type, str) and tool_type in PRIMARY_BUILTIN_TOOL_NAMES
+        else None
+    )
+    canonical_names = PRIMARY_BUILTIN_TOOL_NAMES.intersection(tool)
+
+    if type_name is not None:
+        return not canonical_names
+    return len(tool) == 1 and len(canonical_names) == 1
+
+
+def _validate_primary_builtin_tool_mapping(
+    tool: collections.abc.Mapping[str, Any],
+) -> None:
+    tool_type = tool.get("type")
+    type_name = (
+        tool_type
+        if isinstance(tool_type, str) and tool_type in PRIMARY_BUILTIN_TOOL_NAMES
+        else None
+    )
+    canonical_names = PRIMARY_BUILTIN_TOOL_NAMES.intersection(tool)
+    builtin_names = set(canonical_names)
+    if type_name is not None:
+        builtin_names.add(type_name)
+
+    if len(builtin_names) != 1 or (type_name is not None and canonical_names):
+        raise ValueError(
+            "Each provider built-in tool mapping must configure exactly one "
+            "built-in tool."
+        )
+
+    if type_name is not None:
+        return
+
+    tool_name = next(iter(canonical_names))
+    if set(tool) != {tool_name}:
+        raise ValueError(
+            "Canonical provider built-in tools must contain only their tool "
+            f"name; got extra fields for {tool_name!r}."
+        )
+    if not isinstance(tool[tool_name], collections.abc.Mapping):
+        raise ValueError(
+            f"Configuration for provider built-in tool {tool_name!r} must be a mapping."
+        )
 
 
 def gigachat_fix_schema(schema: Any, prev_key: str = "") -> Any:
@@ -484,3 +529,25 @@ def convert_to_gigachat_tool(
         return tool
     function = convert_to_gigachat_function(tool)
     return {"type": "function", "function": function}
+
+
+def normalize_tool_for_binding(
+    tool: Union[Dict[str, Any], type, Callable, BaseTool],
+) -> Dict[str, Any]:
+    """Normalize a tool before the request route is known.
+
+    Primary built-in mappings stay in their provider-native representation.
+    Client functions continue through the existing GigaChat schema converter.
+    The returned mapping never aliases caller-owned input.
+    """
+    if isinstance(tool, collections.abc.Mapping):
+        tool_type = tool.get("type")
+        has_builtin_type = (
+            isinstance(tool_type, str) and tool_type in PRIMARY_BUILTIN_TOOL_NAMES
+        )
+        has_canonical_builtin = bool(PRIMARY_BUILTIN_TOOL_NAMES.intersection(tool))
+        if has_builtin_type or has_canonical_builtin:
+            _validate_primary_builtin_tool_mapping(tool)
+            return copy.deepcopy(dict(tool))
+
+    return copy.deepcopy(convert_to_gigachat_tool(tool))

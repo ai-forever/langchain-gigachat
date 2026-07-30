@@ -28,9 +28,15 @@ def _function_specification(value: Mapping[str, Any]) -> gm.ChatFunctionSpecific
 def _builtin_tool(value: Mapping[str, Any]) -> tuple[str, gm.ChatTool]:
     candidate = copy.deepcopy(dict(value))
     tool_type = candidate.get("type")
-    if tool_type in PRIMARY_BUILTIN_TOOL_NAMES:
+    if isinstance(tool_type, str) and tool_type in PRIMARY_BUILTIN_TOOL_NAMES:
         tool_name = str(tool_type)
         candidate.pop("type")
+        nested_builtin_names = PRIMARY_BUILTIN_TOOL_NAMES.intersection(candidate)
+        if nested_builtin_names:
+            raise ValueError(
+                "Each provider built-in tool mapping must configure exactly "
+                "one built-in tool."
+            )
         config: Any = candidate
     else:
         present = PRIMARY_BUILTIN_TOOL_NAMES.intersection(candidate)
@@ -52,8 +58,6 @@ def _builtin_tool(value: Mapping[str, Any]) -> tuple[str, gm.ChatTool]:
             )
         config = candidate[tool_name]
 
-    if config is None:
-        config = {}
     if not isinstance(config, Mapping):
         raise ValueError(
             f"Configuration for provider built-in tool {tool_name!r} must be a mapping."
@@ -251,6 +255,13 @@ def build_tool_binding(
         raise ValueError("Client function names must be unique.")
     if len(set(builtin_names)) != len(builtin_names):
         raise ValueError("Provider built-in tools must not be repeated.")
+    ambiguous_names = set(function_names).intersection(builtin_names)
+    if ambiguous_names:
+        rendered = ", ".join(sorted(ambiguous_names))
+        raise ValueError(
+            "Client function names must not collide with provider built-in "
+            f"tool names: {rendered}."
+        )
 
     normalized_tools: list[gm.ChatTool] = []
     if function_specs:
