@@ -128,11 +128,7 @@ def gigachat_fix_schema(schema: Any, prev_key: str = "") -> Any:
                 else:
                     continue
             elif k in {"allOf", "anyOf"}:
-                if (
-                    not isinstance(v, list)
-                    or len(v) != 1
-                    or not isinstance(v[0], dict)
-                ):
+                if not isinstance(v, list) or len(v) != 1 or not isinstance(v[0], dict):
                     raise IncorrectSchemaException(
                         f"{k} must contain exactly one schema mapping."
                     )
@@ -308,9 +304,7 @@ def _convert_return_schema(
             return_schema["properties"] = {}
         return return_schema
     if not isinstance(properties, dict):
-        raise IncorrectSchemaException(
-            "Return schema 'properties' must be a mapping."
-        )
+        raise IncorrectSchemaException("Return schema 'properties' must be a mapping.")
 
     for key, field_schema in properties.items():
         if not isinstance(field_schema, dict):
@@ -350,10 +344,7 @@ def format_tool_to_gigachat_function(tool: BaseTool) -> GigaFunctionDescription:
             if "$defs" in tool_schema:  # pydantic 2
                 tool_schema.pop("$defs", None)
             default_description = tool_schema.pop("description", "")
-            if (
-                tool_schema.get("type") == "object"
-                and "properties" not in tool_schema
-            ):
+            if tool_schema.get("type") == "object" and "properties" not in tool_schema:
                 tool_schema["properties"] = {}
             return GigaFunctionDescription(
                 name=tool.name,
@@ -384,7 +375,7 @@ def convert_pydantic_to_gigachat_function(
     *,
     name: Optional[str] = None,
     description: Optional[str] = None,
-    return_model: Optional[Type[BaseModel]] = None,
+    return_model: Optional[Union[Type[BaseModel], dict[str, Any]]] = None,
     few_shot_examples: Optional[List[dict]] = None,
 ) -> GigaFunctionDescription:
     """Converts a Pydantic model to a function description for the GigaChat API."""

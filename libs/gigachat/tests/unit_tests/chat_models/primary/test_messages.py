@@ -94,9 +94,7 @@ def test_convert_messages_deduplicates_attachment_ids_in_first_seen_order() -> N
             {"type": "image_url", "image_url": {"giga_id": "file-1"}},
             {"type": "image_url", "image_url": {"url": data_url}},
         ],
-        additional_kwargs={
-            "attachments": ["file-2", "file-3", "file-1", "file-3"]
-        },
+        additional_kwargs={"attachments": ["file-2", "file-3", "file-1", "file-3"]},
     )
     original = copy.deepcopy(message)
 
@@ -263,7 +261,7 @@ def test_convert_messages_tool_result_prefers_explicit_name() -> None:
 
 
 def test_convert_messages_tool_result_accepts_nested_json_without_mutation() -> None:
-    content = [
+    content: list[str | dict[Any, Any]] = [
         {
             "payload": [
                 None,
@@ -315,10 +313,13 @@ def test_convert_messages_tool_result_rejects_non_json_values_with_path(
     invalid: Any,
     match: str,
 ) -> None:
+    invalid_content: list[str | dict[Any, Any]] = [
+        {
+            "payload": [invalid] if not isinstance(invalid, dict) else invalid,
+        }
+    ]
     message = ToolMessage(
-        content=[{"payload": [invalid]}]
-        if not isinstance(invalid, dict)
-        else [{"payload": invalid}],
+        content=invalid_content,
         tool_call_id="tools-state",
         name="weather",
     )

@@ -100,9 +100,7 @@ def test_fix_schema_preserves_recursive_ref_shape_without_mutation() -> None:
     result = gigachat_fix_schema(schema)
 
     assert schema == original
-    assert result["$defs"]["Node"]["properties"]["child"] == {
-        "$ref": "#/$defs/Node"
-    }
+    assert result["$defs"]["Node"]["properties"]["child"] == {"$ref": "#/$defs/Node"}
 
 
 def test_fix_schema_title_removed_at_top_level() -> None:
