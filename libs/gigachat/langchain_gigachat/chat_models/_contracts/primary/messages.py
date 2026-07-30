@@ -207,6 +207,47 @@ def _metadata_value(message: BaseMessage, names: Sequence[str]) -> Any:
     return None
 
 
+def _provider_tool_state_mapping(message: AIMessage) -> dict[str, str]:
+    value = message.additional_kwargs.get("provider_tool_state_by_call_id")
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise ValueError(
+            "additional_kwargs['provider_tool_state_by_call_id'] must be a mapping."
+        )
+
+    mapping: dict[str, str] = {}
+    for tool_call_id, tools_state_id in value.items():
+        if not isinstance(tool_call_id, str) or not tool_call_id:
+            raise ValueError(
+                "provider_tool_state_by_call_id keys must be non-empty strings."
+            )
+        if not isinstance(tools_state_id, str) or not tools_state_id:
+            raise ValueError(
+                "provider_tool_state_by_call_id values must be non-empty strings."
+            )
+        mapping[tool_call_id] = tools_state_id
+    return mapping
+
+
+def _provider_tool_states(messages: Sequence[BaseMessage]) -> dict[str, str]:
+    states: dict[str, str] = {}
+    for message in messages:
+        if not isinstance(message, AIMessage):
+            continue
+        for tool_call_id, tools_state_id in _provider_tool_state_mapping(
+            message
+        ).items():
+            previous = states.get(tool_call_id)
+            if previous is not None and previous != tools_state_id:
+                raise ValueError(
+                    f"Tool call ID {tool_call_id!r} maps to multiple provider "
+                    "tools_state_id values."
+                )
+            states[tool_call_id] = tools_state_id
+    return states
+
+
 def _message_metadata(message: BaseMessage) -> dict[str, Any]:
     metadata: dict[str, Any] = {}
     message_id = _metadata_value(message, ("message_id",))
@@ -360,12 +401,17 @@ def _convert_ai_message(
         if tool_call_id is not None:
             if not isinstance(tool_call_id, str) or not tool_call_id:
                 raise ValueError("Primary AIMessage tool call ID must be a string.")
+            provider_state_id = _provider_tool_state_mapping(message).get(
+                tool_call_id,
+                tool_call_id,
+            )
             explicit_state_id = kwargs.get("tools_state_id")
-            if explicit_state_id is not None and explicit_state_id != tool_call_id:
+            if explicit_state_id is not None and explicit_state_id != provider_state_id:
                 raise ValueError(
-                    "AIMessage tool call ID conflicts with tools_state_id."
+                    "AIMessage provider tool-state mapping conflicts with "
+                    "tools_state_id."
                 )
-            kwargs["tools_state_id"] = tool_call_id
+            kwargs["tools_state_id"] = provider_state_id
     elif function_call := message.additional_kwargs.get("function_call"):
         if isinstance(function_call, BaseModel):
             function_call = function_call.model_dump(
@@ -395,6 +441,7 @@ def _convert_ai_message(
 def _convert_tool_message(
     message: ToolMessage,
     *,
+    provider_tool_states: Mapping[str, str],
     tool_call_names: Mapping[str, str],
 ) -> gm.ChatMessage:
     name = message.name or tool_call_names.get(message.tool_call_id)
@@ -405,7 +452,10 @@ def _convert_tool_message(
         )
     return gm.ChatMessage(
         role="tool",
-        tools_state_id=message.tool_call_id,
+        tools_state_id=provider_tool_states.get(
+            message.tool_call_id,
+            message.tool_call_id,
+        ),
         content=[
             gm.ChatContentPart(
                 function_result=ChatFunctionResult(
@@ -445,6 +495,7 @@ def convert_messages(
     cached_uploads: Mapping[str, str],
 ) -> list[gm.ChatMessage]:
     """Convert a complete LangChain message history to primary SDK messages."""
+    provider_tool_states = _provider_tool_states(messages)
     tool_call_names = _tool_call_names(messages)
     converted: list[gm.ChatMessage] = []
     for message in messages:
@@ -459,7 +510,11 @@ def convert_messages(
             continue
         elif isinstance(message, ToolMessage):
             converted.append(
-                _convert_tool_message(message, tool_call_names=tool_call_names)
+                _convert_tool_message(
+                    message,
+                    provider_tool_states=provider_tool_states,
+                    tool_call_names=tool_call_names,
+                )
             )
             continue
         elif isinstance(message, FunctionMessage):

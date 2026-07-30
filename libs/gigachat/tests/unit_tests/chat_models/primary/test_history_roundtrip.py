@@ -259,3 +259,49 @@ def test_client_function_call_and_tool_result_continue_as_provider_history() -> 
     assert history[1].content
     assert history[1].content[0].function_result
     assert history[1].content[0].function_result.name == "lookup_weather"
+
+
+def test_late_stream_tool_state_mapping_survives_tool_result_roundtrip() -> None:
+    output = _stream_output(
+        [
+            {
+                "event": "response.message.delta",
+                "message_id": "provider-message",
+                "messages": [
+                    {
+                        "role": "assistant",
+                        "function_call": {
+                            "id": "langchain-call",
+                            "name": "lookup_weather",
+                            "arguments": {"city": "Moscow"},
+                        },
+                    }
+                ],
+            },
+            {
+                "event": "response.message.done",
+                "message_id": "provider-message",
+                "tools_state_id": "provider-state",
+                "finish_reason": "function_call",
+            },
+        ]
+    )
+
+    assert output.tool_calls[0]["id"] == "langchain-call"
+    assert output.additional_kwargs["provider_tool_state_by_call_id"] == {
+        "langchain-call": "provider-state"
+    }
+
+    history = primary.convert_messages(
+        [
+            output,
+            ToolMessage(
+                content='{"temperature": 18}',
+                tool_call_id="langchain-call",
+            ),
+        ],
+        cached_uploads={},
+    )
+
+    assert history[0].tools_state_id == "provider-state"
+    assert history[1].tools_state_id == "provider-state"
