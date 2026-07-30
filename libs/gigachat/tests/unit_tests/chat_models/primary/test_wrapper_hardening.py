@@ -86,9 +86,9 @@ def test_tool_terminal_does_not_replace_authoritative_message_done(
     assert len(chunks) == 2
     assert chunks[0].generation_info == {"finish_reason": "tool_error"}
     assert chunks[0].message.chunk_position is None
-    assert chunks[0].message.response_metadata["provider_fields"]["error"] == {
-        "message": "tool failed"
-    }
+    assert chunks[0].message.response_metadata["provider_field_events"] == [
+        {"error": {"message": "tool failed"}}
+    ]
     assert chunks[1].generation_info == {"finish_reason": "stop"}
     assert chunks[1].message.chunk_position == "last"
 

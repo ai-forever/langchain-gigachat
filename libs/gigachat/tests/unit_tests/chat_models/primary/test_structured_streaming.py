@@ -62,6 +62,7 @@ def _primary_tool_call_stream() -> Iterator[gm.PrimaryChatCompletionChunk]:
         event="response.message.delta",
         model=MODEL,
         created_at=CREATED_AT,
+        tools_state_id="tool-state",
         messages=[
             gm.ChatMessageChunk(
                 role="assistant",
@@ -81,6 +82,7 @@ def _primary_tool_call_stream() -> Iterator[gm.PrimaryChatCompletionChunk]:
         created_at=CREATED_AT,
         messages=None,
         message_id=MESSAGE_ID,
+        tools_state_id="tool-state",
         finish_reason="tool_calls",
     )
 
