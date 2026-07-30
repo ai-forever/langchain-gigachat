@@ -221,6 +221,38 @@ def _content_blocks(
     raw_function_calls: list[dict[str, Any]] = []
     tool_calls: list[ToolCall] = []
     invalid_tool_calls: list[InvalidToolCall] = []
+    converted_function_calls: list[tuple[ToolCall | None, InvalidToolCall | None]] = []
+
+    def append_function_call(
+        function_call: gm.PrimaryChatFunctionCall,
+        *,
+        tool_call_id: str,
+    ) -> None:
+        raw_function_call = function_call.model_dump(
+            exclude_none=True,
+            by_alias=True,
+        )
+        converted = convert_function_call(
+            function_call,
+            tool_call_id=tool_call_id,
+        )
+        if converted in converted_function_calls:
+            return
+        if converted_function_calls:
+            raise ValueError(
+                "Primary GigaChat completion contains multiple distinct client "
+                "function calls and cannot be replayed. Parallel client function "
+                "calls are not supported."
+            )
+
+        converted_function_calls.append(converted)
+        raw_function_calls.append(raw_function_call)
+        tool_call, invalid_call = converted
+        if tool_call is not None:
+            tool_calls.append(tool_call)
+        if invalid_call is not None:
+            invalid_tool_calls.append(invalid_call)
+
     has_part_tool_execution = any(
         part.tool_execution is not None
         for message in response.messages
@@ -239,17 +271,10 @@ def _content_blocks(
 
         for part in message.content or []:
             if part.function_call is not None:
-                raw_function_calls.append(
-                    part.function_call.model_dump(exclude_none=True, by_alias=True)
-                )
-                tool_call, invalid_call = convert_function_call(
+                append_function_call(
                     part.function_call,
                     tool_call_id=tool_call_id,
                 )
-                if tool_call is not None:
-                    tool_calls.append(tool_call)
-                if invalid_call is not None:
-                    invalid_tool_calls.append(invalid_call)
             blocks.extend(
                 _part_blocks(
                     part,
@@ -260,17 +285,10 @@ def _content_blocks(
             )
 
         if message.function_call is not None:
-            raw_function_calls.append(
-                message.function_call.model_dump(exclude_none=True, by_alias=True)
-            )
-            tool_call, invalid_call = convert_function_call(
+            append_function_call(
                 message.function_call,
                 tool_call_id=tool_call_id,
             )
-            if tool_call is not None:
-                tool_calls.append(tool_call)
-            if invalid_call is not None:
-                invalid_tool_calls.append(invalid_call)
 
         emitted_message_tool_execution = (
             has_message_tool_execution and message.tool_execution is not None

@@ -273,26 +273,74 @@ def test_invalid_function_arguments_become_invalid_tool_call() -> None:
     assert message.additional_kwargs["function_call"]["arguments"] == "not-json"
 
 
-def test_valid_and_invalid_function_calls_are_preserved_together() -> None:
+def test_valid_and_invalid_function_calls_fail_during_response_conversion() -> None:
+    response = _response(
+        messages=[
+            {
+                "role": "assistant",
+                "function_call": {
+                    "name": "lookup",
+                    "arguments": {"key": "value"},
+                },
+            },
+            {
+                "role": "assistant",
+                "function_call": {
+                    "name": "broken",
+                    "arguments": "[]",
+                },
+            },
+        ],
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="multiple distinct client function calls.*cannot be replayed",
+    ):
+        create_chat_result(response)
+
+
+def test_multiple_valid_function_calls_fail_during_response_conversion() -> None:
+    response = _response(
+        messages=[
+            {
+                "role": "assistant",
+                "function_call": {
+                    "name": "lookup",
+                    "arguments": {"key": "one"},
+                },
+            },
+            {
+                "role": "assistant",
+                "function_call": {
+                    "name": "lookup",
+                    "arguments": {"key": "two"},
+                },
+            },
+        ],
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="multiple distinct client function calls.*cannot be replayed",
+    ):
+        create_chat_result(response)
+
+
+def test_mirrored_function_call_is_emitted_once() -> None:
+    function_call = {
+        "name": "lookup",
+        "arguments": {"key": "value"},
+    }
     message = _message(
         _response(
             messages=[
                 {
                     "role": "assistant",
-                    "message_id": "valid-call",
-                    "function_call": {
-                        "name": "lookup",
-                        "arguments": {"key": "value"},
-                    },
-                },
-                {
-                    "role": "assistant",
-                    "message_id": "invalid-call",
-                    "function_call": {
-                        "name": "broken",
-                        "arguments": "[]",
-                    },
-                },
+                    "tools_state_id": "tools-state-1",
+                    "function_call": function_call,
+                    "content": [{"function_call": function_call}],
+                }
             ],
         )
     )
@@ -302,20 +350,11 @@ def test_valid_and_invalid_function_calls_are_preserved_together() -> None:
             "type": "tool_call",
             "name": "lookup",
             "args": {"key": "value"},
-            "id": "valid-call",
+            "id": "tools-state-1",
         }
     ]
-    assert message.invalid_tool_calls == [
-        {
-            "type": "invalid_tool_call",
-            "name": "broken",
-            "args": "[]",
-            "id": "invalid-call",
-            "error": ("Function 'broken' arguments must be a JSON object; got list"),
-        }
-    ]
-    assert message.content == []
-    assert message.content_blocks == message.tool_calls
+    assert message.additional_kwargs["function_calls"] == [function_call]
+    assert message.additional_kwargs["function_call"] == function_call
 
 
 def test_response_conversion_does_not_mutate_provider_model() -> None:
