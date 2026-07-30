@@ -7,7 +7,10 @@ import gigachat.models as gm
 import pytest
 
 from langchain_gigachat.chat_models._contracts import primary
-from langchain_gigachat.utils.function_calling import convert_to_gigachat_tool
+from langchain_gigachat.utils.function_calling import (
+    convert_to_gigachat_tool,
+    normalize_tool_for_binding,
+)
 
 
 def _function(name: str = "weather") -> dict[str, Any]:
@@ -207,11 +210,56 @@ def test_duplicate_function_names_raise() -> None:
         )
 
 
-def test_unknown_tool_mapping_raises() -> None:
+def test_duplicate_builtin_tools_raise() -> None:
+    with pytest.raises(ValueError, match="must not be repeated"):
+        primary.build_tool_binding(
+            functions=[],
+            tools=[{"web_search": {}}, {"type": "web_search"}],
+            function_call=None,
+        )
+
+
+def test_client_function_name_must_not_collide_with_builtin() -> None:
+    with pytest.raises(ValueError, match="must not collide"):
+        primary.build_tool_binding(
+            functions=[_function("web_search")],
+            tools=[{"web_search": {}}],
+            function_call=None,
+        )
+
+
+@pytest.mark.parametrize(
+    ("tool", "message"),
+    [
+        (
+            {"web_search": {}, "description": "extra"},
+            "must contain only their tool name",
+        ),
+        ({"web_search": None}, "must be a mapping"),
+        (
+            {"type": "web_search", "code_interpreter": {}},
+            "exactly one built-in",
+        ),
+    ],
+)
+def test_invalid_builtin_configuration_raises(
+    tool: dict[str, Any],
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        primary.build_tool_binding(
+            functions=[],
+            tools=[tool],
+            function_call=None,
+        )
+
+
+@pytest.mark.parametrize("tool", [{"type": "computer_use"}, {"type": []}])
+def test_unknown_tool_mapping_raises(tool: dict[str, Any]) -> None:
     with pytest.raises(ValueError, match="Unsupported tool mapping"):
         primary.build_tool_binding(
             functions=[],
-            tools=[{"type": "computer_use"}],
+            tools=[tool],
             function_call=None,
         )
 
@@ -228,3 +276,19 @@ def test_legacy_tool_conversion_rejects_primary_builtins(
 ) -> None:
     with pytest.raises(ValueError, match="use_api_v2=True"):
         convert_to_gigachat_tool(tool)
+
+
+def test_build_tool_binding_accepts_route_neutral_client_function() -> None:
+    normalized = normalize_tool_for_binding(_function())
+
+    binding = primary.build_tool_binding(
+        functions=[],
+        tools=[normalized],
+        function_call={"type": "function", "function": {"name": "weather"}},
+    )
+
+    assert binding.tools is not None
+    assert binding.tool_config == gm.ChatToolConfig(
+        mode="forced",
+        function_name="weather",
+    )
