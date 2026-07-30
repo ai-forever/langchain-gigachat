@@ -70,7 +70,7 @@ def test_groups_function_tools_with_functions_argument() -> None:
 
 
 def test_normalizes_canonical_and_type_shorthand_builtins() -> None:
-    tools = [
+    tools: list[dict[str, Any]] = [
         {"code_interpreter": {}},
         {
             "type": "web_search",

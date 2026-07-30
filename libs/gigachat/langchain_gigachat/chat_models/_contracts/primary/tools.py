@@ -10,9 +10,7 @@ import gigachat.models as gm
 from langchain_gigachat.chat_models._contracts.primary.types import ToolBinding
 from langchain_gigachat.utils.function_calling import PRIMARY_BUILTIN_TOOL_NAMES
 
-_CONSUMED_KEYS = frozenset(
-    {"functions", "tools", "function_call", "tool_config"}
-)
+_CONSUMED_KEYS = frozenset({"functions", "tools", "function_call", "tool_config"})
 
 
 def _function_specification(value: Mapping[str, Any]) -> gm.ChatFunctionSpecification:
@@ -167,8 +165,7 @@ def _explicit_tool_config(value: Any) -> Optional[gm.ChatToolConfig]:
     unknown = set(candidate).difference({"mode", "tool_name", "function_name"})
     if unknown:
         raise ValueError(
-            "tool_config contains unsupported fields: "
-            f"{', '.join(sorted(unknown))}."
+            f"tool_config contains unsupported fields: {', '.join(sorted(unknown))}."
         )
     if candidate.get("tool_name") and candidate.get("function_name"):
         raise ValueError(
@@ -207,6 +204,28 @@ def _config_dump(value: Optional[gm.ChatToolConfig]) -> Any:
     return value.model_dump(exclude_none=True, by_alias=True)
 
 
+def normalize_response_format(response_format: Any) -> Optional[gm.ChatResponseFormat]:
+    """Normalize supported response formats for primary model options."""
+    if response_format is None:
+        return None
+    if isinstance(response_format, gm.ChatResponseFormat):
+        candidate = response_format.model_dump(exclude_none=True, by_alias=True)
+    elif isinstance(response_format, gm.JsonSchemaResponseFormat):
+        candidate = response_format.model_dump(exclude_none=True, by_alias=True)
+    elif isinstance(response_format, Mapping):
+        candidate = copy.deepcopy(dict(response_format))
+    else:
+        raise TypeError(
+            "response_format must be a ChatResponseFormat, "
+            "JsonSchemaResponseFormat, mapping, or None."
+        )
+
+    try:
+        return gm.ChatResponseFormat.model_validate(candidate)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Invalid primary response_format: {exc}") from exc
+
+
 def build_tool_binding(
     *,
     functions: Sequence[Mapping[str, Any]],
@@ -236,9 +255,7 @@ def build_tool_binding(
     normalized_tools: list[gm.ChatTool] = []
     if function_specs:
         normalized_tools.append(
-            gm.ChatTool(
-                functions=gm.ChatFunctionsTool(specifications=function_specs)
-            )
+            gm.ChatTool(functions=gm.ChatFunctionsTool(specifications=function_specs))
         )
     normalized_tools.extend(builtin_tools)
 

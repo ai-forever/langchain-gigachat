@@ -10,7 +10,10 @@ from langchain_gigachat.chat_models._contracts.primary.response import (
 from langchain_gigachat.chat_models._contracts.primary.stream import (
     convert_stream_event,
 )
-from langchain_gigachat.chat_models._contracts.primary.tools import build_tool_binding
+from langchain_gigachat.chat_models._contracts.primary.tools import (
+    build_tool_binding,
+    normalize_response_format,
+)
 from langchain_gigachat.chat_models._contracts.primary.types import (
     RequestDefaults,
     StreamState,
@@ -26,4 +29,5 @@ __all__ = [
     "convert_messages",
     "convert_stream_event",
     "create_chat_result",
+    "normalize_response_format",
 ]
