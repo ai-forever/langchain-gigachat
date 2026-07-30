@@ -214,6 +214,71 @@ def test_convert_messages_tool_result_prefers_explicit_name() -> None:
     assert converted.content[0].function_result.result == "not json"
 
 
+def test_convert_messages_tool_result_accepts_nested_json_without_mutation() -> None:
+    content = [
+        {
+            "payload": [
+                None,
+                False,
+                0,
+                1.5,
+                "001",
+                {"nested": ["value", {"ok": True}]},
+            ]
+        },
+        {"type": "text", "text": "plain text"},
+    ]
+    message = ToolMessage(
+        content=content,
+        tool_call_id="tools-state",
+        name="weather",
+    )
+    original = copy.deepcopy(message.content)
+
+    converted = primary.convert_messages([message], cached_uploads={})[0]
+
+    assert converted.content
+    assert converted.content[0].function_result
+    assert converted.content[0].function_result.result == [
+        {
+            "payload": [
+                None,
+                False,
+                0,
+                1.5,
+                "001",
+                {"nested": ["value", {"ok": True}]},
+            ]
+        },
+        "plain text",
+    ]
+    assert message.content == original
+
+
+@pytest.mark.parametrize(
+    ("invalid", "match"),
+    [
+        (object(), r"\$\[0\]\['payload'\]\[0\].*object"),
+        ({1: "value"}, r"\$\[0\]\['payload'\].*string keys"),
+        (float("nan"), r"\$\[0\]\['payload'\]\[0\].*finite JSON number"),
+    ],
+)
+def test_convert_messages_tool_result_rejects_non_json_values_with_path(
+    invalid: Any,
+    match: str,
+) -> None:
+    message = ToolMessage(
+        content=[{"payload": [invalid]}]
+        if not isinstance(invalid, dict)
+        else [{"payload": invalid}],
+        tool_call_id="tools-state",
+        name="weather",
+    )
+
+    with pytest.raises(ValueError, match=match):
+        primary.convert_messages([message], cached_uploads={})
+
+
 def test_convert_messages_rejects_tool_result_without_name() -> None:
     message = ToolMessage(content="result", tool_call_id="tools-state")
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import math
 from typing import Any, Mapping, Sequence
 
 import gigachat.models as gm
@@ -224,31 +225,79 @@ def _tool_call_names(messages: Sequence[BaseMessage]) -> dict[str, str]:
     return names
 
 
+def _detach_json_tool_result(
+    value: Any,
+    *,
+    path: str,
+    active_containers: set[int],
+) -> Any:
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError(
+                f"Primary tool result at {path} must be a finite JSON number."
+            )
+        return value
+
+    if not isinstance(value, (Mapping, list)):
+        raise ValueError(
+            f"Primary tool result at {path} is not JSON-compatible: "
+            f"{type(value).__name__}."
+        )
+
+    container_id = id(value)
+    if container_id in active_containers:
+        raise ValueError(f"Primary tool result at {path} contains a cyclic value.")
+    active_containers.add(container_id)
+    try:
+        if isinstance(value, list):
+            return [
+                _detach_json_tool_result(
+                    item,
+                    path=f"{path}[{index}]",
+                    active_containers=active_containers,
+                )
+                for index, item in enumerate(value)
+            ]
+
+        if value.get("type") == "text":
+            text = value.get("text", "")
+            if not isinstance(text, str):
+                raise ValueError(
+                    f"Primary tool result text block at {path} must contain "
+                    "string 'text'."
+                )
+            return text
+
+        detached: dict[str, Any] = {}
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise ValueError(
+                    f"Primary tool result at {path} mappings must use string keys; "
+                    f"got {type(key).__name__}."
+                )
+            detached[key] = _detach_json_tool_result(
+                item,
+                path=f"{path}[{key!r}]",
+                active_containers=active_containers,
+            )
+        return detached
+    finally:
+        active_containers.remove(container_id)
+
+
 def _normalize_tool_result(content: Any) -> Any:
     if isinstance(content, str):
         try:
-            return json.loads(content)
+            content = json.loads(content)
         except ValueError:
             return content
-    if isinstance(content, (dict, int, float, bool)) or content is None:
-        return copy.deepcopy(content)
-    if not isinstance(content, list):
-        raise ValueError("Primary tool result content must be JSON-compatible or text.")
-
-    normalized: list[Any] = []
-    for item in content:
-        if isinstance(item, str):
-            normalized.append(_normalize_tool_result(item))
-        elif isinstance(item, Mapping) and item.get("type") == "text":
-            text = item.get("text", "")
-            if not isinstance(text, str):
-                raise ValueError("Tool result text block must contain string 'text'.")
-            normalized.append(_normalize_tool_result(text))
-        else:
-            raise ValueError(
-                "Primary tool result content blocks only support text blocks."
-            )
-    return normalized
+    return _detach_json_tool_result(
+        content,
+        path="$",
+        active_containers=set(),
+    )
 
 
 def _convert_ai_message(
