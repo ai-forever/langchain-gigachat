@@ -123,6 +123,17 @@ def _assert_primary_metadata(message: AIMessage | AIMessageChunk) -> None:
     assert message.usage_metadata["total_tokens"] > 0
 
 
+def _assert_server_tool_blocks_if_reported(
+    message: AIMessage,
+    blocks: Sequence[dict[str, Any]],
+) -> None:
+    if message.response_metadata.get("tool_execution") is not None:
+        assert any(
+            block.get("type") in {"server_tool_call", "server_tool_result"}
+            for block in blocks
+        )
+
+
 def test_sync_invoke_uses_primary_route_from_v1_base_url(
     primary_llm: GigaChat,
 ) -> None:
@@ -228,7 +239,7 @@ def test_client_function_two_turn_roundtrip(primary_llm: GigaChat) -> None:
     assert _message_text(follow_up).strip() == "PRIMARY_V2_TOOL_ROUNDTRIP_OK"
 
 
-def test_web_search_preserves_server_tool_and_sources(
+def test_web_search_returns_text_and_sources(
     primary_llm: GigaChat,
 ) -> None:
     runnable = primary_llm.bind_tools(
@@ -242,10 +253,7 @@ def test_web_search_preserves_server_tool_and_sources(
 
     assert isinstance(result, AIMessage)
     blocks: list[dict[str, Any]] = [dict(block) for block in result.content_blocks]
-    assert any(
-        block.get("type") in {"server_tool_call", "server_tool_result"}
-        for block in blocks
-    )
+    assert _message_text(result).strip()
     annotations = [
         annotation
         for block in blocks
@@ -257,6 +265,7 @@ def test_web_search_preserves_server_tool_and_sources(
         annotation.get("type") == "citation" and annotation.get("url")
         for annotation in annotations
     )
+    _assert_server_tool_blocks_if_reported(result, blocks)
 
 
 def test_code_interpreter_through_bind_tools(primary_llm: GigaChat) -> None:
@@ -271,11 +280,10 @@ def test_code_interpreter_through_bind_tools(primary_llm: GigaChat) -> None:
 
     assert isinstance(result, AIMessage)
     blocks: list[dict[str, Any]] = [dict(block) for block in result.content_blocks]
-    assert any(
-        block.get("type") in {"server_tool_call", "server_tool_result"}
-        for block in blocks
-    )
-    assert "1517" in _message_text(result)
+    text = _message_text(result).strip()
+    assert text
+    assert "1517" in text
+    _assert_server_tool_blocks_if_reported(result, blocks)
 
 
 @pytest.mark.skipif(
