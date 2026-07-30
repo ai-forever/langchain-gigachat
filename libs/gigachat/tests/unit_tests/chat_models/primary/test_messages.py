@@ -104,12 +104,16 @@ def test_convert_messages_ai_function_call_preserves_provider_ids() -> None:
 
     assert converted.model_dump(exclude_none=True, by_alias=True) == {
         "message_id": "provider-message",
-        "content": [{"text": "calling"}],
+        "content": [
+            {"text": "calling"},
+            {
+                "function_call": {
+                    "name": "weather",
+                    "arguments": {"city": "Moscow"},
+                }
+            },
+        ],
         "tools_state_id": "tools-state",
-        "function_call": {
-            "name": "weather",
-            "arguments": {"city": "Moscow"},
-        },
         "role": "assistant",
     }
 

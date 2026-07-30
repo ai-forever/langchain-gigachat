@@ -201,8 +201,10 @@ def test_client_function_call_uses_tools_state_id() -> None:
 
     provider_message = convert_messages([message], cached_uploads={})[0]
     assert provider_message.tools_state_id == "tools-state-1"
-    assert provider_message.function_call is not None
-    assert provider_message.function_call.model_dump(
+    assert provider_message.function_call is None
+    assert provider_message.content
+    assert provider_message.content[0].function_call is not None
+    assert provider_message.content[0].function_call.model_dump(
         exclude_none=True,
         by_alias=True,
     ) == {

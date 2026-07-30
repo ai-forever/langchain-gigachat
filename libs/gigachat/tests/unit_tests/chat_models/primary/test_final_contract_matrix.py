@@ -272,7 +272,9 @@ def test_public_client_tool_loop_replays_function_and_result(
         "assistant",
         "tool",
     ]
-    assert payload.messages[1].function_call == gm.PrimaryChatFunctionCall(
+    assert payload.messages[1].function_call is None
+    assert payload.messages[1].content
+    assert payload.messages[1].content[0].function_call == gm.PrimaryChatFunctionCall(
         name="lookup_weather",
         arguments={"city": "Moscow"},
     )

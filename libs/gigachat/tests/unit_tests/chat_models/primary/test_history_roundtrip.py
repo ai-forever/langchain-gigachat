@@ -248,7 +248,9 @@ def test_client_function_call_and_tool_result_continue_as_provider_history() -> 
         cached_uploads={},
     )
 
-    assert history[0].function_call == gm.PrimaryChatFunctionCall(
+    assert history[0].function_call is None
+    assert history[0].content
+    assert history[0].content[0].function_call == gm.PrimaryChatFunctionCall(
         name="lookup_weather",
         arguments={"city": "Moscow"},
     )

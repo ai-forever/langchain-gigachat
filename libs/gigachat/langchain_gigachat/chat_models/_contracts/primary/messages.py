@@ -275,9 +275,13 @@ def _convert_ai_message(
         name = tool_call.get("name")
         if not isinstance(name, str) or not name:
             raise ValueError("Primary AIMessage tool call requires a function name.")
-        kwargs["function_call"] = ChatFunctionCall(
-            name=name,
-            arguments=copy.deepcopy(tool_call.get("args", {})),
+        content.append(
+            gm.ChatContentPart(
+                function_call=ChatFunctionCall(
+                    name=name,
+                    arguments=copy.deepcopy(tool_call.get("args", {})),
+                )
+            )
         )
         tool_call_id = tool_call.get("id")
         if tool_call_id is not None:
@@ -291,17 +295,22 @@ def _convert_ai_message(
             kwargs["tools_state_id"] = tool_call_id
     elif function_call := message.additional_kwargs.get("function_call"):
         if isinstance(function_call, BaseModel):
-            kwargs["function_call"] = function_call.model_dump(
+            function_call = function_call.model_dump(
                 exclude_none=True,
                 by_alias=True,
             )
         elif isinstance(function_call, Mapping):
-            kwargs["function_call"] = copy.deepcopy(dict(function_call))
+            function_call = copy.deepcopy(function_call)
         else:
             raise ValueError(
                 "additional_kwargs['function_call'] must be a mapping or "
                 "Pydantic model."
             )
+        content.append(
+            gm.ChatContentPart(
+                function_call=ChatFunctionCall.model_validate(function_call),
+            )
+        )
 
     return gm.ChatMessage(role="assistant", content=content, **kwargs)
 

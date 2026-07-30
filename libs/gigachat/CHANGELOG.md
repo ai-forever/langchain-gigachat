@@ -4,6 +4,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Primary client-tool continuation now serializes assistant `function_call`
+  history inside `content`, matching the `/v2/chat/completions` request
+  contract and allowing the following `function_result` to be accepted.
+
 ## [0.5.2a1] — 2026-07-30
 
 Primary API v2 preview. This is a prerelease and is not yet ready for a stable
