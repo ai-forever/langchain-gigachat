@@ -25,8 +25,8 @@ _AUTH_ENV_NAMES = (
 _HAS_AUTH = any(os.getenv(name) for name in _AUTH_ENV_NAMES) or bool(
     os.getenv("GIGACHAT_USER") and os.getenv("GIGACHAT_PASSWORD")
 )
-_MODEL = os.getenv("GIGACHAT_V2_TEST_MODEL", "GigaChat")
-_V1_BASE_URL = os.getenv("GIGACHAT_V2_TEST_BASE_URL", "https://api.giga.chat/v1")
+_MODEL = os.getenv("GIGACHAT_MODEL", "GigaChat-3-Lightning")
+_V1_BASE_URL = os.getenv("GIGACHAT_BASE_URL", "https://api.giga.chat/v1")
 _ASSISTANT_ID = os.getenv("GIGACHAT_V2_TEST_ASSISTANT_ID")
 _THREAD_ID = os.getenv("GIGACHAT_V2_TEST_THREAD_ID")
 _FILE_ID = os.getenv("GIGACHAT_V2_TEST_FILE_ID")
