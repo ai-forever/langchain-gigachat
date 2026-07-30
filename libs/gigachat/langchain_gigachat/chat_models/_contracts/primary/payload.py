@@ -186,6 +186,7 @@ def build_payload(
         cached_uploads=cached_uploads,
     )
 
+    storage: gm.ChatStorage | bool | None = None
     storage_assistant_id: str | None = None
     if "storage" in kwargs:
         storage, storage_assistant_id = _normalize_primary_storage(kwargs["storage"])
@@ -202,9 +203,14 @@ def build_payload(
         )
     if assistant_id is None and storage_assistant_id is not None:
         payload_values["assistant_id"] = storage_assistant_id
+        assistant_id = storage_assistant_id
 
     model = invocation_kwargs.get("model")
-    if model is None:
+    has_thread_id = (
+        isinstance(storage, gm.ChatStorage) and storage.thread_id is not None
+    )
+    is_stateful = assistant_id is not None or has_thread_id
+    if model is None and not is_stateful:
         model = defaults.model
     if model is not None:
         payload_values["model"] = model

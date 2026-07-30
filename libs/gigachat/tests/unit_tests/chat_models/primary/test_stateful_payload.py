@@ -33,6 +33,33 @@ def _build(**invocation_kwargs: Any) -> gm.ChatCompletionRequest:
     )
 
 
+def test_assistant_request_omits_implicit_default_model() -> None:
+    payload = _build(assistant_id="assistant")
+
+    assert payload.assistant_id == "assistant"
+    assert payload.model is None
+
+
+def test_thread_request_omits_implicit_default_model() -> None:
+    payload = _build(storage={"thread_id": "thread"})
+
+    assert payload.storage == gm.ChatStorage(thread_id="thread")
+    assert payload.model is None
+
+
+def test_explicit_model_is_preserved_for_assistant_request() -> None:
+    payload = _build(assistant_id="assistant", model="invocation-model")
+
+    assert payload.assistant_id == "assistant"
+    assert payload.model == "invocation-model"
+
+
+def test_stateless_request_keeps_default_model() -> None:
+    payload = _build()
+
+    assert payload.model == "default-model"
+
+
 def test_storage_none_is_preserved() -> None:
     payload = _build(storage=None)
 
@@ -60,6 +87,7 @@ def test_chat_storage_object_is_copied() -> None:
 
     payload = _build(storage=storage)
 
+    assert isinstance(payload.storage, gm.ChatStorage)
     assert payload.storage == storage
     assert payload.storage is not storage
     assert payload.storage.metadata is not storage.metadata
@@ -91,11 +119,13 @@ def test_legacy_storage_maps_every_primary_equivalent() -> None:
     payload = _build(storage=storage)
 
     assert payload.assistant_id == "assistant"
+    assert isinstance(payload.storage, gm.ChatStorage)
     assert payload.storage == gm.ChatStorage(
         limit=4,
         thread_id="thread",
         metadata={"labels": ["one"]},
     )
+    assert payload.model is None
     assert "is_stateful" not in payload.storage.model_dump()
     assert "assistant_id" not in payload.storage.model_dump()
 
