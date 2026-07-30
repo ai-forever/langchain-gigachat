@@ -1228,9 +1228,12 @@ def _parse_response_format_text(
     text = text.strip()
     if not text:
         return False, None
-    if _is_pydantic_class(response_format):
-        return True, response_format.model_validate_json(text)
-    return True, json.loads(text)
+    try:
+        if _is_pydantic_class(response_format):
+            return True, response_format.model_validate_json(text)
+        return True, json.loads(text)
+    except Exception:
+        return False, None
 
 
 def _parsed_response_format_chunk(
