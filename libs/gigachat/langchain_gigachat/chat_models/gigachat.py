@@ -1164,9 +1164,7 @@ def _attach_parsed_response_format(
     ):
         return result
 
-    pydantic_schema = (
-        response_format if _is_pydantic_class(response_format) else None
-    )
+    pydantic_schema = response_format if _is_pydantic_class(response_format) else None
     for generation in result.generations:
         message = generation.message
         if not isinstance(message, AIMessage):
