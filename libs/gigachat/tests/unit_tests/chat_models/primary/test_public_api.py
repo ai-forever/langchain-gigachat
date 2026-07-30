@@ -199,3 +199,45 @@ def test_primary_stateful_public_request_omits_implicit_model(
     payload = sdk_client.chat.create.call_args.args[0]
     assert isinstance(payload, gm.ChatCompletionRequest)
     assert payload.model is None
+
+
+@pytest.mark.parametrize("use_api_v2", [False, True])
+def test_json_schema_structured_output_uses_route_specific_format(
+    sdk_client: MagicMock,
+    use_api_v2: bool,
+) -> None:
+    _configure_json_responses(sdk_client)
+    schema = {
+        "title": "Answer",
+        "type": "object",
+        "properties": {"value": {"type": "integer"}},
+        "required": ["value"],
+    }
+
+    result = (
+        GigaChat(
+            model=MODEL,
+            use_api_v2=use_api_v2,
+        )
+        .with_structured_output(
+            schema,
+            method="json_schema",
+        )
+        .invoke("Hello")
+    )
+
+    assert result == {"value": 7}
+    if use_api_v2:
+        payload = sdk_client.chat.create.call_args.args[0]
+        assert isinstance(payload, gm.ChatCompletionRequest)
+        assert payload.model_options is not None
+        assert isinstance(
+            payload.model_options.response_format,
+            gm.ChatResponseFormat,
+        )
+        assert payload.model_options.response_format.type == "json_schema"
+    else:
+        payload = sdk_client.chat.call_args.args[0]
+        assert isinstance(payload, gm.Chat)
+        assert isinstance(payload.response_format, gm.JsonSchemaResponseFormat)
+        assert payload.response_format.type == "json_schema"
