@@ -79,6 +79,7 @@ from langchain_core.utils.pydantic import is_basemodel_subclass, pre_init
 from pydantic import BaseModel, PrivateAttr
 from typing_extensions import override
 
+from langchain_gigachat.chat_models._contracts import primary
 from langchain_gigachat.chat_models.base_gigachat import _BaseGigaChat
 from langchain_gigachat.utils.function_calling import (
     convert_to_gigachat_function,
@@ -563,6 +564,49 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
 
         return payload
 
+    def _resolve_chat_contract(
+        self, kwargs: Mapping[str, Any]
+    ) -> Literal["legacy", "primary"]:
+        return "primary" if kwargs.get("use_api_v2", self.use_api_v2) else "legacy"
+
+    def _primary_defaults(self) -> primary.RequestDefaults:
+        function_ranker = self.function_ranker
+        if isinstance(function_ranker, BaseModel):
+            function_ranker = function_ranker.model_dump(
+                exclude_none=True, by_alias=True
+            )
+        return primary.RequestDefaults(
+            model=self.model,
+            profanity_check=self.profanity_check,
+            temperature=self.temperature,
+            top_p=self.top_p,
+            max_tokens=self.max_tokens,
+            repetition_penalty=self.repetition_penalty,
+            update_interval=self.update_interval,
+            reasoning_effort=self.reasoning_effort,
+            function_ranker=function_ranker,
+            flags=self.flags,
+        )
+
+    def _build_primary_payload(
+        self, messages: List[BaseMessage], kwargs: Mapping[str, Any]
+    ) -> gm.ChatCompletionRequest:
+        invocation_kwargs = dict(kwargs)
+        invocation_kwargs.pop("use_api_v2", None)
+        tool_binding = primary.build_tool_binding(
+            functions=invocation_kwargs.get("functions", ()),
+            tools=invocation_kwargs.get("tools", ()),
+            function_call=invocation_kwargs.get("function_call"),
+            explicit_tool_config=invocation_kwargs.get("tool_config"),
+        )
+        return primary.build_payload(
+            messages,
+            defaults=self._primary_defaults(),
+            invocation_kwargs=invocation_kwargs,
+            cached_uploads=self._cached_uploads,
+            tool_binding=tool_binding,
+        )
+
     def _create_chat_result(self, response: gm.ChatCompletion) -> ChatResult:
         """Convert SDK response to ChatResult and preserve tracing metadata.
 
@@ -670,6 +714,11 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             return generate_from_stream(stream_iter)
 
         self._upload_attachments(messages)
+        if self._resolve_chat_contract(kwargs) == "primary":
+            primary_payload = self._build_primary_payload(messages, kwargs)
+            primary_client: Any = self._client.chat
+            primary_response = primary_client.create(primary_payload)
+            return primary.create_chat_result(primary_response)
         payload = self._build_payload(messages, **kwargs)
         response = self._client.chat(payload)
         return self._create_chat_result(response)
@@ -693,6 +742,11 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             return await agenerate_from_stream(stream_iter)
 
         await self._aupload_attachments(messages)
+        if self._resolve_chat_contract(kwargs) == "primary":
+            primary_payload = self._build_primary_payload(messages, kwargs)
+            primary_client: Any = self._client.achat
+            primary_response = await primary_client.create(primary_payload)
+            return primary.create_chat_result(primary_response)
         payload = self._build_payload(messages, **kwargs)
         response = await self._client.achat(payload)
         return self._create_chat_result(response)
@@ -708,6 +762,20 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         # Kept in the signature for LangChain compatibility, but wrapper-side
         # local stop handling was removed in 0.5.x. See MIGRATION.md.
         self._upload_attachments(messages)
+        if self._resolve_chat_contract(kwargs) == "primary":
+            primary_payload = self._build_primary_payload(messages, kwargs)
+            state = primary.StreamState()
+            primary_client: Any = self._client.chat
+            for event in primary_client.stream(primary_payload):
+                primary_chunk = primary.convert_stream_event(event, state=state)
+                if primary_chunk is None:
+                    continue
+                if run_manager:
+                    run_manager.on_llm_new_token(
+                        primary_chunk.text, chunk=primary_chunk
+                    )
+                yield primary_chunk
+            return
         payload = self._build_payload(messages, **kwargs)
         first_chunk = True
 
@@ -735,6 +803,20 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         # Kept in the signature for LangChain compatibility, but wrapper-side
         # local stop handling was removed in 0.5.x. See MIGRATION.md.
         await self._aupload_attachments(messages)
+        if self._resolve_chat_contract(kwargs) == "primary":
+            primary_payload = self._build_primary_payload(messages, kwargs)
+            state = primary.StreamState()
+            primary_client: Any = self._client.achat
+            async for event in primary_client.stream(primary_payload):
+                primary_chunk = primary.convert_stream_event(event, state=state)
+                if primary_chunk is None:
+                    continue
+                if run_manager:
+                    await run_manager.on_llm_new_token(
+                        primary_chunk.text, chunk=primary_chunk
+                    )
+                yield primary_chunk
+            return
         payload = self._build_payload(messages, **kwargs)
         first_chunk = True
 
