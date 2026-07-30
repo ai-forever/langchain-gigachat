@@ -64,3 +64,6 @@ filterwarnings = [
 
 [tool.coverage.run]
 omit = ["tests/*"]
+
+[tool.coverage.report]
+fail_under = 90
