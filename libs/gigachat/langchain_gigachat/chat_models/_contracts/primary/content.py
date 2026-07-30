@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Collection, Mapping
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -193,6 +193,19 @@ def convert_text_content(
     if extras:
         block["extras"] = extras
     return block
+
+
+def reasoning_content(
+    blocks: Iterable[str | Mapping[str, Any]],
+) -> str | None:
+    """Collect standard reasoning blocks for the compatibility response field."""
+    fragments = [
+        value
+        for block in blocks
+        if isinstance(block, Mapping) and block.get("type") == "reasoning"
+        if isinstance(value := block.get("reasoning"), str)
+    ]
+    return "".join(fragments) if fragments else None
 
 
 def convert_tool_execution(

@@ -73,6 +73,9 @@ def test_response_messages_are_aggregated_into_one_generation() -> None:
         {"type": "reasoning", "reasoning": "Think"},
         {"type": "text", "text": "Answer"},
     ]
+    assert (
+        result.generations[0].message.additional_kwargs["reasoning_content"] == "Think"
+    )
 
 
 def test_mixed_text_and_files_use_standard_content_blocks() -> None:

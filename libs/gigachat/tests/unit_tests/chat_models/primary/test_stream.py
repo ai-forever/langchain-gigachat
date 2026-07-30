@@ -149,6 +149,40 @@ def test_fragmented_text_aggregates_and_callback_text_is_only_text() -> None:
     assert {chunk.message.id for chunk in chunks} == {"message-1"}
 
 
+def test_fragmented_reasoning_is_available_in_additional_kwargs() -> None:
+    state = primary.StreamState()
+    chunks = [
+        _convert(
+            {
+                "event": "response.message.delta",
+                "messages": [
+                    {"role": "reasoning", "content": [{"text": text}]},
+                ],
+            },
+            state,
+        )
+        for text in ("Think", "ing")
+    ]
+    chunks.append(
+        _convert(
+            {
+                "event": "response.message.delta",
+                "messages": [
+                    {"role": "assistant", "content": [{"text": "Answer"}]},
+                ],
+            },
+            state,
+        )
+    )
+
+    aggregate = reduce(add, chunks)
+
+    assert [
+        chunk.message.additional_kwargs.get("reasoning_content") for chunk in chunks
+    ] == ["Think", "ing", None]
+    assert aggregate.message.additional_kwargs["reasoning_content"] == "Thinking"
+
+
 def test_text_and_final_metadata_aggregate_semantically() -> None:
     state = primary.StreamState()
     chunks = [

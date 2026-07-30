@@ -17,6 +17,7 @@ from langchain_gigachat.chat_models._contracts.primary.content import (
     convert_text_content,
     convert_tool_execution,
     create_usage_metadata,
+    reasoning_content,
     unknown_provider_fields,
 )
 
@@ -383,6 +384,9 @@ def create_chat_result(response: gm.ChatCompletionResponse) -> ChatResult:
         blocks, raw_function_calls, tool_calls, invalid_tool_calls = _content_blocks(
             response
         )
+        reasoning = reasoning_content(blocks)
+        if reasoning is not None:
+            additional_kwargs["reasoning_content"] = reasoning
         if raw_function_calls:
             additional_kwargs["function_calls"] = raw_function_calls
             if len(raw_function_calls) == 1:

@@ -18,6 +18,7 @@ from langchain_gigachat.chat_models._contracts.primary.content import (
     create_usage_metadata,
     json_fragment,
     provider_dict,
+    reasoning_content,
     unknown_provider_fields,
 )
 from langchain_gigachat.chat_models._contracts.primary.types import StreamState
@@ -764,8 +765,13 @@ def convert_stream_event(
         return None
 
     state.first_chunk = False
+    additional_kwargs: dict[str, Any] = {}
+    reasoning = reasoning_content(content)
+    if reasoning is not None:
+        additional_kwargs["reasoning_content"] = reasoning
     message = AIMessageChunk(
         content=content,
+        additional_kwargs=additional_kwargs,
         id=state.message_id,
         response_metadata=response_metadata,
         tool_call_chunks=tool_calls,
