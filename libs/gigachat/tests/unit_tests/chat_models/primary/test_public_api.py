@@ -115,7 +115,7 @@ def test_legacy_bind_tools_client_function_is_unchanged(
     assert isinstance(payload, gm.Chat)
     assert payload.functions is not None
     assert payload.functions[0].name == "lookup"
-    assert payload.function_call is not None
+    assert isinstance(payload.function_call, gm.ChatFunctionCall)
     assert payload.function_call.name == "lookup"
     sdk_client.chat.create.assert_not_called()
 
