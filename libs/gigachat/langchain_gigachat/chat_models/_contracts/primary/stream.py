@@ -376,14 +376,18 @@ def _convert_content_part(
         )
 
     if part.get("tool_execution") is not None:
-        content.append(
-            _tool_execution_block(
-                part["tool_execution"],
-                event_name=event_name,
-                incoming_tools_state_id=incoming_tools_state_id,
-                state=state,
-            )
+        tool_execution_block = _tool_execution_block(
+            part["tool_execution"],
+            event_name=event_name,
+            incoming_tools_state_id=incoming_tools_state_id,
+            state=state,
         )
+        block_extras = tool_execution_block.setdefault("extras", {})
+        if inline_data_value is not None:
+            block_extras["inline_data"] = _as_dict(inline_data_value)
+        if extra:
+            block_extras["provider_data"] = extra
+        content.append(tool_execution_block)
 
     if part.get("function_result") is not None:
         content.append(
@@ -463,11 +467,21 @@ def _convert_messages(
 ) -> tuple[
     str | list[str | dict[str, Any]],
     list[ToolCallChunk],
+    bool,
 ]:
     content: list[str | dict[str, Any]] = []
     tool_calls: list[ToolCallChunk] = []
     messages = _as_dict_list(messages_value, field="messages")
     plain_text_output = _is_plain_text_messages(messages)
+    # The SDK can mirror one execution across levels; prefer the deepest source.
+    has_part_tool_execution = any(
+        part.get("tool_execution") is not None
+        for message in messages
+        for part in _as_dict_list(message.get("content"), field="messages.content")
+    )
+    has_message_tool_execution = not has_part_tool_execution and any(
+        message.get("tool_execution") is not None for message in messages
+    )
 
     for message in messages:
         role = str(message.get("role") or "assistant")
@@ -499,7 +513,7 @@ def _convert_messages(
                     state=state,
                 )
             )
-        if message.get("tool_execution") is not None:
+        if has_message_tool_execution and message.get("tool_execution") is not None:
             content.append(
                 _tool_execution_block(
                     message["tool_execution"],
@@ -541,7 +555,11 @@ def _convert_messages(
         )
     else:
         normalized_content = content
-    return normalized_content, tool_calls
+    return (
+        normalized_content,
+        tool_calls,
+        has_part_tool_execution or has_message_tool_execution,
+    )
 
 
 def _observe_scalar_metadata(
@@ -726,7 +744,7 @@ def convert_stream_event(
             or f"primary-stream-{uuid4()}"
         )
 
-    content, tool_calls = _convert_messages(
+    content, tool_calls, has_nested_tool_execution = _convert_messages(
         normalized_messages,
         event_name=event_name,
         incoming_tools_state_id=provider_tools_state_id,
@@ -734,7 +752,7 @@ def convert_stream_event(
     )
 
     top_level_tool_execution = event_data.get("tool_execution")
-    if top_level_tool_execution is not None:
+    if top_level_tool_execution is not None and not has_nested_tool_execution:
         block = _tool_execution_block(
             top_level_tool_execution,
             event_name=event_name,

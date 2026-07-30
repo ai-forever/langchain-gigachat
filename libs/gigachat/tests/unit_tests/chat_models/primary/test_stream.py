@@ -451,6 +451,28 @@ def test_tool_completed_is_a_metadata_only_server_tool_result() -> None:
     assert chunk.message.response_metadata["event"] == "response.tool.completed"
 
 
+def test_sdk_tool_completed_event_deduplicates_execution_and_keeps_sources(
+    tool_completed_event: gm.PrimaryChatCompletionChunk,
+) -> None:
+    chunk = _convert(tool_completed_event)
+    blocks = _content_blocks(chunk)
+    result_blocks = [block for block in blocks if block["type"] == "server_tool_result"]
+    tool_coordinates = [
+        (block["index"], block["tool_call_id"])
+        for block in blocks
+        if block["type"] == "server_tool_result"
+    ]
+
+    assert len(result_blocks) == 1
+    assert len(tool_coordinates) == len(set(tool_coordinates)) == 1
+    assert result_blocks[0]["extras"]["inline_data"]["sources"] == {
+        "source-001": {
+            "url": "https://example.test/weather",
+            "title": "Weather source",
+        }
+    }
+
+
 def test_server_tool_lifecycle_keeps_call_index_and_separate_result_index() -> None:
     state = primary.StreamState()
     started = _convert(
