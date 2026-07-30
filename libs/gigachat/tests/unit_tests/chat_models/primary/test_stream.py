@@ -480,6 +480,103 @@ def test_tool_progress_is_a_server_tool_call_chunk() -> None:
     ]
 
 
+def test_server_tool_name_can_arrive_after_started() -> None:
+    state = primary.StreamState()
+    started = _convert(
+        {
+            "event": "response.tool.started",
+            "tool_execution": {
+                "call_id": "tool-1",
+                "status": "running",
+            },
+        },
+        state,
+    )
+    delta = _convert(
+        {
+            "event": "response.tool.delta",
+            "tool_execution": {
+                "call_id": "tool-1",
+                "name": "web_search",
+                "status": "running",
+            },
+        },
+        state,
+    )
+
+    assert _content_blocks(started)[0]["name"] == ""
+    assert _content_blocks(delta)[0]["name"] == "web_search"
+    aggregate_block = _content_blocks(started + delta)[0]
+    assert aggregate_block["name"] == "web_search"
+    assert aggregate_block["extras"]["provider_tool_execution_updates"] == [
+        {
+            "call_id": "tool-1",
+            "name": "web_search",
+            "status": "running",
+        }
+    ]
+    assert state.server_tool_names == {"tool-1": "web_search"}
+
+
+def test_server_tool_name_can_remain_missing_until_completed() -> None:
+    state = primary.StreamState()
+    started = _convert(
+        {
+            "event": "response.tool.started",
+            "tool_execution": {
+                "call_id": "tool-1",
+                "status": "running",
+            },
+        },
+        state,
+    )
+    completed = _convert(
+        {
+            "event": "response.tool.completed",
+            "tool_execution": {
+                "call_id": "tool-1",
+                "status": "completed",
+            },
+        },
+        state,
+    )
+
+    assert _content_blocks(started)[0]["name"] == ""
+    assert _content_blocks(completed)[0]["tool_call_id"] == "tool-1"
+    assert state.server_tool_names == {}
+
+
+def test_conflicting_real_server_tool_names_fail_clearly() -> None:
+    state = primary.StreamState()
+    _convert(
+        {
+            "event": "response.tool.started",
+            "tool_execution": {
+                "call_id": "tool-1",
+                "name": "web_search",
+                "status": "running",
+            },
+        },
+        state,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="Conflicting names for primary server tool 'tool-1'",
+    ):
+        _convert(
+            {
+                "event": "response.tool.completed",
+                "tool_execution": {
+                    "call_id": "tool-1",
+                    "name": "code_interpreter",
+                    "status": "completed",
+                },
+            },
+            state,
+        )
+
+
 def test_tool_completed_is_a_metadata_only_server_tool_result() -> None:
     chunk = _convert(
         {
@@ -673,10 +770,8 @@ def test_web_search_inline_data_updates_server_tool_result() -> None:
 
     assert inline_data_blocks == [
         {
-            "type": "server_tool_result",
-            "id": f"{state.message_id}:server-tool:result",
-            "index": 1,
-            "extras": {
+            "type": "non_standard",
+            "value": {
                 "inline_data": {
                     "images": [],
                     "sources": {
@@ -687,6 +782,7 @@ def test_web_search_inline_data_updates_server_tool_result() -> None:
                     },
                 }
             },
+            "index": 1,
         }
     ]
     assert all(block["type"] != "non_standard" for block in aggregate_blocks)
@@ -700,6 +796,98 @@ def test_web_search_inline_data_updates_server_tool_result() -> None:
         "text": "Latest news",
         "index": 2,
     }
+    assert state.pending_server_tool_result_id is None
+
+
+def test_pending_result_clears_when_unrelated_tool_begins() -> None:
+    state = primary.StreamState()
+    completed = _convert(
+        {
+            "event": "response.tool.completed",
+            "tool_execution": {
+                "call_id": "tool-1",
+                "name": "web_search",
+                "status": "completed",
+            },
+        },
+        state,
+    )
+    assert state.pending_server_tool_result_id == "tool-1"
+
+    started = _convert(
+        {
+            "event": "response.tool.started",
+            "tool_execution": {
+                "call_id": "tool-2",
+                "name": "code_interpreter",
+                "status": "running",
+            },
+        },
+        state,
+    )
+    inline = _convert(
+        {
+            "event": "response.message.delta",
+            "messages": [
+                {
+                    "content": [
+                        {
+                            "inline_data": {
+                                "sources": {
+                                    "1": {"url": "https://example.test/unrelated"}
+                                }
+                            }
+                        }
+                    ]
+                }
+            ],
+        },
+        state,
+    )
+
+    aggregate_blocks = _content_blocks(completed + started + inline)
+
+    assert state.pending_server_tool_result_id is None
+    assert aggregate_blocks[0]["type"] == "server_tool_result"
+    assert "inline_data" not in aggregate_blocks[0].get("extras", {})
+    assert _content_blocks(inline)[0]["type"] == "non_standard"
+
+
+@pytest.mark.parametrize(
+    "event",
+    [
+        {"event": "response.message.done"},
+        {"event": "response.error"},
+        {
+            "event": "response.tool.failed",
+            "tool_execution": {
+                "call_id": "tool-2",
+                "name": "web_search",
+                "status": "failed",
+            },
+        },
+    ],
+)
+def test_pending_result_clears_on_stream_terminal_or_failure(
+    event: dict[str, Any],
+) -> None:
+    state = primary.StreamState()
+    _convert(
+        {
+            "event": "response.tool.completed",
+            "tool_execution": {
+                "call_id": "tool-1",
+                "name": "web_search",
+                "status": "completed",
+            },
+        },
+        state,
+    )
+    assert state.pending_server_tool_result_id == "tool-1"
+
+    _convert(event, state)
+
+    assert state.pending_server_tool_result_id is None
 
 
 def test_done_without_messages_preserves_finish_usage_and_metadata() -> None:
@@ -846,21 +1034,41 @@ def test_late_header_addition_merges_without_repeating_existing_values() -> None
     }
 
 
-def test_unknown_event_preserves_raw_provider_payload() -> None:
-    event = {
-        "event": "response.future.delta",
-        "message_id": "message-1",
-        "future_field": {"answer": 42},
-    }
+def test_unknown_events_preserve_ordered_raw_provider_payloads() -> None:
+    events = [
+        {
+            "event": "response.future.started",
+            "message_id": "message-1",
+            "future_field": {"step": 1},
+        },
+        {
+            "event": "response.future.delta",
+            "message_id": "message-1",
+            "future_field": {"step": 2},
+        },
+    ]
 
-    chunk = _convert(event)
+    state = primary.StreamState()
+    chunks = [_convert(event, state) for event in events]
+    aggregate = chunks[0] + chunks[1]
 
-    assert chunk.text == ""
-    assert chunk.message.response_metadata["events"] == ["response.future.delta"]
-    assert chunk.message.response_metadata["provider_fields"] == {
-        "future_field": {"answer": 42}
-    }
-    assert chunk.message.response_metadata["raw_event"] == event
+    assert [chunk.text for chunk in chunks] == ["", ""]
+    assert aggregate.message.response_metadata["events"] == [
+        "response.future.started",
+        "response.future.delta",
+    ]
+    assert [chunk.message.response_metadata["provider_fields"] for chunk in chunks] == [
+        {"future_field": {"step": 1}},
+        {"future_field": {"step": 2}},
+    ]
+    assert aggregate.message.response_metadata["raw_events"] == events
+
+
+def test_tool_in_progress_is_a_known_event() -> None:
+    chunk = _convert({"event": "response.tool.in_progress"})
+
+    assert chunk.message.response_metadata["events"] == ["response.tool.in_progress"]
+    assert "raw_events" not in chunk.message.response_metadata
 
 
 @pytest.mark.parametrize(
