@@ -28,6 +28,7 @@ _KNOWN_EVENTS = frozenset(
         "response.message.delta",
         "response.message.done",
         "response.tool.started",
+        "response.tool.in_progress",
         "response.tool.delta",
         "response.tool.completed",
         "response.tool.failed",
@@ -718,7 +719,7 @@ def _response_metadata(
     if provider_fields:
         metadata["provider_fields"] = provider_fields
     if event_name is not None and event_name not in _KNOWN_EVENTS:
-        metadata["raw_event"] = dict(event)
+        metadata["raw_events"] = [dict(event)]
     return metadata
 
 
