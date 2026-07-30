@@ -279,6 +279,24 @@ structured = llm.with_structured_output(City, method="json_schema")
 city = structured.invoke("Return information about Kazan.")
 ```
 
+Primary v2 also preserves explicit SDK response formats when binding directly:
+
+```python
+ticket_id_llm = llm.bind(
+    response_format={
+        "type": "regex",
+        "regex": r"[A-Z]{2}-[0-9]{4}",
+    }
+)
+```
+
+Supported explicit types are `text`, `json_schema`, and `regex`. A mapping
+without an explicit response-format discriminator is treated as a raw JSON
+Schema. Unknown explicit formats are rejected before the provider call.
+`strict` is supported only together with a JSON Schema `response_format`;
+GigaChat has no confirmed strict tool-schema field, so
+`bind_tools(..., strict=True)` without `response_format` raises.
+
 #### Assistant and thread state
 
 Stateful requests accept either a top-level assistant ID or a storage thread:
@@ -330,7 +348,9 @@ available when this prerelease was prepared (`0.2.1`) does not expose
 `chat.create`, `chat.stream`, `achat.create`, and `achat.stream`. Do not promote
 this integration to a stable package release until a stable SDK containing
 those resources is available and the dependency can be changed to a stable
-range.
+range. The reviewed prerelease CI passed 433 tests on Python 3.10–3.14, and its
+lint/mypy jobs are green. Live API validation has not been run and remains a
+separate release gate.
 
 Primary v2 currently rejects parallel client tool calls in one assistant
 message. `tool_choice="any"` is also rejected because its provider semantics

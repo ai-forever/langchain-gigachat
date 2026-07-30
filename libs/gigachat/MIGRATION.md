@@ -96,7 +96,7 @@ meaning in stream and non-stream results:
 - late metadata-only events are emitted instead of being discarded;
 - unknown provider extensions remain available under
   `response_metadata["provider_fields"]`; raw unknown stream events are kept
-  under `response_metadata["raw_event"]`.
+  in arrival order under `response_metadata["raw_events"]`.
 
 Applications that aggregate chunks should retain the final metadata-only chunk
 or use LangChain's normal stream aggregation helpers.
@@ -114,6 +114,16 @@ Caller-owned schemas are copied before normalization. Model support for native
 JSON Schema is provider-dependent, so keep the function-calling fallback when
 deploying across mixed model versions.
 
+Primary response-format normalization preserves the SDK's explicit `text`,
+`json_schema`, and `regex` formats. OpenAI-style nested `json_schema` values are
+unwrapped to the SDK shape, while plain JSON Schema mappings remain schema
+payloads. Unknown explicit response-format types fail before network I/O.
+
+`strict` applies only to JSON Schema response formats. Because GigaChat does
+not expose a confirmed strict field for tool schemas,
+`bind_tools(..., strict=True)` without `response_format` now raises instead of
+silently accepting a no-op argument.
+
 ### Dependency and release status
 
 `langchain-gigachat==0.5.2a1` is a prerelease and requires
@@ -123,6 +133,9 @@ Therefore:
 
 - `0.5.2a1` must not be presented as stable-release ready;
 - the PR must remain draft/blocked for a stable release;
+- the reviewed prerelease CI is green on Python 3.10–3.14, with 433 tests plus
+  lint and mypy passing;
+- live API validation remains unchecked and must not be inferred from CI;
 - after a stable SDK with those resources is published, replace the exact alpha
   pin with `gigachat>=<first-stable-v2-version>,<0.3`, regenerate the lockfile,
   and repeat the full package/install validation.

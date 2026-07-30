@@ -26,6 +26,10 @@ alpha SDK.
 
 - Primary stream and non-stream results now use equivalent LangChain content
   blocks and preserve late finish, usage, request, and tool-state metadata.
+- Explicit primary response formats preserve SDK `text`, `json_schema`, and
+  `regex` semantics. Unknown response-format types fail before network I/O.
+- `bind_tools(..., strict=...)` now requires a JSON Schema `response_format`
+  instead of silently discarding strict tool-schema intent.
 - Stateful assistant/thread requests no longer receive an implicit default
   model; an explicitly supplied invocation model is still forwarded.
 - Primary `ToolMessage` continuation uses provider `role="tool"`,
@@ -33,7 +37,8 @@ alpha SDK.
   unchanged.
 - Raw primary provider responses are no longer copied into multiple output
   locations. Normalized metadata stays in standard LangChain fields and unknown
-  top-level extensions are available in `response_metadata["provider_fields"]`.
+  top-level extensions are available in `response_metadata["provider_fields"]`;
+  unknown stream events remain ordered in `response_metadata["raw_events"]`.
 
 ### Dependencies
 
@@ -42,6 +47,14 @@ alpha SDK.
   sync/async `chat.create` and `chat.stream` resource methods.
 - Stable release remains blocked until a stable SDK with those resources is
   published and the dependency is changed to a stable `<0.3` range.
+
+### Validation
+
+- Reviewed GitHub Actions completed successfully on Python 3.10–3.14 with 433
+  tests, plus green lint and mypy jobs.
+- The assembled follow-up branch passed 485 unit tests locally on Python
+  3.14.3 before packaging.
+- Live API tests were not run and remain an explicit unchecked release gate.
 
 ### Known limitations
 
