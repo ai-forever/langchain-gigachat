@@ -219,6 +219,17 @@ def _ranker_options(value: Any) -> gm.ChatRankerOptions | None:
     return gm.ChatRankerOptions.model_validate(ranker)
 
 
+def _normalize_flags(value: Any) -> list[str] | None:
+    if value is None:
+        return None
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        raise ValueError("flags must be a sequence of non-empty strings.")
+    flags = list(value)
+    if any(not isinstance(flag, str) or not flag for flag in flags):
+        raise ValueError("flags must contain only non-empty strings.")
+    return flags
+
+
 def _normalize_primary_storage(
     value: Any,
 ) -> tuple[gm.ChatStorage | bool | None, str | None]:
@@ -329,8 +340,9 @@ def build_payload(
     flags = invocation_kwargs.get("flags")
     if flags is None:
         flags = defaults.flags
-    if flags is not None:
-        payload_values["flags"] = copy.deepcopy(list(flags))
+    normalized_flags = _normalize_flags(flags)
+    if normalized_flags is not None:
+        payload_values["flags"] = normalized_flags
 
     options = _model_options(
         defaults=defaults,

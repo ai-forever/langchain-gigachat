@@ -205,6 +205,77 @@ def test_build_payload_explicit_ranker_options_win() -> None:
     )
 
 
+@pytest.mark.parametrize("flags", [["alpha", "beta"], ("alpha", "beta"), []])
+def test_build_payload_accepts_flag_sequences_without_mutation(
+    flags: list[str] | tuple[str, ...],
+) -> None:
+    original = copy.deepcopy(flags)
+
+    payload = primary.build_payload(
+        [],
+        defaults=_defaults(flags=None),
+        invocation_kwargs={"flags": flags},
+        cached_uploads={},
+    )
+
+    assert payload.flags == list(flags)
+    assert flags == original
+    if isinstance(flags, list):
+        assert payload.flags is not flags
+
+
+@pytest.mark.parametrize(
+    ("flags", "match"),
+    [
+        ("alpha", "must be a sequence"),
+        (b"alpha", "must be a sequence"),
+        (["alpha", 1], "non-empty strings"),
+        ([""], "non-empty strings"),
+    ],
+)
+def test_build_payload_rejects_invalid_flags(flags: Any, match: str) -> None:
+    with pytest.raises(ValueError, match=match):
+        primary.build_payload(
+            [],
+            defaults=_defaults(flags=None),
+            invocation_kwargs={"flags": flags},
+            cached_uploads={},
+        )
+
+
+def test_build_payload_preserves_falsey_public_values() -> None:
+    payload = primary.build_payload(
+        [],
+        defaults=_defaults(
+            temperature=0.5,
+            top_p=0.5,
+            max_tokens=100,
+            profanity_check=True,
+            function_ranker={"enabled": True},
+        ),
+        invocation_kwargs={
+            "temperature": 0,
+            "top_p": 0,
+            "max_tokens": 0,
+            "storage": False,
+            "disable_filter": False,
+            "ranker_options": {"enabled": False},
+        },
+        cached_uploads={},
+    )
+
+    assert payload.model_options is not None
+    assert payload.model_options.temperature == 0
+    assert payload.model_options.top_p == 0
+    assert payload.model_options.max_tokens == 0
+    # The pinned SDK deliberately serializes storage=False as an omitted
+    # storage field, which is the provider's "disable storage" representation.
+    assert payload.storage is None
+    assert "storage" not in _dump(payload)
+    assert payload.disable_filter is False
+    assert payload.ranker_options == gm.ChatRankerOptions(enabled=False)
+
+
 def test_build_payload_rejects_unsupported_legacy_ranker_fields() -> None:
     with pytest.raises(ValueError, match="Unsupported primary ranker option.*unknown"):
         primary.build_payload(
