@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import copy
-from typing import Any, Mapping, Sequence, cast
+from typing import Any, Mapping, Sequence
 
 import gigachat.models as gm
 from langchain_core.messages import BaseMessage
@@ -17,6 +17,7 @@ from langchain_gigachat.chat_models._contracts.primary.types import (
     RequestDefaults,
     ToolBinding,
 )
+from langchain_gigachat.utils.function_calling import model_to_json_schema
 
 _MODEL_OPTION_DEFAULTS = (
     "temperature",
@@ -73,10 +74,9 @@ def normalize_response_format(
         return None
     candidate: dict[str, Any]
     if isinstance(response_format, type) and is_basemodel_subclass(response_format):
-        pydantic_schema = cast(type[BaseModel], response_format)
         candidate = {
             "type": "json_schema",
-            "schema": pydantic_schema.model_json_schema(),
+            "schema": model_to_json_schema(response_format),
         }
     elif isinstance(
         response_format,

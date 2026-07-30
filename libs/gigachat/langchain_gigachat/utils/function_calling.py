@@ -24,6 +24,7 @@ from langchain_core.utils.function_calling import (
 )
 from langchain_core.utils.json_schema import dereference_refs
 from pydantic import BaseModel, Field, create_model
+from pydantic.v1 import BaseModel as BaseModelV1
 from typing_extensions import get_args, get_origin, is_typeddict
 
 
@@ -270,18 +271,35 @@ def _subscriptable_origin(origin: type) -> type:
     return cast(type, origin_map.get(origin, origin))
 
 
-def _model_to_schema(model: Union[type[BaseModel], dict[str, Any]]) -> dict:
+PydanticModel = Union[type[BaseModel], type[BaseModelV1]]
+
+
+def model_to_json_schema(
+    model: Union[PydanticModel, dict[str, Any]],
+) -> dict[str, Any]:
+    """Return JSON Schema for Pydantic v2 or compatibility-v1 models."""
     from langchain_gigachat.utils.pydantic_generator import GigaChatJsonSchema
 
     if hasattr(model, "model_json_schema"):
-        return model.model_json_schema(schema_generator=GigaChatJsonSchema)
-    else:
-        msg = "Model must be a Pydantic model."
-        raise TypeError(msg)
+        return cast(
+            dict[str, Any],
+            model.model_json_schema(schema_generator=GigaChatJsonSchema),
+        )
+    if hasattr(model, "schema"):
+        return cast(dict[str, Any], model.schema())
+    msg = "Model must be a Pydantic model."
+    raise TypeError(msg)
+
+
+def _model_to_schema(
+    model: Union[PydanticModel, dict[str, Any]],
+) -> dict[str, Any]:
+    """Backward-compatible internal alias for model schema generation."""
+    return model_to_json_schema(model)
 
 
 def _convert_return_schema(
-    return_model: Optional[Union[Type[BaseModel], dict[str, Any]]],
+    return_model: Optional[Union[PydanticModel, dict[str, Any]]],
 ) -> Dict[str, Any]:
     if return_model is None:
         return {}
@@ -371,11 +389,11 @@ def format_tool_to_gigachat_function(tool: BaseTool) -> GigaFunctionDescription:
 
 
 def convert_pydantic_to_gigachat_function(
-    model: Union[type[BaseModel], dict[str, Any]],
+    model: Union[PydanticModel, dict[str, Any]],
     *,
     name: Optional[str] = None,
     description: Optional[str] = None,
-    return_model: Optional[Union[Type[BaseModel], dict[str, Any]]] = None,
+    return_model: Optional[Union[PydanticModel, dict[str, Any]]] = None,
     few_shot_examples: Optional[List[dict]] = None,
 ) -> GigaFunctionDescription:
     """Converts a Pydantic model to a function description for the GigaChat API."""

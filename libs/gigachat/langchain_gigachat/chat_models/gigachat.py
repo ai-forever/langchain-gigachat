@@ -79,8 +79,8 @@ from langchain_core.runnables import (
     RunnablePassthrough,
 )
 from langchain_core.tools import BaseTool
-from langchain_core.utils.pydantic import is_basemodel_subclass, pre_init
-from pydantic import BaseModel, PrivateAttr
+from langchain_core.utils.pydantic import is_basemodel_subclass
+from pydantic import BaseModel, PrivateAttr, model_validator
 from typing_extensions import override
 
 from langchain_gigachat.chat_models._contracts import primary
@@ -89,6 +89,7 @@ from langchain_gigachat.utils.function_calling import (
     convert_to_gigachat_function,
     convert_to_gigachat_tool,
     is_primary_builtin_tool,
+    model_to_json_schema,
     normalize_tool_for_binding,
 )
 
@@ -464,9 +465,10 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
     _upload_cache_lock: Any = PrivateAttr(default_factory=threading.Lock)
     _uploads_in_flight: Dict[str, Future[str]] = PrivateAttr(default_factory=dict)
 
-    @pre_init
-    def validate_environment(cls, values: Dict) -> Dict:
-        if values.get("auto_upload_attachments"):
+    @model_validator(mode="before")
+    @classmethod
+    def validate_environment(cls, values: Any) -> Any:
+        if isinstance(values, Mapping) and values.get("auto_upload_attachments"):
             logger.warning(
                 "`auto_upload_attachments` is experiment option. "
                 "Please, don't use it on production. "
@@ -1313,7 +1315,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         else:
             if method == "json_schema":
                 if _is_pydantic_class(schema):
-                    response_format_schema = schema.model_json_schema()
+                    response_format_schema = model_to_json_schema(schema)
                 elif isinstance(schema, dict):
                     response_format_schema = copy.deepcopy(schema)
                 else:
@@ -1557,7 +1559,7 @@ def _format_instructions_for_schema(schema: Dict[str, Any] | type) -> str:
     classes and raw JSON-schema dicts.
     """
     if _is_pydantic_class(schema):
-        json_schema = schema.model_json_schema()
+        json_schema = model_to_json_schema(schema)
     elif isinstance(schema, dict):
         json_schema = schema
     else:
