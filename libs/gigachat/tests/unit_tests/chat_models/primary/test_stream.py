@@ -596,6 +596,112 @@ def test_server_tool_lifecycle_keeps_call_index_and_separate_result_index() -> N
     assert state.server_tool_result_indexes == {"server-1": 1}
 
 
+def test_web_search_inline_data_updates_server_tool_result() -> None:
+    state = primary.StreamState()
+    chunks = [
+        _convert(
+            {
+                "event": "response.tool.in_progress",
+                "messages": [
+                    {
+                        "role": "assistant",
+                        "content": [{"tool_execution": {"name": "web_search"}}],
+                    }
+                ],
+            },
+            state,
+        ),
+        _convert(
+            {
+                "event": "response.tool.completed",
+                "messages": [
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "tool_execution": {
+                                    "name": "web_search",
+                                    "status": "success",
+                                }
+                            }
+                        ],
+                    }
+                ],
+            },
+            state,
+        ),
+        _convert(
+            {
+                "event": "response.message.delta",
+                "messages": [
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "inline_data": {
+                                    "images": [],
+                                    "sources": {
+                                        "1": {
+                                            "url": "https://example.test/news",
+                                            "title": "Example news",
+                                        }
+                                    },
+                                }
+                            }
+                        ],
+                    }
+                ],
+            },
+            state,
+        ),
+        _convert(
+            {
+                "event": "response.message.delta",
+                "messages": [
+                    {
+                        "role": "assistant",
+                        "content": [{"text": "Latest news"}],
+                    }
+                ],
+            },
+            state,
+        ),
+    ]
+
+    inline_data_blocks = _content_blocks(chunks[2])
+    aggregate_blocks = _content_blocks(reduce(add, chunks))
+
+    assert inline_data_blocks == [
+        {
+            "type": "server_tool_result",
+            "id": f"{state.message_id}:server-tool:result",
+            "index": 1,
+            "extras": {
+                "inline_data": {
+                    "images": [],
+                    "sources": {
+                        "1": {
+                            "url": "https://example.test/news",
+                            "title": "Example news",
+                        }
+                    },
+                }
+            },
+        }
+    ]
+    assert all(block["type"] != "non_standard" for block in aggregate_blocks)
+    assert aggregate_blocks[1]["type"] == "server_tool_result"
+    assert aggregate_blocks[1]["extras"]["inline_data"]["sources"]["1"] == {
+        "url": "https://example.test/news",
+        "title": "Example news",
+    }
+    assert aggregate_blocks[2] == {
+        "type": "text",
+        "text": "Latest news",
+        "index": 2,
+    }
+
+
 def test_done_without_messages_preserves_finish_usage_and_metadata() -> None:
     state = primary.StreamState()
     chunk = _convert(

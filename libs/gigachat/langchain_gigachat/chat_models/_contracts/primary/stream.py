@@ -331,6 +331,7 @@ def _tool_execution_block(
         streaming=True,
     )[0]
     if terminal:
+        state.pending_server_tool_result_id = call_id
         return block
 
     incoming_name_value = execution.get("name")
@@ -351,6 +352,34 @@ def _tool_execution_block(
     if execution.get("arguments", execution.get("args")) is None:
         block["args"] = ""
     return block
+
+
+def _pending_server_tool_result_update(
+    inline_data_value: Any,
+    *,
+    provider_data: Mapping[str, Any],
+    state: StreamState,
+) -> dict[str, Any] | None:
+    call_id = state.pending_server_tool_result_id
+    if call_id is None:
+        return None
+
+    index = state.server_tool_result_indexes.get(call_id)
+    if index is None:
+        return None
+
+    extras: dict[str, Any] = {
+        "inline_data": _as_dict(inline_data_value),
+    }
+    if provider_data:
+        extras["provider_data"] = dict(provider_data)
+    state.pending_server_tool_result_id = None
+    return {
+        "type": "server_tool_result",
+        "id": f"{call_id}:result",
+        "index": index,
+        "extras": extras,
+    }
 
 
 def _convert_content_part(
@@ -411,6 +440,7 @@ def _convert_content_part(
         block_extras = tool_execution_block.setdefault("extras", {})
         if inline_data_value is not None:
             block_extras["inline_data"] = _as_dict(inline_data_value)
+            state.pending_server_tool_result_id = None
         if extra:
             block_extras["provider_data"] = extra
         content.append(tool_execution_block)
@@ -439,6 +469,15 @@ def _convert_content_part(
 
     if not content and not tool_calls and (inline_data_value is not None or extra):
         _close_text_block(state)
+        if inline_data_value is not None:
+            result_update = _pending_server_tool_result_update(
+                inline_data_value,
+                provider_data=extra,
+                state=state,
+            )
+            if result_update is not None:
+                content.append(result_update)
+                return content, tool_calls
         value: dict[str, Any] = dict(extra)
         if inline_data_value is not None:
             value["inline_data"] = _as_dict(inline_data_value)
@@ -518,8 +557,14 @@ def _convert_messages(
 
         if not message.get("content") and message_inline_data is not None:
             _close_text_block(state)
+            result_update = _pending_server_tool_result_update(
+                message_inline_data,
+                provider_data={},
+                state=state,
+            )
             content.append(
-                {
+                result_update
+                or {
                     "type": "non_standard",
                     "value": {"inline_data": _as_dict(message_inline_data)},
                 }

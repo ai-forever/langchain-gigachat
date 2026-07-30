@@ -58,3 +58,4 @@ class StreamState:
     server_tool_indexes: dict[str, int] = field(default_factory=dict)
     server_tool_result_indexes: dict[str, int] = field(default_factory=dict)
     server_tool_names: dict[str, str] = field(default_factory=dict)
+    pending_server_tool_result_id: Optional[str] = None
