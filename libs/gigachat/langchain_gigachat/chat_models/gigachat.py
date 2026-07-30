@@ -32,6 +32,7 @@ from langchain_core.callbacks import (
     AsyncCallbackManagerForLLMRun,
     CallbackManagerForLLMRun,
 )
+from langchain_core.exceptions import OutputParserException
 from langchain_core.language_models import LanguageModelInput
 from langchain_core.language_models.chat_models import (
     BaseChatModel,
@@ -651,7 +652,11 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         )
 
     def _build_primary_payload(
-        self, messages: List[BaseMessage], kwargs: Mapping[str, Any]
+        self,
+        messages: List[BaseMessage],
+        kwargs: Mapping[str, Any],
+        *,
+        cached_uploads: Optional[Mapping[str, str]] = None,
     ) -> gm.ChatCompletionRequest:
         invocation_kwargs = dict(kwargs)
         invocation_kwargs.pop("use_api_v2", None)
@@ -665,9 +670,60 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             messages,
             defaults=self._primary_defaults(),
             invocation_kwargs=invocation_kwargs,
-            cached_uploads=self._cached_uploads,
+            cached_uploads=(
+                self._cached_uploads if cached_uploads is None else cached_uploads
+            ),
             tool_binding=tool_binding,
         )
+
+    def _validation_upload_cache(
+        self, messages: Sequence[BaseMessage]
+    ) -> Dict[str, str]:
+        """Return detached placeholder IDs for valid planned data-URL uploads."""
+        validation_cache = dict(self._cached_uploads)
+        for message in messages:
+            if not isinstance(message.content, list):
+                continue
+            for content_part in message.content:
+                if not isinstance(content_part, dict):
+                    continue
+                block_type = content_part.get("type")
+                if block_type not in ATTACHMENT_BLOCK_KEYS:
+                    continue
+                block_data = content_part.get(block_type)
+                if not isinstance(block_data, dict):
+                    continue
+                url = block_data.get("url")
+                if not isinstance(url, str):
+                    continue
+                should_upload, matches = self._should_upload_block(block_type, url)
+                if not should_upload or matches is None:
+                    continue
+                _mime, encoding, data_b64 = matches.groups()
+                if encoding != "base64":
+                    continue
+                base64.b64decode(data_b64, validate=True)
+                hashed = hashlib.sha256(url.encode()).hexdigest()
+                validation_cache.setdefault(hashed, f"pending-upload-{hashed}")
+        return validation_cache
+
+    def _validate_request_before_upload(
+        self,
+        messages: List[BaseMessage],
+        kwargs: Mapping[str, Any],
+    ) -> Literal["legacy", "primary"]:
+        """Validate the complete request without performing remote side effects."""
+        route = self._resolve_chat_contract(kwargs)
+        if route == "primary":
+            self._build_primary_payload(
+                messages,
+                kwargs,
+                cached_uploads=self._validation_upload_cache(messages),
+            )
+        else:
+            self._validate_legacy_kwargs(kwargs)
+            self._build_payload(messages, **dict(kwargs))
+        return route
 
     def _create_chat_result(self, response: gm.ChatCompletion) -> ChatResult:
         """Convert SDK response to ChatResult and preserve tracing metadata.
@@ -775,8 +831,9 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             )
             return generate_from_stream(stream_iter)
 
+        route = self._validate_request_before_upload(messages, kwargs)
         self._upload_attachments(messages)
-        if self._resolve_chat_contract(kwargs) == "primary":
+        if route == "primary":
             primary_payload = self._build_primary_payload(messages, kwargs)
             primary_response = self._client.chat.create(primary_payload)
             result = primary.create_chat_result(primary_response)
@@ -808,8 +865,9 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             )
             return await agenerate_from_stream(stream_iter)
 
+        route = self._validate_request_before_upload(messages, kwargs)
         await self._aupload_attachments(messages)
-        if self._resolve_chat_contract(kwargs) == "primary":
+        if route == "primary":
             primary_payload = self._build_primary_payload(messages, kwargs)
             primary_response = await self._client.achat.create(primary_payload)
             result = primary.create_chat_result(primary_response)
@@ -833,17 +891,20 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
     ) -> Iterator[ChatGenerationChunk]:
         # Kept in the signature for LangChain compatibility, but wrapper-side
         # local stop handling was removed in 0.5.x. See MIGRATION.md.
+        route = self._validate_request_before_upload(messages, kwargs)
         self._upload_attachments(messages)
         streamed_text: list[str] = []
         streamed_tool_call = False
         terminal_chunk: Optional[ChatGenerationChunk] = None
-        if self._resolve_chat_contract(kwargs) == "primary":
+        saw_converted_chunk = False
+        if route == "primary":
             primary_payload = self._build_primary_payload(messages, kwargs)
             state = primary.StreamState()
             for event in self._client.chat.stream(primary_payload):
                 primary_chunk = primary.convert_stream_event(event, state=state)
                 if primary_chunk is None:
                     continue
+                saw_converted_chunk = True
                 streamed_text.append(primary_chunk.text)
                 streamed_tool_call = streamed_tool_call or _has_tool_call(
                     primary_chunk.message
@@ -855,8 +916,10 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                         ),
                         generation_info=primary_chunk.generation_info,
                     )
-                if _is_terminal_stream_chunk(primary_chunk):
-                    terminal_chunk = primary_chunk
+                if _is_authoritative_primary_terminal(primary_chunk):
+                    terminal_chunk = _accept_terminal_chunk(
+                        terminal_chunk, primary_chunk, route="Primary"
+                    )
                     continue
                 if terminal_chunk is not None:
                     raise ValueError(
@@ -867,6 +930,8 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                         primary_chunk.text, chunk=primary_chunk
                     )
                 yield primary_chunk
+            if not saw_converted_chunk:
+                return
             terminal_chunk = _finalize_response_format_chunk(
                 terminal_chunk,
                 "".join(streamed_text),
@@ -893,6 +958,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 chunk, first_chunk
             )
             first_chunk = False
+            saw_converted_chunk = True
             streamed_text.append(chunk_m.text)
             streamed_tool_call = streamed_tool_call or _has_tool_call(chunk_m)
             generation_chunk = ChatGenerationChunk(
@@ -900,7 +966,9 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 generation_info=generation_info,
             )
             if _is_terminal_stream_chunk(generation_chunk):
-                terminal_chunk = generation_chunk
+                terminal_chunk = _accept_terminal_chunk(
+                    terminal_chunk, generation_chunk, route="Legacy"
+                )
                 continue
             if terminal_chunk is not None:
                 raise ValueError(
@@ -941,17 +1009,20 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
     ) -> AsyncIterator[ChatGenerationChunk]:
         # Kept in the signature for LangChain compatibility, but wrapper-side
         # local stop handling was removed in 0.5.x. See MIGRATION.md.
+        route = self._validate_request_before_upload(messages, kwargs)
         await self._aupload_attachments(messages)
         streamed_text: list[str] = []
         streamed_tool_call = False
         terminal_chunk: Optional[ChatGenerationChunk] = None
-        if self._resolve_chat_contract(kwargs) == "primary":
+        saw_converted_chunk = False
+        if route == "primary":
             primary_payload = self._build_primary_payload(messages, kwargs)
             state = primary.StreamState()
             async for event in self._client.achat.stream(primary_payload):
                 primary_chunk = primary.convert_stream_event(event, state=state)
                 if primary_chunk is None:
                     continue
+                saw_converted_chunk = True
                 streamed_text.append(primary_chunk.text)
                 streamed_tool_call = streamed_tool_call or _has_tool_call(
                     primary_chunk.message
@@ -963,8 +1034,10 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                         ),
                         generation_info=primary_chunk.generation_info,
                     )
-                if _is_terminal_stream_chunk(primary_chunk):
-                    terminal_chunk = primary_chunk
+                if _is_authoritative_primary_terminal(primary_chunk):
+                    terminal_chunk = _accept_terminal_chunk(
+                        terminal_chunk, primary_chunk, route="Primary"
+                    )
                     continue
                 if terminal_chunk is not None:
                     raise ValueError(
@@ -975,6 +1048,8 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                         primary_chunk.text, chunk=primary_chunk
                     )
                 yield primary_chunk
+            if not saw_converted_chunk:
+                return
             terminal_chunk = _finalize_response_format_chunk(
                 terminal_chunk,
                 "".join(streamed_text),
@@ -1001,6 +1076,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 chunk, first_chunk
             )
             first_chunk = False
+            saw_converted_chunk = True
             streamed_text.append(chunk_m.text)
             streamed_tool_call = streamed_tool_call or _has_tool_call(chunk_m)
             generation_chunk = ChatGenerationChunk(
@@ -1008,7 +1084,9 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 generation_info=generation_info,
             )
             if _is_terminal_stream_chunk(generation_chunk):
-                terminal_chunk = generation_chunk
+                terminal_chunk = _accept_terminal_chunk(
+                    terminal_chunk, generation_chunk, route="Legacy"
+                )
                 continue
             if terminal_chunk is not None:
                 raise ValueError(
@@ -1141,6 +1219,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         if kwargs:
             raise ValueError(f"Received unsupported arguments {kwargs}")
         output_parser: OutputParserLike
+        parser_runnable: Runnable[Any, Any]
         if method == "function_calling":
             func = convert_to_gigachat_tool(schema)["function"]
             key_name = func.get(
@@ -1187,10 +1266,21 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                     return _add_format_instructions(_input, format_instructions)
 
                 llm = RunnableLambda(_inject_fi) | llm
+            if method == "json_schema":
+                parser_runnable = (
+                    RunnableLambda(_require_successful_structured_finish)
+                    | output_parser
+                )
+            else:
+                parser_runnable = output_parser
+
+        if method == "function_calling":
+            parser_runnable = output_parser
 
         if include_raw:
             parser_assign = RunnablePassthrough.assign(
-                parsed=itemgetter("raw") | output_parser, parsing_error=lambda _: None
+                parsed=itemgetter("raw") | parser_runnable,
+                parsing_error=lambda _: None,
             )
             parser_none = RunnablePassthrough.assign(parsed=lambda _: None)
             parser_with_fallback = parser_assign.with_fallbacks(
@@ -1198,7 +1288,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             )
             return RunnableMap(raw=llm) | parser_with_fallback
         else:
-            return llm | output_parser
+            return llm | parser_runnable
 
     @override
     def bind_tools(
@@ -1215,29 +1305,19 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         """Bind tools and an optional structured response schema to this model."""
         if strict is not None and response_format is None:
             raise ValueError("strict is supported only together with response_format.")
+        if tool_choice == "any":
+            raise ValueError(
+                "GigaChat API does not support tool_choice='any', and mapping "
+                "it to 'auto' would not preserve forced-tool semantics. For "
+                "create_agent structured output, either pass "
+                "ProviderStrategy(schema) explicitly or provide a verified "
+                "model profile={'structured_output': True}. Otherwise use "
+                "'auto' or a concrete tool name."
+            )
         formatted_tools = [normalize_tool_for_binding(tool) for tool in tools]
         if tool_choice is not None and tool_choice:
             if isinstance(tool_choice, str):
-                # GigaChat API doesn't support "any" tool choice
-                if tool_choice == "any":
-                    if not self.allow_any_tool_choice_fallback:
-                        raise ValueError(
-                            "GigaChat API does not support tool_choice='any'. "
-                            "Use 'auto' or specify a concrete tool name. "
-                            "If you want to automatically convert 'any' to 'auto', "
-                            "set allow_any_tool_choice_fallback=True when creating "
-                            "the GigaChat instance."
-                        )
-                    warnings.warn(
-                        "GigaChat API does not support tool_choice='any'. "
-                        "Using 'auto' instead. "
-                        "The model may choose not to call any tool, "
-                        "which may break agent behavior.",
-                        UserWarning,
-                        stacklevel=2,
-                    )
-                    tool_choice = "auto"
-                elif tool_choice not in ("auto", "none"):
+                if tool_choice not in ("auto", "none"):
                     tool_choice = {"name": tool_choice}
             elif isinstance(tool_choice, bool) and tool_choice:
                 if not formatted_tools:
@@ -1275,6 +1355,8 @@ def _has_tool_call(message: BaseMessage | BaseMessageChunk) -> bool:
 def _parse_response_format_text(
     text: str,
     response_format: Any,
+    *,
+    finish_reason: Any,
 ) -> tuple[bool, Any]:
     if response_format is None:
         return False, None
@@ -1285,6 +1367,8 @@ def _parse_response_format_text(
         or normalized.type != "json_schema"
         or not isinstance(normalized.schema_, dict)
     ):
+        return False, None
+    if finish_reason != "stop":
         return False, None
 
     text = text.strip()
@@ -1307,6 +1391,24 @@ def _is_terminal_stream_chunk(chunk: ChatGenerationChunk) -> bool:
     )
 
 
+def _is_authoritative_primary_terminal(chunk: ChatGenerationChunk) -> bool:
+    """Return whether a primary chunk completes the whole chat response."""
+    message = chunk.message
+    return isinstance(message, AIMessageChunk) and message.chunk_position == "last"
+
+
+def _accept_terminal_chunk(
+    current: Optional[ChatGenerationChunk],
+    incoming: ChatGenerationChunk,
+    *,
+    route: str,
+) -> ChatGenerationChunk:
+    """Accept one authoritative terminal, deduplicating exact repeats."""
+    if current is None or current == incoming:
+        return incoming if current is None else current
+    raise ValueError(f"{route} stream emitted conflicting terminal chunks")
+
+
 def _finalize_response_format_chunk(
     terminal_chunk: Optional[ChatGenerationChunk],
     text: str,
@@ -1323,7 +1425,11 @@ def _finalize_response_format_chunk(
 
     message_updates: dict[str, Any] = {"chunk_position": "last"}
     if not has_tool_call:
-        parsed, value = _parse_response_format_text(text, response_format)
+        parsed, value = _parse_response_format_text(
+            text,
+            response_format,
+            finish_reason=(chunk.generation_info or {}).get("finish_reason"),
+        )
         if parsed:
             message_updates["additional_kwargs"] = {
                 **message.additional_kwargs,
@@ -1346,10 +1452,26 @@ def _attach_parsed_response_format(
             continue
         if _has_tool_call(message):
             continue
-        parsed, value = _parse_response_format_text(message.text, response_format)
+        parsed, value = _parse_response_format_text(
+            message.text,
+            response_format,
+            finish_reason=(generation.generation_info or {}).get("finish_reason"),
+        )
         if parsed:
             message.additional_kwargs["parsed"] = value
     return result
+
+
+def _require_successful_structured_finish(message: BaseMessage) -> BaseMessage:
+    """Reject syntactically valid structured data from incomplete generations."""
+    finish_reason = message.response_metadata.get("finish_reason")
+    if finish_reason != "stop":
+        raise OutputParserException(
+            "GigaChat native structured output was not completed successfully: "
+            f"finish_reason={finish_reason!r}.",
+            llm_output=message.text,
+        )
+    return message
 
 
 def _format_instructions_for_schema(schema: Dict[str, Any] | type) -> str:

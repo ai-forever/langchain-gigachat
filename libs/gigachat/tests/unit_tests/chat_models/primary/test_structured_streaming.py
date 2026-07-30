@@ -203,5 +203,5 @@ def test_missing_provider_terminal_event_gets_one_synthetic_last_chunk(
     chunks = list(_bound_model().stream("Hello"))
 
     assert "".join(chunk.text for chunk in chunks) == '{"value": 7}'
-    assert chunks[-1].additional_kwargs["parsed"] == OutputSchema(value=7)
+    assert "parsed" not in chunks[-1].additional_kwargs
     _assert_one_terminal_chunk(chunks)

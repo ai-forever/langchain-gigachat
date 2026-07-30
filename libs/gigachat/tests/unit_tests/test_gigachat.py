@@ -880,19 +880,11 @@ def test_bind_tools_any_tool_choice_raises_by_default() -> None:
         llm.bind_tools(tools=[PersonTool], tool_choice="any")
 
 
-def test_bind_tools_any_tool_choice_with_fallback_enabled() -> None:
-    """tool_choice='any' should fallback to 'auto' with warning when enabled."""
-    import warnings
-
+def test_bind_tools_any_tool_choice_never_weakens_to_auto() -> None:
+    """The compatibility flag must not weaken forced-tool semantics."""
     llm = GigaChat(allow_any_tool_choice_fallback=True)
-    with warnings.catch_warnings(record=True) as w:
-        warnings.simplefilter("always")
-        bound = llm.bind_tools(tools=[PersonTool], tool_choice="any")
-        assert len(w) == 1
-        assert "does not support tool_choice='any'" in str(w[0].message)
-        assert "Using 'auto' instead" in str(w[0].message)
-    # Verify fallback to "auto"
-    assert bound.kwargs["function_call"] == "auto"  # type: ignore[attr-defined]
+    with pytest.raises(ValueError, match="would not preserve forced-tool semantics"):
+        llm.bind_tools(tools=[PersonTool], tool_choice="any")
 
 
 def test_bind_tools_auto_tool_choice_works() -> None:
