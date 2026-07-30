@@ -114,6 +114,40 @@ def test_convert_messages_ai_function_call_preserves_provider_ids() -> None:
     }
 
 
+def test_convert_messages_prefers_additional_metadata_over_response_metadata() -> None:
+    message = AIMessage(
+        content="answer",
+        additional_kwargs={
+            "message_id": "additional-message",
+            "functions_state_id": "additional-state",
+        },
+        response_metadata={
+            "message_id": "response-message",
+            "tools_state_id": "response-state",
+        },
+    )
+
+    converted = primary.convert_messages([message], cached_uploads={})[0]
+
+    assert converted.message_id == "additional-message"
+    assert converted.tools_state_id == "additional-state"
+
+
+def test_convert_messages_uses_response_metadata_aliases_as_fallback() -> None:
+    message = AIMessage(
+        content="answer",
+        response_metadata={
+            "message_id": "response-message",
+            "tool_state_id": "response-state",
+        },
+    )
+
+    converted = primary.convert_messages([message], cached_uploads={})[0]
+
+    assert converted.message_id == "response-message"
+    assert converted.tools_state_id == "response-state"
+
+
 def test_convert_messages_rejects_parallel_client_tool_calls() -> None:
     message = AIMessage(
         content="",
