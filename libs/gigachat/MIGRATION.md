@@ -1,16 +1,131 @@
-# Migration Guide: langchain-gigachat 0.3.x → 0.5.0
+# Migration Guide: langchain-gigachat 0.3.x → 0.5.x
 
-This guide covers all breaking changes in `langchain-gigachat` 0.5.0 and explains how to update your code.
+This guide covers the breaking changes introduced in `langchain-gigachat`
+0.5.0 and the opt-in primary API v2 preview added in `0.5.2a1`.
 
 ## Opting into API v2
 
 The legacy contract remains the default. To use `/v2/chat/completions`, enable
 it explicitly with `GigaChat(use_api_v2=True)`, or use
-`llm.bind(use_api_v2=True)` for one call. V2 adds named-event streaming,
-provider-native tools, attachments, and native JSON Schema structured output;
-existing legacy calls are unchanged. The current implementation requires the
-pre-release SDK API, so wait for a stable SDK release with
-`chat.create`/`chat.stream` and their async equivalents before stable rollout.
+`llm.bind(use_api_v2=True)` for one runnable:
+
+```python
+from langchain_gigachat import GigaChat
+
+legacy = GigaChat()
+primary = legacy.bind(use_api_v2=True)
+```
+
+The invocation-level value wins over the constructor default, so
+`GigaChat(use_api_v2=True).bind(use_api_v2=False)` deliberately routes back to
+legacy. The routing flag is local control state and is never sent to either
+provider payload.
+
+### Parameter mapping
+
+| Public input | Legacy contract | Primary API v2 contract |
+|--------------|-----------------|-------------------------|
+| `messages` | SDK `Chat.messages` | SDK `ChatCompletionRequest.messages` |
+| `temperature`, `top_p`, `max_tokens`, `repetition_penalty` | Top-level chat fields | `model_options` |
+| `reasoning_effort` | Legacy reasoning field | `model_options.reasoning.effort` |
+| `profanity_check` | Legacy field | Inverted to `disable_filter` unless explicitly overridden |
+| `function_ranker` | Legacy function ranker | `ranker_options` |
+| `response_format` | Legacy response-format field | `model_options.response_format` |
+| `functions` / client `bind_tools()` | `functions` plus `function_call` | Functions tool plus `tool_config` |
+| Provider built-in `bind_tools()` | Rejected with an instruction to enable v2 | Provider `tools` plus `tool_config` |
+| `assistant_id`, `tool_config`, `tools_state_id`, `user_info` | Rejected as primary-only | Forwarded through SDK request models |
+
+Unknown primary request fields accepted by the installed SDK are preserved,
+while LangChain-only control keys are consumed locally.
+
+### Tool mapping
+
+Legacy remains function-oriented:
+
+- client tools are serialized through `functions` / `function_call`;
+- a result `ToolMessage` becomes provider `role="function"`;
+- provider built-ins such as `web_search` are rejected.
+
+Primary v2 uses the new tools transport:
+
+- client functions and provider built-ins both use public `bind_tools()`;
+- provider built-ins accept canonical mappings such as
+  `{"type": "web_search"}`;
+- a client result `ToolMessage` becomes provider `role="tool"` with
+  `function_result` and `tools_state_id`;
+- returned `AIMessage.tool_calls` retain the continuation identity needed by
+  the next request.
+
+Parallel client tool calls in one assistant message remain unsupported.
+`tool_choice="any"` is rejected on primary because its provider semantics are
+not confirmed; choose `"auto"`, `"none"`, or a concrete tool.
+
+### Storage and stateful requests
+
+Legacy storage continues to accept `gigachat.models.Storage` unchanged. Primary
+storage accepts `None`, a boolean, `ChatStorage`, a compatible mapping, or a
+losslessly convertible legacy `Storage`.
+
+Primary assistant state is top-level:
+
+```python
+primary.invoke("Continue", assistant_id="assistant-id")
+```
+
+Thread state is nested in storage:
+
+```python
+primary.invoke("Continue", storage={"thread_id": "thread-id"})
+```
+
+For requests with `assistant_id` or `storage.thread_id`, an implicit model from
+the `GigaChat` instance is omitted so the provider can resolve the stored
+assistant/thread model. An explicit invocation-level `model=...` is preserved.
+Conflicting top-level and storage assistant IDs fail before network I/O.
+
+### Streaming and metadata
+
+Primary sync and async streaming consume the SDK named-event resources
+`chat.stream` and `achat.stream`. Supported content has the same LangChain
+meaning in stream and non-stream results:
+
+- text, reasoning, files, citations, client calls, and server-tool blocks use
+  standard LangChain content blocks;
+- usage, finish reason, message/thread IDs, tool state, logprobs, and request
+  headers are promoted to standard message/generation metadata;
+- late metadata-only events are emitted instead of being discarded;
+- unknown provider extensions remain available under
+  `response_metadata["provider_fields"]`; raw unknown stream events are kept
+  under `response_metadata["raw_event"]`.
+
+Applications that aggregate chunks should retain the final metadata-only chunk
+or use LangChain's normal stream aggregation helpers.
+
+### Structured output
+
+`with_structured_output()` still defaults to `method="function_calling"` for
+backward compatibility. `method="json_schema"` is normalized according to the
+selected route:
+
+- legacy uses the legacy SDK response-format representation;
+- primary places `ChatResponseFormat` under `model_options.response_format`.
+
+Caller-owned schemas are copied before normalization. Model support for native
+JSON Schema is provider-dependent, so keep the function-calling fallback when
+deploying across mixed model versions.
+
+### Dependency and release status
+
+`langchain-gigachat==0.5.2a1` is a prerelease and requires
+`gigachat==0.2.3a1`. At preparation time, the latest stable SDK (`0.2.1`) did
+not expose `chat.create`, `chat.stream`, `achat.create`, or `achat.stream`.
+Therefore:
+
+- `0.5.2a1` must not be presented as stable-release ready;
+- the PR must remain draft/blocked for a stable release;
+- after a stable SDK with those resources is published, replace the exact alpha
+  pin with `gigachat>=<first-stable-v2-version>,<0.3`, regenerate the lockfile,
+  and repeat the full package/install validation.
 
 ## Requirements
 
@@ -320,5 +435,5 @@ def get_weather(city: str) -> str:
 
 ```python
 import langchain_gigachat
-print(langchain_gigachat.__version__)  # "0.5.0"
+print(langchain_gigachat.__version__)  # "0.5.2a1"
 ```

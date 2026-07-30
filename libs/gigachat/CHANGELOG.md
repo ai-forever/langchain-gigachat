@@ -4,11 +4,52 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.2a1] — 2026-07-30
+
+Primary API v2 preview. This is a prerelease and is not yet ready for a stable
+package release because the required SDK resource API is only available in an
+alpha SDK.
+
 ### Added
 
 - Opt-in `GigaChat(use_api_v2=True)` support for `/v2/chat/completions`,
   including sync/async calls, streaming, tools, attachments, and native JSON
   Schema structured output.
+- Per-runnable route overrides through `llm.bind(use_api_v2=True)`, while
+  legacy remains the default.
+- Public `bind_tools()` support for primary provider built-ins such as
+  `web_search`, alongside standard LangChain client tools.
+- Primary assistant/thread state, file-ID content, server-tool content blocks,
+  usage metadata, invalid tool calls, and forward-compatible provider fields.
+
+### Changed
+
+- Primary stream and non-stream results now use equivalent LangChain content
+  blocks and preserve late finish, usage, request, and tool-state metadata.
+- Stateful assistant/thread requests no longer receive an implicit default
+  model; an explicitly supplied invocation model is still forwarded.
+- Primary `ToolMessage` continuation uses provider `role="tool"`,
+  `function_result`, and `tools_state_id`. The legacy function transport is
+  unchanged.
+- Raw primary provider responses are no longer copied into multiple output
+  locations. Normalized metadata stays in standard LangChain fields and unknown
+  top-level extensions are available in `response_metadata["provider_fields"]`.
+
+### Dependencies
+
+- Package version is `0.5.2a1`.
+- Requires `gigachat==0.2.3a1`, the published SDK build verified here with
+  sync/async `chat.create` and `chat.stream` resource methods.
+- Stable release remains blocked until a stable SDK with those resources is
+  published and the dependency is changed to a stable `<0.3` range.
+
+### Known limitations
+
+- Parallel client tool calls in one primary assistant message are unsupported.
+- Primary `tool_choice="any"` is rejected because provider semantics are not
+  confirmed.
+- Live API coverage requires credentials and is reported separately from the
+  deterministic unit and package-install gates.
 
 ## [0.5.1] — 2026-05-04
 
