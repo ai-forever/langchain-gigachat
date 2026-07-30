@@ -395,7 +395,7 @@ wheels = [
 
 [[package]]
 name = "langchain-gigachat"
-version = "0.5.1"
+version = "0.5.2a1"
 source = { editable = "." }
 dependencies = [
     { name = "gigachat" },
