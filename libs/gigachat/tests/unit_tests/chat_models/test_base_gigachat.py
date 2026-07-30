@@ -195,13 +195,46 @@ def test_identifying_params() -> None:
         temperature=0.5,
         model="GigaChat-Pro",
         max_tokens=100,
+        flags=["feature-a"],
+        update_interval=0.25,
+        use_api_v2=True,
+        reasoning_effort="high",
         function_ranker={"enabled": False},
+        auto_upload_attachments=True,
+        allow_any_tool_choice_fallback=True,
+        profile={"structured_output": True},
     )
     params = llm._identifying_params
     assert params["temperature"] == 0.5
     assert params["model"] == "GigaChat-Pro"
     assert params["max_tokens"] == 100
+    assert params["flags"] == ["feature-a"]
+    assert params["update_interval"] == 0.25
+    assert params["use_api_v2"] is True
+    assert params["reasoning_effort"] == "high"
     assert params["function_ranker"] == {"enabled": False}
+    assert params["auto_upload_attachments"] is True
+    assert params["allow_any_tool_choice_fallback"] is True
+    assert params["profile"] == {"structured_output": True}
+
+
+def test_request_affecting_models_have_distinct_identifying_params() -> None:
+    baseline = GigaChat(model="GigaChat-Pro")._identifying_params
+
+    assert (
+        baseline
+        != GigaChat(model="GigaChat-Pro", flags=["feature-a"])._identifying_params
+    )
+    assert (
+        baseline
+        != GigaChat(model="GigaChat-Pro", update_interval=0.1)._identifying_params
+    )
+    assert (
+        baseline
+        != GigaChat(
+            model="GigaChat-Pro", auto_upload_attachments=True
+        )._identifying_params
+    )
 
 
 def test_llm_type() -> None:
