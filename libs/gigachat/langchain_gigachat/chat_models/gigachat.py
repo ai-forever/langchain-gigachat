@@ -84,6 +84,8 @@ from langchain_gigachat.chat_models.base_gigachat import _BaseGigaChat
 from langchain_gigachat.utils.function_calling import (
     convert_to_gigachat_function,
     convert_to_gigachat_tool,
+    is_primary_builtin_tool,
+    normalize_tool_for_binding,
 )
 
 logger = logging.getLogger(__name__)
@@ -376,6 +378,12 @@ def _convert_delta_to_message_chunk(
 
 def _get_tool_name(tool: Mapping[str, Any]) -> str:
     """Return tool name from normalized or title-only tool payload."""
+    if is_primary_builtin_tool(tool):
+        tool_type = tool.get("type")
+        if isinstance(tool_type, str):
+            return tool_type
+        return next(iter(tool))
+
     function = tool.get("function")
     if not isinstance(function, Mapping):
         raise ValueError("Tool payload must contain a function mapping.")
@@ -588,6 +596,18 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             raise ValueError(
                 f"Legacy GigaChat does not support primary-only argument(s): {names}. "
                 "Use use_api_v2=True."
+            )
+
+        builtin_names = sorted(
+            _get_tool_name(tool)
+            for tool in kwargs.get("tools", ())
+            if is_primary_builtin_tool(tool)
+        )
+        if builtin_names:
+            names = ", ".join(builtin_names)
+            raise ValueError(
+                "Legacy GigaChat does not support provider built-in tool(s): "
+                f"{names}. Use use_api_v2=True."
             )
 
     def _primary_defaults(self) -> primary.RequestDefaults:
@@ -806,6 +826,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                     )
                 yield primary_chunk
             return
+        self._validate_legacy_kwargs(kwargs)
         payload = self._build_payload(messages, **kwargs)
         first_chunk = True
 
@@ -854,6 +875,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                     )
                 yield primary_chunk
             return
+        self._validate_legacy_kwargs(kwargs)
         payload = self._build_payload(messages, **kwargs)
         first_chunk = True
 
@@ -1043,7 +1065,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
     ) -> Runnable[LanguageModelInput, AIMessage]:
         """Bind tool-like objects to this chat model.
         Assumes model is compatible with GigaChat tool-calling API."""
-        formatted_tools = [convert_to_gigachat_tool(tool) for tool in tools]
+        formatted_tools = [normalize_tool_for_binding(tool) for tool in tools]
         if tool_choice is not None and tool_choice:
             if isinstance(tool_choice, str):
                 # GigaChat API doesn't support "any" tool choice
