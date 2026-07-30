@@ -151,3 +151,51 @@ def test_invocation_route_override_enables_primary_builtin(
 
     sdk_client.chat.assert_not_called()
     sdk_client.chat.create.assert_called_once()
+
+
+def test_legacy_storage_remains_supported(sdk_client: MagicMock) -> None:
+    _configure_json_responses(sdk_client)
+    storage = gm.Storage(is_stateful=True, thread_id="legacy-thread")
+
+    GigaChat(model=MODEL).invoke("Hello", storage=storage)
+
+    payload = sdk_client.chat.call_args.args[0]
+    assert isinstance(payload, gm.Chat)
+    assert payload.storage == storage
+
+
+def test_legacy_rejects_tool_config_instead_of_discarding_it(
+    sdk_client: MagicMock,
+) -> None:
+    _configure_json_responses(sdk_client)
+
+    with pytest.raises(
+        ValueError,
+        match=r"primary-only argument\(s\): tool_config.*use_api_v2=True",
+    ):
+        GigaChat(model=MODEL).invoke(
+            "Hello",
+            tool_config={"mode": "auto"},
+        )
+
+    sdk_client.chat.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "stateful_kwargs",
+    [
+        {"assistant_id": "assistant"},
+        {"storage": {"thread_id": "thread"}},
+    ],
+)
+def test_primary_stateful_public_request_omits_implicit_model(
+    sdk_client: MagicMock,
+    stateful_kwargs: dict[str, Any],
+) -> None:
+    _configure_json_responses(sdk_client)
+
+    GigaChat(model=MODEL, use_api_v2=True).invoke("Hello", **stateful_kwargs)
+
+    payload = sdk_client.chat.create.call_args.args[0]
+    assert isinstance(payload, gm.ChatCompletionRequest)
+    assert payload.model is None

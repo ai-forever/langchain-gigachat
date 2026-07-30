@@ -126,7 +126,7 @@ _PRIMARY_ONLY_KWARGS = frozenset(
         "filter_config",
         "model_options",
         "ranker_options",
-        "storage",
+        "tool_config",
         "tools_state_id",
         "user_info",
     }
@@ -556,6 +556,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             _convert_message_to_dict(m, self._cached_uploads) for m in messages
         ]
         kwargs.pop("messages", None)
+        kwargs.pop("use_api_v2", None)
 
         functions = kwargs.pop("functions", [])
         for tool in kwargs.pop("tools", []):
