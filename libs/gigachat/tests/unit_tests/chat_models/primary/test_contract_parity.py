@@ -355,6 +355,66 @@ def test_server_tool_contract_parity(
     )
 
 
+def test_mirrored_server_tool_with_inline_data_contract_parity() -> None:
+    execution = {
+        "name": "web_search",
+        "status": "completed",
+        "seconds_left": 0,
+    }
+    inline_data = {
+        "sources": {
+            "source-1": {
+                "url": "https://example.test/source",
+                "title": "Example",
+            }
+        },
+        "widgets": [{"kind": "table"}],
+        "images": [{"id": "image-1"}],
+    }
+    part = {
+        "tool_execution": execution,
+        "inline_data": inline_data,
+        "provider_extension": {"trace_id": "trace-1"},
+    }
+    message = {
+        "role": "assistant",
+        "tools_state_id": "server-tool-1",
+        "content": [part],
+        "tool_execution": execution,
+    }
+    response = _response(
+        [message],
+        message_id=_MESSAGE_ID,
+        tool_execution=execution,
+    )
+    events: list[dict[str, Any]] = [
+        {
+            "event": "response.tool.completed",
+            "message_id": _MESSAGE_ID,
+            "tools_state_id": "server-tool-1",
+            "messages": [message],
+            "tool_execution": execution,
+        }
+    ]
+
+    non_stream, streamed = _assert_semantic_parity(response, events)
+
+    assert _semantic_content(non_stream) == [
+        {
+            "type": "server_tool_result",
+            "id": "server-tool-1:result",
+            "tool_call_id": "server-tool-1",
+            "status": "success",
+            "extras": {
+                "provider_tool_execution": execution,
+                "inline_data": inline_data,
+                "provider_data": {"provider_extension": {"trace_id": "trace-1"}},
+            },
+        }
+    ]
+    assert _semantic_content(streamed) == _semantic_content(non_stream)
+
+
 def test_usage_finish_and_late_metadata_contract_parity() -> None:
     usage = {
         "input_tokens": 13,

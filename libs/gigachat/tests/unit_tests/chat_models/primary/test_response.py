@@ -418,6 +418,111 @@ def test_running_server_tool_execution_emits_call_only() -> None:
     ]
 
 
+def test_mirrored_server_tool_execution_uses_part_level_once() -> None:
+    execution = {
+        "name": "web_search",
+        "status": "success",
+        "seconds_left": 0,
+    }
+    message = _message(
+        _response(
+            messages=[
+                {
+                    "role": "assistant",
+                    "tools_state_id": "server-state-1",
+                    "tool_execution": execution,
+                    "content": [
+                        {
+                            "tool_execution": execution,
+                            "inline_data": {
+                                "sources": {
+                                    "source-1": {
+                                        "url": "https://example.test/source",
+                                        "title": "Example",
+                                    }
+                                },
+                                "widgets": [{"kind": "table"}],
+                                "images": [{"id": "image-1"}],
+                            },
+                            "provider_extension": {"trace_id": "trace-1"},
+                        }
+                    ],
+                }
+            ],
+            tool_execution=execution,
+        )
+    )
+
+    assert message.content == [
+        {
+            "type": "server_tool_result",
+            "id": "server-state-1:result",
+            "tool_call_id": "server-state-1",
+            "status": "success",
+            "extras": {
+                "provider_tool_execution": execution,
+                "inline_data": {
+                    "images": [{"id": "image-1"}],
+                    "sources": {
+                        "source-1": {
+                            "url": "https://example.test/source",
+                            "title": "Example",
+                        }
+                    },
+                    "widgets": [{"kind": "table"}],
+                },
+                "provider_data": {"provider_extension": {"trace_id": "trace-1"}},
+            },
+        }
+    ]
+
+
+def test_message_server_tool_execution_owns_inline_data() -> None:
+    message = _message(
+        _response(
+            messages=[
+                {
+                    "role": "assistant",
+                    "tools_state_id": "server-state-1",
+                    "tool_execution": {
+                        "name": "web_search",
+                        "status": "failed",
+                    },
+                    "inline_data": {
+                        "sources": {
+                            "source-1": {
+                                "url": "https://example.test/source",
+                            }
+                        }
+                    },
+                }
+            ]
+        )
+    )
+
+    assert message.content == [
+        {
+            "type": "server_tool_result",
+            "id": "server-state-1:result",
+            "tool_call_id": "server-state-1",
+            "status": "error",
+            "extras": {
+                "provider_tool_execution": {
+                    "name": "web_search",
+                    "status": "failed",
+                },
+                "inline_data": {
+                    "sources": {
+                        "source-1": {
+                            "url": "https://example.test/source",
+                        }
+                    }
+                },
+            },
+        }
+    ]
+
+
 def test_usage_headers_and_ids_are_preserved() -> None:
     response = _response(
         message_id="provider-message-1",
