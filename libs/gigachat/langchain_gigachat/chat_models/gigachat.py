@@ -773,11 +773,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             stream_iter = self._stream(
                 messages, stop=stop, run_manager=run_manager, **kwargs
             )
-            result = generate_from_stream(stream_iter)
-            return _attach_parsed_response_format(
-                result,
-                kwargs.get("response_format"),
-            )
+            return generate_from_stream(stream_iter)
 
         self._upload_attachments(messages)
         if self._resolve_chat_contract(kwargs) == "primary":
@@ -810,11 +806,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             stream_iter = self._astream(
                 messages, stop=stop, run_manager=run_manager, **kwargs
             )
-            result = await agenerate_from_stream(stream_iter)
-            return _attach_parsed_response_format(
-                result,
-                kwargs.get("response_format"),
-            )
+            return await agenerate_from_stream(stream_iter)
 
         await self._aupload_attachments(messages)
         if self._resolve_chat_contract(kwargs) == "primary":
@@ -844,6 +836,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         self._upload_attachments(messages)
         streamed_text: list[str] = []
         streamed_tool_call = False
+        terminal_chunk: Optional[ChatGenerationChunk] = None
         if self._resolve_chat_contract(kwargs) == "primary":
             primary_payload = self._build_primary_payload(messages, kwargs)
             state = primary.StreamState()
@@ -855,10 +848,6 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 streamed_tool_call = streamed_tool_call or _has_tool_call(
                     primary_chunk.message
                 )
-                if run_manager:
-                    run_manager.on_llm_new_token(
-                        primary_chunk.text, chunk=primary_chunk
-                    )
                 if primary_chunk.message.content == []:
                     primary_chunk = ChatGenerationChunk(
                         message=primary_chunk.message.model_copy(
@@ -866,16 +855,30 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                         ),
                         generation_info=primary_chunk.generation_info,
                     )
+                if _is_terminal_stream_chunk(primary_chunk):
+                    terminal_chunk = primary_chunk
+                    continue
+                if terminal_chunk is not None:
+                    raise ValueError(
+                        "Primary stream emitted content after its terminal chunk"
+                    )
+                if run_manager:
+                    run_manager.on_llm_new_token(
+                        primary_chunk.text, chunk=primary_chunk
+                    )
                 yield primary_chunk
-            parsed_chunk = _parsed_response_format_chunk(
+            terminal_chunk = _finalize_response_format_chunk(
+                terminal_chunk,
                 "".join(streamed_text),
                 kwargs.get("response_format"),
                 has_tool_call=streamed_tool_call,
             )
-            if parsed_chunk is not None:
-                if run_manager:
-                    run_manager.on_llm_new_token("", chunk=parsed_chunk)
-                yield parsed_chunk
+            if run_manager:
+                run_manager.on_llm_new_token(
+                    terminal_chunk.text,
+                    chunk=terminal_chunk,
+                )
+            yield terminal_chunk
             return
         self._validate_legacy_kwargs(kwargs)
         payload = self._build_payload(messages, **kwargs)
@@ -892,18 +895,41 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             first_chunk = False
             streamed_text.append(chunk_m.text)
             streamed_tool_call = streamed_tool_call or _has_tool_call(chunk_m)
+            generation_chunk = ChatGenerationChunk(
+                message=chunk_m,
+                generation_info=generation_info,
+            )
+            if _is_terminal_stream_chunk(generation_chunk):
+                terminal_chunk = generation_chunk
+                continue
+            if terminal_chunk is not None:
+                raise ValueError(
+                    "Legacy stream emitted content after its terminal chunk"
+                )
             if run_manager:
-                run_manager.on_llm_new_token(content)
-            yield ChatGenerationChunk(message=chunk_m, generation_info=generation_info)
-        parsed_chunk = _parsed_response_format_chunk(
+                run_manager.on_llm_new_token(content, chunk=generation_chunk)
+            yield generation_chunk
+        if kwargs.get("response_format") is None:
+            if terminal_chunk is not None:
+                if run_manager:
+                    run_manager.on_llm_new_token(
+                        terminal_chunk.text,
+                        chunk=terminal_chunk,
+                    )
+                yield terminal_chunk
+            return
+        terminal_chunk = _finalize_response_format_chunk(
+            terminal_chunk,
             "".join(streamed_text),
             kwargs.get("response_format"),
             has_tool_call=streamed_tool_call,
         )
-        if parsed_chunk is not None:
-            if run_manager:
-                run_manager.on_llm_new_token("", chunk=parsed_chunk)
-            yield parsed_chunk
+        if run_manager:
+            run_manager.on_llm_new_token(
+                terminal_chunk.text,
+                chunk=terminal_chunk,
+            )
+        yield terminal_chunk
 
     @override
     async def _astream(
@@ -918,6 +944,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         await self._aupload_attachments(messages)
         streamed_text: list[str] = []
         streamed_tool_call = False
+        terminal_chunk: Optional[ChatGenerationChunk] = None
         if self._resolve_chat_contract(kwargs) == "primary":
             primary_payload = self._build_primary_payload(messages, kwargs)
             state = primary.StreamState()
@@ -929,10 +956,6 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 streamed_tool_call = streamed_tool_call or _has_tool_call(
                     primary_chunk.message
                 )
-                if run_manager:
-                    await run_manager.on_llm_new_token(
-                        primary_chunk.text, chunk=primary_chunk
-                    )
                 if primary_chunk.message.content == []:
                     primary_chunk = ChatGenerationChunk(
                         message=primary_chunk.message.model_copy(
@@ -940,16 +963,30 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                         ),
                         generation_info=primary_chunk.generation_info,
                     )
+                if _is_terminal_stream_chunk(primary_chunk):
+                    terminal_chunk = primary_chunk
+                    continue
+                if terminal_chunk is not None:
+                    raise ValueError(
+                        "Primary stream emitted content after its terminal chunk"
+                    )
+                if run_manager:
+                    await run_manager.on_llm_new_token(
+                        primary_chunk.text, chunk=primary_chunk
+                    )
                 yield primary_chunk
-            parsed_chunk = _parsed_response_format_chunk(
+            terminal_chunk = _finalize_response_format_chunk(
+                terminal_chunk,
                 "".join(streamed_text),
                 kwargs.get("response_format"),
                 has_tool_call=streamed_tool_call,
             )
-            if parsed_chunk is not None:
-                if run_manager:
-                    await run_manager.on_llm_new_token("", chunk=parsed_chunk)
-                yield parsed_chunk
+            if run_manager:
+                await run_manager.on_llm_new_token(
+                    terminal_chunk.text,
+                    chunk=terminal_chunk,
+                )
+            yield terminal_chunk
             return
         self._validate_legacy_kwargs(kwargs)
         payload = self._build_payload(messages, **kwargs)
@@ -966,18 +1003,41 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             first_chunk = False
             streamed_text.append(chunk_m.text)
             streamed_tool_call = streamed_tool_call or _has_tool_call(chunk_m)
+            generation_chunk = ChatGenerationChunk(
+                message=chunk_m,
+                generation_info=generation_info,
+            )
+            if _is_terminal_stream_chunk(generation_chunk):
+                terminal_chunk = generation_chunk
+                continue
+            if terminal_chunk is not None:
+                raise ValueError(
+                    "Legacy stream emitted content after its terminal chunk"
+                )
             if run_manager:
-                await run_manager.on_llm_new_token(content)
-            yield ChatGenerationChunk(message=chunk_m, generation_info=generation_info)
-        parsed_chunk = _parsed_response_format_chunk(
+                await run_manager.on_llm_new_token(content, chunk=generation_chunk)
+            yield generation_chunk
+        if kwargs.get("response_format") is None:
+            if terminal_chunk is not None:
+                if run_manager:
+                    await run_manager.on_llm_new_token(
+                        terminal_chunk.text,
+                        chunk=terminal_chunk,
+                    )
+                yield terminal_chunk
+            return
+        terminal_chunk = _finalize_response_format_chunk(
+            terminal_chunk,
             "".join(streamed_text),
             kwargs.get("response_format"),
             has_tool_call=streamed_tool_call,
         )
-        if parsed_chunk is not None:
-            if run_manager:
-                await run_manager.on_llm_new_token("", chunk=parsed_chunk)
-            yield parsed_chunk
+        if run_manager:
+            await run_manager.on_llm_new_token(
+                terminal_chunk.text,
+                chunk=terminal_chunk,
+            )
+        yield terminal_chunk
 
     def bind_functions(
         self,
@@ -1236,22 +1296,40 @@ def _parse_response_format_text(
         return False, None
 
 
-def _parsed_response_format_chunk(
+def _is_terminal_stream_chunk(chunk: ChatGenerationChunk) -> bool:
+    message = chunk.message
+    if isinstance(message, AIMessageChunk) and message.chunk_position == "last":
+        return True
+    return bool(
+        chunk.generation_info and chunk.generation_info.get("finish_reason") is not None
+    )
+
+
+def _finalize_response_format_chunk(
+    terminal_chunk: Optional[ChatGenerationChunk],
     text: str,
     response_format: Any,
     *,
     has_tool_call: bool,
-) -> Optional[ChatGenerationChunk]:
-    if has_tool_call:
-        return None
-    parsed, value = _parse_response_format_text(text, response_format)
-    if not parsed:
-        return None
+) -> ChatGenerationChunk:
+    chunk = terminal_chunk or ChatGenerationChunk(
+        message=AIMessageChunk(content=""),
+    )
+    message = chunk.message
+    if not isinstance(message, AIMessageChunk):
+        return chunk
+
+    message_updates: dict[str, Any] = {"chunk_position": "last"}
+    if not has_tool_call:
+        parsed, value = _parse_response_format_text(text, response_format)
+        if parsed:
+            message_updates["additional_kwargs"] = {
+                **message.additional_kwargs,
+                "parsed": value,
+            }
     return ChatGenerationChunk(
-        message=AIMessageChunk(
-            content="",
-            additional_kwargs={"parsed": value},
-        )
+        message=message.model_copy(update=message_updates),
+        generation_info=chunk.generation_info,
     )
 
 
