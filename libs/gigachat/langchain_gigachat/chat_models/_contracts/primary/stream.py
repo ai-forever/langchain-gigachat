@@ -611,14 +611,13 @@ def _update_stream_metadata(
             value=str(model) if model is not None else None,
         )
     )
-    metadata.update(
-        _observe_scalar_metadata(
-            state,
-            state_field="created_at",
-            metadata_field="created_at",
-            value=int(created_at) if created_at is not None else None,
-        )
-    )
+    # SDK stream events can carry distinct timestamps; keep the first for aggregation.
+    if created_at is not None:
+        if state.created_at is None:
+            state.created_at = int(created_at)
+        if "created_at" not in state.emitted_metadata_fields:
+            state.emitted_metadata_fields.add("created_at")
+            metadata["created_at"] = state.created_at
 
     new_headers: dict[str, Any] = {}
     for key, value in x_headers.items():

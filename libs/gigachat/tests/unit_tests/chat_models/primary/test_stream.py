@@ -66,6 +66,37 @@ def test_converts_sdk_message_delta_and_uses_request_id() -> None:
     assert state.message_id == "request-1"
 
 
+def test_sdk_event_timestamps_are_not_stream_identity() -> None:
+    state = primary.StreamState()
+    delta = _convert(
+        gm.PrimaryChatCompletionChunk(
+            event="response.message.delta",
+            created_at=1760434637,
+            messages=[
+                gm.ChatMessageChunk(
+                    role="assistant",
+                    content=[gm.ChatContentPart(text="answer")],
+                )
+            ],
+        ),
+        state,
+    )
+    done = _convert(
+        gm.PrimaryChatCompletionChunk(
+            event="response.message.done",
+            created_at=1760434638,
+        ),
+        state,
+    )
+
+    aggregate = delta + done
+
+    assert delta.message.response_metadata["created_at"] == 1760434637
+    assert "created_at" not in done.message.response_metadata
+    assert aggregate.message.response_metadata["created_at"] == 1760434637
+    assert state.created_at == 1760434637
+
+
 def test_fragmented_text_aggregates_and_callback_text_is_only_text() -> None:
     state = primary.StreamState()
     chunks = [
