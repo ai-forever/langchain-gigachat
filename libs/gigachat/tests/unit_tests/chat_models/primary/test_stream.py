@@ -8,6 +8,7 @@ from langchain_core.messages import AIMessageChunk
 from langchain_core.outputs import ChatGenerationChunk
 
 from langchain_gigachat.chat_models._contracts import primary
+from langchain_gigachat.chat_models._contracts.primary.types import PrimaryStreamError
 
 
 def _convert(
@@ -856,22 +857,26 @@ def test_pending_result_clears_when_unrelated_tool_begins() -> None:
 
 
 @pytest.mark.parametrize(
-    "event",
+    ("event", "raises_error"),
     [
-        {"event": "response.message.done"},
-        {"event": "response.error"},
-        {
-            "event": "response.tool.failed",
-            "tool_execution": {
-                "call_id": "tool-2",
-                "name": "web_search",
-                "status": "failed",
+        ({"event": "response.message.done"}, False),
+        ({"event": "response.error"}, True),
+        (
+            {
+                "event": "response.tool.failed",
+                "tool_execution": {
+                    "call_id": "tool-2",
+                    "name": "web_search",
+                    "status": "failed",
+                },
             },
-        },
+            False,
+        ),
     ],
 )
 def test_pending_result_clears_on_stream_terminal_or_failure(
     event: dict[str, Any],
+    raises_error: bool,
 ) -> None:
     state = primary.StreamState()
     _convert(
@@ -887,7 +892,11 @@ def test_pending_result_clears_on_stream_terminal_or_failure(
     )
     assert state.pending_server_tool_result_id == "tool-1"
 
-    _convert(event, state)
+    if raises_error:
+        with pytest.raises(PrimaryStreamError, match="response.error"):
+            _convert(event, state)
+    else:
+        _convert(event, state)
 
     assert state.pending_server_tool_result_id is None
 
@@ -1062,9 +1071,11 @@ def test_unknown_events_preserve_ordered_raw_provider_payloads() -> None:
         "response.future.started",
         "response.future.delta",
     ]
-    assert [chunk.message.response_metadata["provider_fields"] for chunk in chunks] == [
-        {"future_field": {"step": 1}},
-        {"future_field": {"step": 2}},
+    assert [
+        chunk.message.response_metadata["provider_field_events"] for chunk in chunks
+    ] == [
+        [{"future_field": {"step": 1}}],
+        [{"future_field": {"step": 2}}],
     ]
     assert aggregate.message.response_metadata["raw_events"] == events
 
@@ -1076,30 +1087,21 @@ def test_tool_in_progress_is_a_known_event() -> None:
     assert "raw_events" not in chunk.message.response_metadata
 
 
-@pytest.mark.parametrize(
-    ("event_name", "finish_reason"),
-    [
-        ("response.error", "error"),
-        ("response.tool.failed", "tool_error"),
-    ],
-)
-def test_error_events_are_metadata_chunks(
-    event_name: str,
-    finish_reason: str,
-) -> None:
+def test_tool_failure_is_a_non_terminal_metadata_chunk() -> None:
     chunk = _convert(
         {
-            "event": event_name,
-            "finish_reason": finish_reason,
+            "event": "response.tool.failed",
+            "finish_reason": "tool_error",
             "error": {"message": "boom"},
         }
     )
 
     assert chunk.text == ""
-    assert chunk.generation_info == {"finish_reason": finish_reason}
-    assert chunk.message.response_metadata["provider_fields"] == {
-        "error": {"message": "boom"}
-    }
+    assert chunk.generation_info == {"finish_reason": "tool_error"}
+    assert chunk.message.chunk_position is None
+    assert chunk.message.response_metadata["provider_field_events"] == [
+        {"error": {"message": "boom"}}
+    ]
 
 
 def test_files_citations_and_reasoning_keep_monotonic_indexes() -> None:

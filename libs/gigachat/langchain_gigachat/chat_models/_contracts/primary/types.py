@@ -6,6 +6,16 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping, Optional, Sequence
 
 import gigachat.models as gm
+from gigachat.exceptions import GigaChatException
+
+
+class PrimaryStreamError(GigaChatException):
+    """Provider-declared failure from a primary named-event stream."""
+
+    def __init__(self, payload: Mapping[str, Any]) -> None:
+        self.payload = dict(payload)
+        error = self.payload.get("error")
+        super().__init__(f"Primary GigaChat stream returned response.error: {error!r}")
 
 
 @dataclass(frozen=True)
@@ -49,6 +59,8 @@ class StreamState:
     created_at: Optional[int] = None
     x_headers: dict[str, Any] = field(default_factory=dict)
     emitted_metadata_fields: set[str] = field(default_factory=set)
+    completion_event: Optional[dict[str, Any]] = None
+    usage_metadata: Optional[dict[str, Any]] = None
 
     client_tool_started: bool = False
     client_tool_name: Optional[str] = None

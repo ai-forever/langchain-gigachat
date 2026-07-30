@@ -21,7 +21,10 @@ from langchain_gigachat.chat_models._contracts.primary.content import (
     reasoning_content,
     unknown_provider_fields,
 )
-from langchain_gigachat.chat_models._contracts.primary.types import StreamState
+from langchain_gigachat.chat_models._contracts.primary.types import (
+    PrimaryStreamError,
+    StreamState,
+)
 
 _KNOWN_EVENTS = frozenset(
     {
@@ -656,6 +659,16 @@ def _observe_scalar_metadata(
     if current is None:
         setattr(state, state_field, value)
     elif current != value:
+        if metadata_field == "message_id":
+            raise ValueError(
+                "Primary GigaChat completion contains multiple provider message_id "
+                "values; their replay semantics are unsupported."
+            )
+        if metadata_field == "tools_state_id":
+            raise ValueError(
+                "Primary GigaChat completion contains multiple tools_state_id values; "
+                "their replay semantics are unsupported."
+            )
         raise ValueError(
             f"Conflicting primary stream {metadata_field}: {current!r} and {value!r}"
         )
@@ -744,20 +757,55 @@ def _response_metadata(
         metadata["events"] = [event_name]
     metadata.update(observed_metadata)
 
-    for field in ("additional_data", "finish_reason", "logprobs"):
-        if event.get(field) is not None:
-            metadata[field] = event[field]
+    if event.get("finish_reason") is not None:
+        metadata["finish_reason"] = event["finish_reason"]
+    for source_field, event_field in (
+        ("additional_data", "additional_data_events"),
+        ("logprobs", "logprob_events"),
+    ):
+        if event.get(source_field) is not None:
+            metadata[event_field] = [event[source_field]]
     if event.get("tool_execution") is not None:
-        metadata["tool_execution"] = event["tool_execution"]
+        metadata["tool_execution_events"] = [event["tool_execution"]]
 
     provider_fields = {
         key: value for key, value in event.items() if key not in _EVENT_FIELDS
     }
     if provider_fields:
-        metadata["provider_fields"] = provider_fields
+        metadata["provider_field_events"] = [provider_fields]
     if event_name is not None and event_name not in _KNOWN_EVENTS:
         metadata["raw_events"] = [dict(event)]
     return metadata
+
+
+def _single_provider_id(
+    values: Sequence[Any],
+    *,
+    error_message: str,
+) -> str | None:
+    ids = list(dict.fromkeys(str(value) for value in values if value is not None))
+    if len(ids) > 1:
+        raise ValueError(error_message)
+    return ids[0] if ids else None
+
+
+def _usage_update(
+    state: StreamState,
+    usage_value: Any,
+) -> dict[str, Any] | None:
+    usage_metadata = create_usage_metadata(usage_value)
+    if usage_metadata is None:
+        return None
+    normalized = dict(usage_metadata)
+    if state.usage_metadata is None:
+        state.usage_metadata = normalized
+        return normalized
+    if state.usage_metadata == normalized:
+        return None
+    raise ValueError(
+        "Conflicting primary stream usage snapshots; "
+        "incremental usage semantics are unsupported."
+    )
 
 
 def convert_stream_event(
@@ -772,39 +820,56 @@ def convert_stream_event(
 
     event_name_value = event_data.get("event")
     event_name = str(event_name_value) if event_name_value is not None else None
-    provider_message_id_value = event_data.get("message_id")
+    if event_name == "response.error":
+        state.pending_server_tool_result_id = None
+        raise PrimaryStreamError(event_data)
+
     normalized_messages = _as_dict_list(
         event_data.get("messages"),
         field="messages",
     )
-    if provider_message_id_value is None:
-        provider_message_id_value = next(
-            (
-                message.get("message_id")
-                for message in normalized_messages
-                if message.get("message_id") is not None
-            ),
-            None,
-        )
-    provider_message_id = (
-        str(provider_message_id_value)
-        if provider_message_id_value is not None
-        else None
+    top_level_tool_execution = event_data.get("tool_execution")
+    terminal_continuation = state.completion_event is not None
+    if terminal_continuation:
+        if event_name == "response.message.done":
+            if event_data == state.completion_event:
+                return None
+            previous_finish = state.completion_event.get("finish_reason")
+            incoming_finish = event_data.get("finish_reason")
+            if (
+                (
+                    previous_finish is not None
+                    and incoming_finish is not None
+                    and previous_finish != incoming_finish
+                )
+                or normalized_messages
+                or top_level_tool_execution is not None
+            ):
+                raise ValueError("Conflicting primary completion terminal events")
+        elif normalized_messages or top_level_tool_execution is not None:
+            raise ValueError(
+                "Primary stream content arrived after response.message.done"
+            )
+
+    provider_message_id = _single_provider_id(
+        [
+            event_data.get("message_id"),
+            *(message.get("message_id") for message in normalized_messages),
+        ],
+        error_message=(
+            "Primary GigaChat completion contains multiple provider message_id "
+            "values; their replay semantics are unsupported."
+        ),
     )
-    provider_tools_state_value = event_data.get("tools_state_id")
-    if provider_tools_state_value is None:
-        provider_tools_state_value = next(
-            (
-                message.get("tools_state_id")
-                for message in normalized_messages
-                if message.get("tools_state_id") is not None
-            ),
-            None,
-        )
-    provider_tools_state_id = (
-        str(provider_tools_state_value)
-        if provider_tools_state_value is not None
-        else None
+    provider_tools_state_id = _single_provider_id(
+        [
+            event_data.get("tools_state_id"),
+            *(message.get("tools_state_id") for message in normalized_messages),
+        ],
+        error_message=(
+            "Primary GigaChat completion contains multiple tools_state_id values; "
+            "their replay semantics are unsupported."
+        ),
     )
     x_headers = _optional_dict(event_data.get("x_headers"))
     observed_metadata = _update_stream_metadata(
@@ -822,7 +887,9 @@ def convert_stream_event(
         state.message_id = request_id
     elif state.message_id is None:
         state.message_id = f"lc_primary-stream-{uuid4()}"
-    elif event_name == "response.message.done" and state.provider_message_id is not None:
+    elif (
+        event_name == "response.message.done" and state.provider_message_id is not None
+    ):
         state.message_id = state.provider_message_id
 
     content, tool_calls, has_nested_tool_execution = _convert_messages(
@@ -832,7 +899,6 @@ def convert_stream_event(
         state=state,
     )
 
-    top_level_tool_execution = event_data.get("tool_execution")
     if top_level_tool_execution is not None and not has_nested_tool_execution:
         _close_text_block(state)
         block = _tool_execution_block(
@@ -869,7 +935,7 @@ def convert_stream_event(
         observed_metadata=observed_metadata,
     )
 
-    usage_metadata = create_usage_metadata(event_data.get("usage"))
+    usage_metadata = _usage_update(state, event_data.get("usage"))
     generation_info = None
     if event_data.get("finish_reason") is not None:
         generation_info = {"finish_reason": event_data["finish_reason"]}
@@ -879,6 +945,9 @@ def convert_stream_event(
     )
     if not has_payload:
         return None
+
+    if event_name == "response.message.done" and state.completion_event is None:
+        state.completion_event = dict(event_data)
 
     state.first_chunk = False
     additional_kwargs: dict[str, Any] = identity_kwargs
@@ -892,6 +961,10 @@ def convert_stream_event(
         response_metadata=response_metadata,
         tool_call_chunks=tool_calls,
         usage_metadata=usage_metadata,
-        chunk_position=("last" if event_name == "response.message.done" else None),
+        chunk_position=(
+            "last"
+            if event_name == "response.message.done" and not terminal_continuation
+            else None
+        ),
     )
     return ChatGenerationChunk(message=message, generation_info=generation_info)
