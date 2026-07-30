@@ -174,6 +174,30 @@ def _additional_file_part(message: BaseMessage) -> gm.ChatContentPart | None:
     return gm.ChatContentPart(files=files) if files else None
 
 
+def _deduplicate_attachment_parts(
+    parts: Sequence[gm.ChatContentPart],
+) -> list[gm.ChatContentPart]:
+    seen_file_ids: set[str] = set()
+    deduplicated: list[gm.ChatContentPart] = []
+    for part in parts:
+        if not part.files:
+            deduplicated.append(part)
+            continue
+
+        files: list[gm.ChatContentFile] = []
+        for file in part.files:
+            if file.id_ in seen_file_ids:
+                continue
+            seen_file_ids.add(file.id_)
+            files.append(file.model_copy(deep=True))
+
+        if files:
+            deduplicated.append(part.model_copy(deep=True, update={"files": files}))
+        elif part.model_dump(exclude={"files"}, exclude_none=True, by_alias=True):
+            deduplicated.append(part.model_copy(deep=True, update={"files": None}))
+    return deduplicated
+
+
 def _metadata_value(message: BaseMessage, names: Sequence[str]) -> Any:
     for source in (message.additional_kwargs, message.response_metadata):
         for name in names:
@@ -361,7 +385,11 @@ def _convert_ai_message(
             )
         )
 
-    return gm.ChatMessage(role="assistant", content=content, **kwargs)
+    return gm.ChatMessage(
+        role="assistant",
+        content=_deduplicate_attachment_parts(content),
+        **kwargs,
+    )
 
 
 def _convert_tool_message(
@@ -456,7 +484,7 @@ def convert_messages(
         converted.append(
             gm.ChatMessage(
                 role=role,
-                content=content,
+                content=_deduplicate_attachment_parts(content),
                 **_message_metadata(message),
             )
         )

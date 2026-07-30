@@ -85,6 +85,54 @@ def test_convert_messages_does_not_mutate_content_or_cache() -> None:
     assert cache == original_cache
 
 
+def test_convert_messages_deduplicates_attachment_ids_in_first_seen_order() -> None:
+    data_url = "data:image/png;base64,aW1hZ2U="
+    cached_uploads = {hashlib.sha256(data_url.encode()).hexdigest(): "file-2"}
+    message = HumanMessage(
+        content=[
+            {"type": "image", "file_id": "file-1", "mime_type": "image/png"},
+            {"type": "image_url", "image_url": {"giga_id": "file-1"}},
+            {"type": "image_url", "image_url": {"url": data_url}},
+        ],
+        additional_kwargs={
+            "attachments": ["file-2", "file-3", "file-1", "file-3"]
+        },
+    )
+    original = copy.deepcopy(message)
+
+    converted = primary.convert_messages(
+        [message],
+        cached_uploads=cached_uploads,
+    )[0]
+
+    assert converted.model_dump(exclude_none=True, by_alias=True)["content"] == [
+        {"files": [{"id": "file-1", "mime": "image/png"}]},
+        {"files": [{"id": "file-2", "mime": "image/png"}]},
+        {"files": [{"id": "file-3"}]},
+    ]
+    assert message == original
+
+
+def test_convert_messages_keeps_distinct_files_with_matching_mime() -> None:
+    converted = primary.convert_messages(
+        [
+            HumanMessage(
+                content=[
+                    {"type": "image", "file_id": "file-1", "mime": "image/png"},
+                    {"type": "image", "file_id": "file-2", "mime": "image/png"},
+                ]
+            )
+        ],
+        cached_uploads={},
+    )[0]
+
+    assert converted.content
+    assert [part.files[0].id_ for part in converted.content if part.files] == [
+        "file-1",
+        "file-2",
+    ]
+
+
 def test_convert_messages_ai_function_call_preserves_provider_ids() -> None:
     message = AIMessage(
         content="calling",
