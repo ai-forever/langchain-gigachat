@@ -842,6 +842,8 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         # Kept in the signature for LangChain compatibility, but wrapper-side
         # local stop handling was removed in 0.5.x. See MIGRATION.md.
         self._upload_attachments(messages)
+        streamed_text: list[str] = []
+        streamed_tool_call = False
         if self._resolve_chat_contract(kwargs) == "primary":
             primary_payload = self._build_primary_payload(messages, kwargs)
             state = primary.StreamState()
@@ -849,6 +851,10 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 primary_chunk = primary.convert_stream_event(event, state=state)
                 if primary_chunk is None:
                     continue
+                streamed_text.append(primary_chunk.text)
+                streamed_tool_call = streamed_tool_call or _has_tool_call(
+                    primary_chunk.message
+                )
                 if run_manager:
                     run_manager.on_llm_new_token(
                         primary_chunk.text, chunk=primary_chunk
@@ -861,6 +867,15 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                         generation_info=primary_chunk.generation_info,
                     )
                 yield primary_chunk
+            parsed_chunk = _parsed_response_format_chunk(
+                "".join(streamed_text),
+                kwargs.get("response_format"),
+                has_tool_call=streamed_tool_call,
+            )
+            if parsed_chunk is not None:
+                if run_manager:
+                    run_manager.on_llm_new_token("", chunk=parsed_chunk)
+                yield parsed_chunk
             return
         self._validate_legacy_kwargs(kwargs)
         payload = self._build_payload(messages, **kwargs)
@@ -875,9 +890,20 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 chunk, first_chunk
             )
             first_chunk = False
+            streamed_text.append(chunk_m.text)
+            streamed_tool_call = streamed_tool_call or _has_tool_call(chunk_m)
             if run_manager:
                 run_manager.on_llm_new_token(content)
             yield ChatGenerationChunk(message=chunk_m, generation_info=generation_info)
+        parsed_chunk = _parsed_response_format_chunk(
+            "".join(streamed_text),
+            kwargs.get("response_format"),
+            has_tool_call=streamed_tool_call,
+        )
+        if parsed_chunk is not None:
+            if run_manager:
+                run_manager.on_llm_new_token("", chunk=parsed_chunk)
+            yield parsed_chunk
 
     @override
     async def _astream(
@@ -890,6 +916,8 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         # Kept in the signature for LangChain compatibility, but wrapper-side
         # local stop handling was removed in 0.5.x. See MIGRATION.md.
         await self._aupload_attachments(messages)
+        streamed_text: list[str] = []
+        streamed_tool_call = False
         if self._resolve_chat_contract(kwargs) == "primary":
             primary_payload = self._build_primary_payload(messages, kwargs)
             state = primary.StreamState()
@@ -897,6 +925,10 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 primary_chunk = primary.convert_stream_event(event, state=state)
                 if primary_chunk is None:
                     continue
+                streamed_text.append(primary_chunk.text)
+                streamed_tool_call = streamed_tool_call or _has_tool_call(
+                    primary_chunk.message
+                )
                 if run_manager:
                     await run_manager.on_llm_new_token(
                         primary_chunk.text, chunk=primary_chunk
@@ -909,6 +941,15 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                         generation_info=primary_chunk.generation_info,
                     )
                 yield primary_chunk
+            parsed_chunk = _parsed_response_format_chunk(
+                "".join(streamed_text),
+                kwargs.get("response_format"),
+                has_tool_call=streamed_tool_call,
+            )
+            if parsed_chunk is not None:
+                if run_manager:
+                    await run_manager.on_llm_new_token("", chunk=parsed_chunk)
+                yield parsed_chunk
             return
         self._validate_legacy_kwargs(kwargs)
         payload = self._build_payload(messages, **kwargs)
@@ -923,9 +964,20 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 chunk, first_chunk
             )
             first_chunk = False
+            streamed_text.append(chunk_m.text)
+            streamed_tool_call = streamed_tool_call or _has_tool_call(chunk_m)
             if run_manager:
                 await run_manager.on_llm_new_token(content)
             yield ChatGenerationChunk(message=chunk_m, generation_info=generation_info)
+        parsed_chunk = _parsed_response_format_chunk(
+            "".join(streamed_text),
+            kwargs.get("response_format"),
+            has_tool_call=streamed_tool_call,
+        )
+        if parsed_chunk is not None:
+            if run_manager:
+                await run_manager.on_llm_new_token("", chunk=parsed_chunk)
+            yield parsed_chunk
 
     def bind_functions(
         self,
@@ -1148,13 +1200,22 @@ def _is_pydantic_class(obj: Any) -> TypeGuard[Type[BaseModel]]:
     return isinstance(obj, type) and is_basemodel_subclass(obj)
 
 
-def _attach_parsed_response_format(
-    result: ChatResult,
+def _has_tool_call(message: BaseMessage | BaseMessageChunk) -> bool:
+    if not isinstance(message, (AIMessage, AIMessageChunk)):
+        return False
+    return bool(
+        message.tool_calls
+        or message.invalid_tool_calls
+        or getattr(message, "tool_call_chunks", [])
+    )
+
+
+def _parse_response_format_text(
+    text: str,
     response_format: Any,
-) -> ChatResult:
-    """Attach parsed structured output while leaving tool-call responses untouched."""
+) -> tuple[bool, Any]:
     if response_format is None:
-        return result
+        return False, None
 
     normalized = primary.normalize_response_format(response_format)
     if (
@@ -1162,23 +1223,49 @@ def _attach_parsed_response_format(
         or normalized.type != "json_schema"
         or not isinstance(normalized.schema_, dict)
     ):
-        return result
+        return False, None
 
-    pydantic_schema = response_format if _is_pydantic_class(response_format) else None
+    text = text.strip()
+    if not text:
+        return False, None
+    if _is_pydantic_class(response_format):
+        return True, response_format.model_validate_json(text)
+    return True, json.loads(text)
+
+
+def _parsed_response_format_chunk(
+    text: str,
+    response_format: Any,
+    *,
+    has_tool_call: bool,
+) -> Optional[ChatGenerationChunk]:
+    if has_tool_call:
+        return None
+    parsed, value = _parse_response_format_text(text, response_format)
+    if not parsed:
+        return None
+    return ChatGenerationChunk(
+        message=AIMessageChunk(
+            content="",
+            additional_kwargs={"parsed": value},
+        )
+    )
+
+
+def _attach_parsed_response_format(
+    result: ChatResult,
+    response_format: Any,
+) -> ChatResult:
+    """Attach parsed structured output while leaving tool-call responses untouched."""
     for generation in result.generations:
         message = generation.message
         if not isinstance(message, AIMessage):
             continue
-        if message.tool_calls or message.invalid_tool_calls:
+        if _has_tool_call(message):
             continue
-        text = message.text.strip()
-        if not text:
-            continue
-        if pydantic_schema is not None:
-            parsed = pydantic_schema.model_validate_json(text)
-        else:
-            parsed = json.loads(text)
-        message.additional_kwargs["parsed"] = parsed
+        parsed, value = _parse_response_format_text(message.text, response_format)
+        if parsed:
+            message.additional_kwargs["parsed"] = value
     return result
 
 

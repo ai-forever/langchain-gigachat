@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator, Iterator
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -56,6 +57,66 @@ def _legacy_json_response() -> gm.ChatCompletion:
 def _configure_json_responses(sdk_client: MagicMock) -> None:
     sdk_client.chat.return_value = _legacy_json_response()
     sdk_client.chat.create.return_value = _primary_json_response()
+
+
+def _primary_json_stream() -> Iterator[gm.PrimaryChatCompletionChunk]:
+    for text in ('{"value": ', "7}"):
+        yield gm.PrimaryChatCompletionChunk(
+            event="response.message.delta",
+            model=MODEL,
+            created_at=CREATED_AT,
+            messages=[
+                gm.ChatMessageChunk(
+                    role="assistant",
+                    message_id=MESSAGE_ID,
+                    content=[gm.ChatContentPart(text=text)],
+                )
+            ],
+            message_id=MESSAGE_ID,
+        )
+    yield gm.PrimaryChatCompletionChunk(
+        event="response.message.done",
+        model=MODEL,
+        created_at=CREATED_AT,
+        messages=None,
+        message_id=MESSAGE_ID,
+        finish_reason="stop",
+    )
+
+
+def _primary_tool_call_stream() -> Iterator[gm.PrimaryChatCompletionChunk]:
+    yield gm.PrimaryChatCompletionChunk(
+        event="response.message.delta",
+        model=MODEL,
+        created_at=CREATED_AT,
+        messages=[
+            gm.ChatMessageChunk(
+                role="assistant",
+                message_id=MESSAGE_ID,
+                content=[],
+                function_call=gm.PrimaryChatFunctionCall(
+                    name="get_weather",
+                    arguments={"location": "SF"},
+                ),
+            )
+        ],
+        message_id=MESSAGE_ID,
+    )
+    yield gm.PrimaryChatCompletionChunk(
+        event="response.message.done",
+        model=MODEL,
+        created_at=CREATED_AT,
+        messages=None,
+        message_id=MESSAGE_ID,
+        finish_reason="tool_calls",
+    )
+
+
+async def _async_items(
+    items: Iterator[Any],
+) -> AsyncIterator[Any]:
+    for item in items:
+        yield item
 
 
 class OutputSchema(BaseModel):
@@ -300,3 +361,60 @@ def test_bind_tools_response_format_leaves_tool_call_unparsed(
 
     assert result.tool_calls
     assert "parsed" not in result.additional_kwargs
+
+
+def test_bind_tools_response_format_is_parsed_when_invoke_streams(
+    sdk_client: MagicMock,
+) -> None:
+    sdk_client.chat.stream.side_effect = lambda payload: _primary_json_stream()
+
+    result = (
+        GigaChat(model=MODEL, use_api_v2=True, streaming=True)
+        .bind_tools(
+            [get_weather],
+            response_format=OutputSchema,
+            strict=True,
+        )
+        .invoke("What weighs more?")
+    )
+
+    assert result.additional_kwargs["parsed"] == OutputSchema(value=7)
+
+
+def test_bind_tools_response_format_leaves_streamed_tool_call_unparsed(
+    sdk_client: MagicMock,
+) -> None:
+    sdk_client.chat.stream.side_effect = lambda payload: _primary_tool_call_stream()
+
+    result = (
+        GigaChat(model=MODEL, use_api_v2=True, streaming=True)
+        .bind_tools(
+            [get_weather],
+            response_format=OutputSchema,
+            strict=True,
+        )
+        .invoke("What is the weather in SF?")
+    )
+
+    assert result.tool_calls
+    assert "parsed" not in result.additional_kwargs
+
+
+async def test_bind_tools_response_format_is_parsed_when_ainvoke_streams(
+    sdk_client: MagicMock,
+) -> None:
+    sdk_client.achat.stream.side_effect = lambda payload: _async_items(
+        _primary_json_stream()
+    )
+
+    result = await (
+        GigaChat(model=MODEL, use_api_v2=True, streaming=True)
+        .bind_tools(
+            [get_weather],
+            response_format=OutputSchema,
+            strict=True,
+        )
+        .ainvoke("What weighs more?")
+    )
+
+    assert result.additional_kwargs["parsed"] == OutputSchema(value=7)
