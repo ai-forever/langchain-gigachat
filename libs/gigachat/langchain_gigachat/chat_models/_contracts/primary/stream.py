@@ -287,6 +287,11 @@ def _tool_execution_block(
     )
 
     status = str(execution.get("status") or "").lower()
+    failed = event_name == "response.tool.failed" or status in {
+        "error",
+        "failed",
+        "failure",
+    }
     terminal = event_name in {
         "response.tool.completed",
         "response.tool.failed",
@@ -312,6 +317,10 @@ def _tool_execution_block(
                 f"Conflicting names for primary server tool {call_id!r}: "
                 f"{known_name!r} and {incoming_name!r}"
             )
+
+    pending_call_id = state.pending_server_tool_result_id
+    if pending_call_id is not None and (pending_call_id != call_id or not terminal):
+        state.pending_server_tool_result_id = None
 
     index_map = (
         state.server_tool_result_indexes if terminal else state.server_tool_indexes
@@ -345,7 +354,7 @@ def _tool_execution_block(
         streaming=True,
     )[0]
     if terminal:
-        state.pending_server_tool_result_id = call_id
+        state.pending_server_tool_result_id = None if failed else call_id
         return block
 
     if existing_index is None:
@@ -372,17 +381,16 @@ def _pending_server_tool_result_update(
     if index is None:
         return None
 
-    extras: dict[str, Any] = {
+    value: dict[str, Any] = {
         "inline_data": _as_dict(inline_data_value),
     }
     if provider_data:
-        extras["provider_data"] = dict(provider_data)
+        value["provider_data"] = dict(provider_data)
     state.pending_server_tool_result_id = None
     return {
-        "type": "server_tool_result",
-        "id": f"{call_id}:result",
+        "type": "non_standard",
+        "value": value,
         "index": index,
-        "extras": extras,
     }
 
 
@@ -795,6 +803,13 @@ def convert_stream_event(
             state=state,
         )
         content.append(block)
+
+    if event_name in {
+        "response.message.done",
+        "response.tool.failed",
+        "response.error",
+    }:
+        state.pending_server_tool_result_id = None
 
     response_metadata = _response_metadata(
         event_data,
