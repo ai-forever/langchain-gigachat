@@ -126,6 +126,7 @@ _PRIMARY_ONLY_KWARGS = frozenset(
         "filter_config",
         "model_options",
         "ranker_options",
+        "reasoning",
         "tool_config",
         "tools_state_id",
         "user_info",

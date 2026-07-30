@@ -183,6 +183,7 @@ def test_legacy_file_attachment_path_is_preserved(sdk_client: MagicMock) -> None
         ("filter_config", {}),
         ("model_options", {}),
         ("ranker_options", {}),
+        ("reasoning", {"effort": "high"}),
         ("tool_config", {}),
         ("tools_state_id", "tools-state-1"),
         ("user_info", {}),
