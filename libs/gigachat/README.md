@@ -166,6 +166,21 @@ print(msg.additional_kwargs.get("reasoning_content"))  # model's chain-of-though
 
 > **Note:** `reasoning_content` is also available during streaming — each `AIMessageChunk` carries it in `additional_kwargs`.
 
+### API v2 (`/v2/chat/completions`)
+
+The v2 contract is opt-in and keeps the legacy API as the default:
+
+```python
+llm = GigaChat(model="GigaChat-3-Ultra", use_api_v2=True)
+response = llm.invoke("What is the capital of Russia?")
+```
+
+Use `llm.bind(use_api_v2=True)` for a per-call override. V2 supports sync and
+async calls, streaming, client and built-in tools, attachments, and native
+`method="json_schema"` structured output. It currently requires the
+pre-release SDK API; wait for a stable SDK release containing the v2 chat
+methods before using this mode in a stable deployment.
+
 ## Tool Calling
 
 Use the standard LangChain `@tool` decorator. Pass GigaChat-specific metadata via `extras`:
@@ -361,6 +376,7 @@ Most commonly used parameters (all are optional):
 | `max_retries` | `int` | `None` | Retry attempts for transient errors (SDK default: `0`) |
 | `retry_backoff_factor` | `float` | `None` | Exponential backoff multiplier (SDK default: `0.5`) |
 | `profanity_check` | `bool` | `None` | Enable profanity filtering |
+| `use_api_v2` | `bool` | `False` | Use the `/v2/chat/completions` contract |
 | `streaming` | `bool` | `False` | Stream results by default |
 | `auto_upload_attachments` | `bool` | `False` | Auto-upload base64 content from `image_url` / `audio_url` / `document_url` blocks |
 | `allow_any_tool_choice_fallback` | `bool` | `False` | Silently convert `tool_choice="any"` to `"auto"` |

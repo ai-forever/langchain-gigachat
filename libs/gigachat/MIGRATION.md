@@ -2,6 +2,16 @@
 
 This guide covers all breaking changes in `langchain-gigachat` 0.5.0 and explains how to update your code.
 
+## Opting into API v2
+
+The legacy contract remains the default. To use `/v2/chat/completions`, enable
+it explicitly with `GigaChat(use_api_v2=True)`, or use
+`llm.bind(use_api_v2=True)` for one call. V2 adds named-event streaming,
+provider-native tools, attachments, and native JSON Schema structured output;
+existing legacy calls are unchanged. The current implementation requires the
+pre-release SDK API, so wait for a stable SDK release with
+`chat.create`/`chat.stream` and their async equivalents before stable rollout.
+
 ## Requirements
 
 | Dependency | Before (0.3.x) | After (0.5.0) |

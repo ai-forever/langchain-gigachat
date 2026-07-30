@@ -2,6 +2,14 @@
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- Opt-in `GigaChat(use_api_v2=True)` support for `/v2/chat/completions`,
+  including sync/async calls, streaming, tools, attachments, and native JSON
+  Schema structured output.
+
 ## [0.5.1] — 2026-05-04
 
 ### Added
