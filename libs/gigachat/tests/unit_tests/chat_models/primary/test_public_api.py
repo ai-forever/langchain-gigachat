@@ -7,10 +7,11 @@ from unittest.mock import MagicMock
 
 import gigachat.models as gm
 import pytest
+from pydantic import BaseModel
 
 from langchain_gigachat.chat_models.gigachat import GigaChat
 
-from .fixtures import CREATED_AT, MESSAGE_ID, MODEL
+from .fixtures import CREATED_AT, MESSAGE_ID, MODEL, build_function_call_response
 
 
 def _primary_json_response() -> gm.ChatCompletionResponse:
@@ -55,6 +56,14 @@ def _legacy_json_response() -> gm.ChatCompletion:
 def _configure_json_responses(sdk_client: MagicMock) -> None:
     sdk_client.chat.return_value = _legacy_json_response()
     sdk_client.chat.create.return_value = _primary_json_response()
+
+
+class OutputSchema(BaseModel):
+    value: int
+
+
+def get_weather(location: str) -> None:
+    """Get weather at a location."""
 
 
 @pytest.mark.parametrize(
@@ -241,3 +250,53 @@ def test_json_schema_structured_output_uses_route_specific_format(
         assert isinstance(payload, gm.Chat)
         assert isinstance(payload.response_format, gm.JsonSchemaResponseFormat)
         assert payload.response_format.type == "json_schema"
+
+
+@pytest.mark.parametrize("use_api_v2", [False, True])
+def test_bind_tools_accepts_pydantic_response_format(
+    sdk_client: MagicMock,
+    use_api_v2: bool,
+) -> None:
+    _configure_json_responses(sdk_client)
+
+    result = (
+        GigaChat(model=MODEL, use_api_v2=use_api_v2)
+        .bind_tools(
+            [get_weather],
+            response_format=OutputSchema,
+            strict=True,
+        )
+        .invoke("What weighs more?")
+    )
+
+    assert result.additional_kwargs["parsed"] == OutputSchema(value=7)
+    if use_api_v2:
+        payload = sdk_client.chat.create.call_args.args[0]
+        assert payload.model_options is not None
+        response_format = payload.model_options.response_format
+        assert isinstance(response_format, gm.ChatResponseFormat)
+    else:
+        payload = sdk_client.chat.call_args.args[0]
+        response_format = payload.response_format
+        assert isinstance(response_format, gm.JsonSchemaResponseFormat)
+    assert response_format.schema_ == OutputSchema.model_json_schema()
+    assert response_format.strict is True
+
+
+def test_bind_tools_response_format_leaves_tool_call_unparsed(
+    sdk_client: MagicMock,
+) -> None:
+    sdk_client.chat.create.return_value = build_function_call_response()
+
+    result = (
+        GigaChat(model=MODEL, use_api_v2=True)
+        .bind_tools(
+            [get_weather],
+            response_format=OutputSchema,
+            strict=True,
+        )
+        .invoke("What is the weather in SF?")
+    )
+
+    assert result.tool_calls
+    assert "parsed" not in result.additional_kwargs

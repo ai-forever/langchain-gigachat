@@ -558,6 +558,25 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         ]
         kwargs.pop("messages", None)
         kwargs.pop("use_api_v2", None)
+        strict = kwargs.pop("strict", None)
+        response_format = kwargs.get("response_format")
+        if response_format is not None:
+            normalized_response_format = primary.normalize_response_format(
+                response_format,
+                strict=strict,
+            )
+            if (
+                normalized_response_format is None
+                or normalized_response_format.type != "json_schema"
+                or not isinstance(normalized_response_format.schema_, dict)
+            ):
+                raise ValueError(
+                    "Legacy GigaChat supports only JSON Schema response_format."
+                )
+            kwargs["response_format"] = gm.JsonSchemaResponseFormat(
+                schema=normalized_response_format.schema_,
+                strict=normalized_response_format.strict,
+            )
 
         functions = kwargs.pop("functions", [])
         for tool in kwargs.pop("tools", []):
@@ -754,17 +773,26 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             stream_iter = self._stream(
                 messages, stop=stop, run_manager=run_manager, **kwargs
             )
-            return generate_from_stream(stream_iter)
+            result = generate_from_stream(stream_iter)
+            return _attach_parsed_response_format(
+                result,
+                kwargs.get("response_format"),
+            )
 
         self._upload_attachments(messages)
         if self._resolve_chat_contract(kwargs) == "primary":
             primary_payload = self._build_primary_payload(messages, kwargs)
             primary_response = self._client.chat.create(primary_payload)
-            return primary.create_chat_result(primary_response)
-        self._validate_legacy_kwargs(kwargs)
-        payload = self._build_payload(messages, **kwargs)
-        response = self._client.chat(payload)
-        return self._create_chat_result(response)
+            result = primary.create_chat_result(primary_response)
+        else:
+            self._validate_legacy_kwargs(kwargs)
+            payload = self._build_payload(messages, **kwargs)
+            response = self._client.chat(payload)
+            result = self._create_chat_result(response)
+        return _attach_parsed_response_format(
+            result,
+            kwargs.get("response_format"),
+        )
 
     @override
     async def _agenerate(
@@ -782,17 +810,26 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             stream_iter = self._astream(
                 messages, stop=stop, run_manager=run_manager, **kwargs
             )
-            return await agenerate_from_stream(stream_iter)
+            result = await agenerate_from_stream(stream_iter)
+            return _attach_parsed_response_format(
+                result,
+                kwargs.get("response_format"),
+            )
 
         await self._aupload_attachments(messages)
         if self._resolve_chat_contract(kwargs) == "primary":
             primary_payload = self._build_primary_payload(messages, kwargs)
             primary_response = await self._client.achat.create(primary_payload)
-            return primary.create_chat_result(primary_response)
-        self._validate_legacy_kwargs(kwargs)
-        payload = self._build_payload(messages, **kwargs)
-        response = await self._client.achat(payload)
-        return self._create_chat_result(response)
+            result = primary.create_chat_result(primary_response)
+        else:
+            self._validate_legacy_kwargs(kwargs)
+            payload = self._build_payload(messages, **kwargs)
+            response = await self._client.achat(payload)
+            result = self._create_chat_result(response)
+        return _attach_parsed_response_format(
+            result,
+            kwargs.get("response_format"),
+        )
 
     @override
     def _stream(
@@ -1059,10 +1096,11 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         tool_choice: Optional[
             Union[dict, str, Literal["auto", "any", "none"], bool]
         ] = None,
+        strict: Optional[bool] = None,
+        response_format: Optional[Union[Dict[str, Any], Type[BaseModel]]] = None,
         **kwargs: Any,
     ) -> Runnable[LanguageModelInput, AIMessage]:
-        """Bind tool-like objects to this chat model.
-        Assumes model is compatible with GigaChat tool-calling API."""
+        """Bind tools and an optional structured response schema to this model."""
         formatted_tools = [normalize_tool_for_binding(tool) for tool in tools]
         if tool_choice is not None and tool_choice:
             if isinstance(tool_choice, str):
@@ -1099,11 +1137,51 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                     f"Received: {tool_choice}"
                 )
             kwargs["function_call"] = tool_choice
+        if response_format is not None:
+            kwargs["response_format"] = response_format
+        if strict is not None:
+            kwargs["strict"] = strict
         return super().bind(tools=formatted_tools, **kwargs)
 
 
 def _is_pydantic_class(obj: Any) -> TypeGuard[Type[BaseModel]]:
     return isinstance(obj, type) and is_basemodel_subclass(obj)
+
+
+def _attach_parsed_response_format(
+    result: ChatResult,
+    response_format: Any,
+) -> ChatResult:
+    """Attach parsed structured output while leaving tool-call responses untouched."""
+    if response_format is None:
+        return result
+
+    normalized = primary.normalize_response_format(response_format)
+    if (
+        normalized is None
+        or normalized.type != "json_schema"
+        or not isinstance(normalized.schema_, dict)
+    ):
+        return result
+
+    pydantic_schema = (
+        response_format if _is_pydantic_class(response_format) else None
+    )
+    for generation in result.generations:
+        message = generation.message
+        if not isinstance(message, AIMessage):
+            continue
+        if message.tool_calls or message.invalid_tool_calls:
+            continue
+        text = message.text.strip()
+        if not text:
+            continue
+        if pydantic_schema is not None:
+            parsed = pydantic_schema.model_validate_json(text)
+        else:
+            parsed = json.loads(text)
+        message.additional_kwargs["parsed"] = parsed
+    return result
 
 
 def _format_instructions_for_schema(schema: Dict[str, Any] | type) -> str:

@@ -62,6 +62,38 @@ def test_normalizes_mapping_without_mutation() -> None:
     assert normalized.model_dump(exclude_none=True, by_alias=True) == original
 
 
+def test_normalizes_pydantic_class_with_strict() -> None:
+    normalized = primary.normalize_response_format(Answer, strict=True)
+
+    assert normalized == gm.ChatResponseFormat(
+        type="json_schema",
+        schema=Answer.model_json_schema(),
+        strict=True,
+    )
+
+
+def test_normalizes_raw_json_schema_mapping() -> None:
+    schema = Answer.model_json_schema()
+
+    normalized = primary.normalize_response_format(schema)
+
+    assert normalized == gm.ChatResponseFormat(
+        type="json_schema",
+        schema=schema,
+    )
+
+
+def test_rejects_conflicting_strict_values() -> None:
+    with pytest.raises(ValueError, match="already defines strict=False"):
+        primary.normalize_response_format(
+            gm.JsonSchemaResponseFormat(
+                schema=Answer.model_json_schema(),
+                strict=False,
+            ),
+            strict=True,
+        )
+
+
 def test_none_response_format_is_omitted() -> None:
     assert primary.normalize_response_format(None) is None
 

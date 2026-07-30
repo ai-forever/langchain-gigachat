@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import copy
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping, Sequence, cast
 
 import gigachat.models as gm
 from langchain_core.messages import BaseMessage
+from langchain_core.utils.pydantic import is_basemodel_subclass
 from pydantic import BaseModel
 
 from langchain_gigachat.chat_models._contracts.primary.messages import (
@@ -37,6 +38,7 @@ _LOCAL_CONTROL_KEYS = frozenset(
         "function_call",
         "functions",
         "messages",
+        "strict",
         "tool_choice",
         "use_api_v2",
     }
@@ -45,22 +47,65 @@ _RANKER_FIELDS = frozenset(gm.ChatRankerOptions.model_fields)
 _MISSING = object()
 
 
-def normalize_response_format(response_format: Any) -> gm.ChatResponseFormat | None:
+def normalize_response_format(
+    response_format: Any,
+    *,
+    strict: bool | None = None,
+) -> gm.ChatResponseFormat | None:
     """Normalize every primary response-format entry point to the SDK model."""
     if response_format is None:
         return None
-    if isinstance(
+    candidate: dict[str, Any]
+    if isinstance(response_format, type) and is_basemodel_subclass(response_format):
+        pydantic_schema = cast(type[BaseModel], response_format)
+        candidate = {
+            "type": "json_schema",
+            "schema": pydantic_schema.model_json_schema(),
+        }
+    elif isinstance(
         response_format,
         (gm.ChatResponseFormat, gm.JsonSchemaResponseFormat),
     ):
         candidate = response_format.model_dump(exclude_none=True, by_alias=True)
     elif isinstance(response_format, Mapping):
         candidate = copy.deepcopy(dict(response_format))
+        nested_json_schema = candidate.get("json_schema")
+        if (
+            candidate.get("type") == "json_schema"
+            and isinstance(nested_json_schema, Mapping)
+            and "schema" in nested_json_schema
+        ):
+            candidate = {
+                "type": "json_schema",
+                "schema": copy.deepcopy(nested_json_schema["schema"]),
+                **(
+                    {"strict": nested_json_schema["strict"]}
+                    if "strict" in nested_json_schema
+                    else {}
+                ),
+            }
+        elif not (
+            candidate.get("type") in {"json_schema", "text"}
+            and ("schema" in candidate or candidate.get("type") == "text")
+        ):
+            candidate = {
+                "type": "json_schema",
+                "schema": candidate,
+            }
     else:
         raise TypeError(
             "response_format must be a ChatResponseFormat, "
-            "JsonSchemaResponseFormat, mapping, or None."
+            "JsonSchemaResponseFormat, Pydantic BaseModel class, mapping, or None."
         )
+
+    if strict is not None:
+        existing_strict = candidate.get("strict")
+        if existing_strict is not None and existing_strict != strict:
+            raise ValueError(
+                "response_format already defines strict="
+                f"{existing_strict}, but strict={strict} was also provided."
+            )
+        candidate["strict"] = strict
 
     try:
         return gm.ChatResponseFormat.model_validate(candidate)
@@ -106,7 +151,10 @@ def _model_options(
     response_format = options.get("response_format")
     if response_format is None:
         response_format = invocation_kwargs.get("response_format")
-    normalized_response_format = normalize_response_format(response_format)
+    normalized_response_format = normalize_response_format(
+        response_format,
+        strict=invocation_kwargs.get("strict"),
+    )
     if normalized_response_format is not None:
         options["response_format"] = normalized_response_format
 
