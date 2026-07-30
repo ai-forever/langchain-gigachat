@@ -40,9 +40,28 @@ SCHEMA_DO_NOT_SUPPORT_MESSAGE = """Incorrect function schema!
 GigaChat currently do not support these typings:
 Union[X, Y, ...]"""
 
+PRIMARY_BUILTIN_TOOL_NAMES = frozenset(
+    {
+        "code_interpreter",
+        "image_generate",
+        "web_search",
+        "url_content_extraction",
+        "model_3d_generate",
+    }
+)
+
 
 class IncorrectSchemaException(Exception):
     pass
+
+
+def is_primary_builtin_tool(tool: Any) -> bool:
+    """Return whether a mapping uses a primary-contract built-in tool."""
+    if not isinstance(tool, dict):
+        return False
+    if tool.get("type") in PRIMARY_BUILTIN_TOOL_NAMES:
+        return True
+    return bool(PRIMARY_BUILTIN_TOOL_NAMES.intersection(tool))
 
 
 def gigachat_fix_schema(schema: Any, prev_key: str = "") -> Any:
@@ -456,6 +475,11 @@ def convert_to_gigachat_tool(
         A dict version of the passed in tool which is compatible with the
             GigaChat tool-calling API.
     """
+    if is_primary_builtin_tool(tool):
+        raise ValueError(
+            "Provider built-in tools require the GigaChat API v2 contract. "
+            "Set use_api_v2=True instead of binding them to the legacy API."
+        )
     if isinstance(tool, dict) and tool.get("type") == "function" and "function" in tool:
         return tool
     function = convert_to_gigachat_function(tool)
