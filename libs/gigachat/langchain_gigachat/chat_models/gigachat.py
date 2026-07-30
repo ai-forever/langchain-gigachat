@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import copy
 import hashlib
 import json
 import logging
 import re
+import threading
 import warnings
+from concurrent.futures import Future
 from mimetypes import guess_extension
 from operator import itemgetter
 from typing import (
@@ -458,6 +461,8 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
     """
 
     _cached_uploads: Dict[str, str] = PrivateAttr(default_factory=dict)
+    _upload_cache_lock: Any = PrivateAttr(default_factory=threading.Lock)
+    _uploads_in_flight: Dict[str, Future[str]] = PrivateAttr(default_factory=dict)
 
     @pre_init
     def validate_environment(cls, values: Dict) -> Dict:
@@ -469,11 +474,64 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             )
         return values
 
-    def _set_cached_upload(self, hashed: str, file_id: str) -> None:
-        """Store file_id for hashed content url; evict oldest entry if at capacity."""
-        if len(self._cached_uploads) >= DEFAULT_IMAGE_CACHE_MAX_SIZE:
+    def _set_cached_upload_locked(self, hashed: str, file_id: str) -> None:
+        if (
+            hashed not in self._cached_uploads
+            and len(self._cached_uploads) >= DEFAULT_IMAGE_CACHE_MAX_SIZE
+        ):
             self._cached_uploads.pop(next(iter(self._cached_uploads)))
         self._cached_uploads[hashed] = file_id
+
+    def _set_cached_upload(self, hashed: str, file_id: str) -> None:
+        """Store one cached upload while deterministically bounding the cache."""
+        with self._upload_cache_lock:
+            self._set_cached_upload_locked(hashed, file_id)
+
+    def _cached_uploads_snapshot(self) -> Dict[str, str]:
+        with self._upload_cache_lock:
+            return dict(self._cached_uploads)
+
+    def _claim_upload(
+        self,
+        hashed: str,
+    ) -> Tuple[Optional[str], Future[str], bool]:
+        with self._upload_cache_lock:
+            cached = self._cached_uploads.get(hashed)
+            if cached is not None:
+                completed: Future[str] = Future()
+                completed.set_result(cached)
+                return cached, completed, False
+
+            pending = self._uploads_in_flight.get(hashed)
+            if pending is not None:
+                return None, pending, False
+
+            pending = Future()
+            self._uploads_in_flight[hashed] = pending
+            return None, pending, True
+
+    def _complete_upload(
+        self,
+        hashed: str,
+        pending: Future[str],
+        file_id: str,
+    ) -> None:
+        with self._upload_cache_lock:
+            self._set_cached_upload_locked(hashed, file_id)
+            current = self._uploads_in_flight.pop(hashed, None)
+        if current is pending and not pending.done():
+            pending.set_result(file_id)
+
+    def _fail_upload(
+        self,
+        hashed: str,
+        pending: Future[str],
+        error: BaseException,
+    ) -> None:
+        with self._upload_cache_lock:
+            current = self._uploads_in_flight.pop(hashed, None)
+        if current is pending and not pending.done():
+            pending.set_exception(error)
 
     def _should_upload_block(
         self, block_type: str, url: str
@@ -512,17 +570,24 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 should_upload, matches = self._should_upload_block(block_type, url)
                 if not should_upload or not matches:
                     continue
-                hashed = hashlib.sha256(url.encode()).hexdigest()
-                if hashed in self._cached_uploads:
-                    continue
                 mime, encoding, data_b64 = matches.groups()
                 if encoding != "base64":
                     continue
                 ext = _extension_for_mime(mime)
-                file = await self.aupload_file(
-                    (f"{uuid4()}{ext}", base64.b64decode(data_b64))
-                )
-                self._set_cached_upload(hashed, file.id_)
+                data = base64.b64decode(data_b64)
+                hashed = hashlib.sha256(url.encode()).hexdigest()
+                cached, pending, owns_upload = self._claim_upload(hashed)
+                if cached is not None:
+                    continue
+                if not owns_upload:
+                    await asyncio.shield(asyncio.wrap_future(pending))
+                    continue
+                try:
+                    file = await self.aupload_file((f"{uuid4()}{ext}", data))
+                except BaseException as error:
+                    self._fail_upload(hashed, pending, error)
+                    raise
+                self._complete_upload(hashed, pending, file.id_)
 
     def _upload_attachments(self, messages: List[BaseMessage]) -> None:
         for message in messages:
@@ -543,20 +608,28 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 should_upload, matches = self._should_upload_block(block_type, url)
                 if not should_upload or not matches:
                     continue
-                hashed = hashlib.sha256(url.encode()).hexdigest()
-                if hashed in self._cached_uploads:
-                    continue
                 mime, encoding, data_b64 = matches.groups()
                 if encoding != "base64":
                     continue
                 ext = _extension_for_mime(mime)
-                file = self.upload_file((f"{uuid4()}{ext}", base64.b64decode(data_b64)))
-                self._set_cached_upload(hashed, file.id_)
+                data = base64.b64decode(data_b64)
+                hashed = hashlib.sha256(url.encode()).hexdigest()
+                cached, pending, owns_upload = self._claim_upload(hashed)
+                if cached is not None:
+                    continue
+                if not owns_upload:
+                    pending.result()
+                    continue
+                try:
+                    file = self.upload_file((f"{uuid4()}{ext}", data))
+                except BaseException as error:
+                    self._fail_upload(hashed, pending, error)
+                    raise
+                self._complete_upload(hashed, pending, file.id_)
 
     def _build_payload(self, messages: List[BaseMessage], **kwargs: Any) -> gm.Chat:
-        messages_dicts = [
-            _convert_message_to_dict(m, self._cached_uploads) for m in messages
-        ]
+        cached_uploads = self._cached_uploads_snapshot()
+        messages_dicts = [_convert_message_to_dict(m, cached_uploads) for m in messages]
         kwargs.pop("messages", None)
         kwargs.pop("use_api_v2", None)
         strict = kwargs.pop("strict", None)
@@ -671,7 +744,9 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             defaults=self._primary_defaults(),
             invocation_kwargs=invocation_kwargs,
             cached_uploads=(
-                self._cached_uploads if cached_uploads is None else cached_uploads
+                self._cached_uploads_snapshot()
+                if cached_uploads is None
+                else cached_uploads
             ),
             tool_binding=tool_binding,
         )
@@ -680,7 +755,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         self, messages: Sequence[BaseMessage]
     ) -> Dict[str, str]:
         """Return detached placeholder IDs for valid planned data-URL uploads."""
-        validation_cache = dict(self._cached_uploads)
+        validation_cache = self._cached_uploads_snapshot()
         for message in messages:
             if not isinstance(message.content, list):
                 continue
