@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-import json
-from functools import reduce
-from operator import add
 from typing import Any, cast
 
 import gigachat.models as gm
 import pytest
-from langchain_core.messages import AIMessage, AIMessageChunk
+from langchain_core.language_models.chat_models import generate_from_stream
+from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGenerationChunk, ChatResult
 
 from langchain_gigachat.chat_models._contracts import primary
@@ -39,7 +37,7 @@ def _non_stream_message(
     return message, result
 
 
-def _stream_message(events: list[dict[str, Any]]) -> AIMessageChunk:
+def _stream_message(events: list[dict[str, Any]]) -> AIMessage:
     state = primary.StreamState()
     chunks: list[ChatGenerationChunk] = []
     for values in events:
@@ -47,9 +45,9 @@ def _stream_message(events: list[dict[str, Any]]) -> AIMessageChunk:
         chunk = primary.convert_stream_event(event, state=state)
         assert chunk is not None
         chunks.append(chunk)
-    aggregate = reduce(add, chunks)
-    assert isinstance(aggregate.message, AIMessageChunk)
-    return aggregate.message
+    message = generate_from_stream(iter(chunks)).generations[0].message
+    assert isinstance(message, AIMessage)
+    return message
 
 
 def _canonical_value(value: Any) -> Any:
@@ -61,16 +59,10 @@ def _canonical_value(value: Any) -> Any:
     normalized = {
         key: _canonical_value(item) for key, item in value.items() if key != "index"
     }
-    if normalized.get("type") == "server_tool_call_chunk":
-        normalized["type"] = "server_tool_call"
-    if normalized.get("type") == "server_tool_call" and isinstance(
-        normalized.get("args"), str
-    ):
-        normalized["args"] = json.loads(normalized["args"])
     return normalized
 
 
-def _semantic_content(message: AIMessage | AIMessageChunk) -> list[dict[str, Any]]:
+def _semantic_content(message: AIMessage) -> list[dict[str, Any]]:
     return [
         cast(dict[str, Any], _canonical_value(dict(block)))
         for block in message.content_blocks
@@ -79,7 +71,7 @@ def _semantic_content(message: AIMessage | AIMessageChunk) -> list[dict[str, Any
 
 
 def _semantic_tool_calls(
-    message: AIMessage | AIMessageChunk,
+    message: AIMessage,
 ) -> list[dict[str, Any]]:
     return [
         {key: value for key, value in dict(call).items() if key != "error"}
@@ -90,7 +82,7 @@ def _semantic_tool_calls(
 def _assert_semantic_parity(
     response: gm.ChatCompletionResponse,
     events: list[dict[str, Any]],
-) -> tuple[AIMessage, AIMessageChunk]:
+) -> tuple[AIMessage, AIMessage]:
     non_stream, _ = _non_stream_message(response)
     streamed = _stream_message(events)
 
@@ -352,10 +344,15 @@ def test_server_tool_contract_parity(
             "message_id": _MESSAGE_ID,
             "tools_state_id": "server-tool-1",
             "tool_execution": execution,
-        }
+        },
+        {"event": "response.message.done"},
     ]
 
-    _assert_semantic_parity(response, events)
+    _, streamed = _assert_semantic_parity(response, events)
+
+    assert all(
+        block["type"] != "server_tool_call_chunk" for block in streamed.content_blocks
+    )
 
 
 def test_usage_finish_and_late_metadata_contract_parity() -> None:

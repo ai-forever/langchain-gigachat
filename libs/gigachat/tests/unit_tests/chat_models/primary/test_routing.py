@@ -199,7 +199,7 @@ def test_sync_streaming_routing_matrix(
     chunks = list(llm.stream("Hello"))
 
     assert all(isinstance(chunk, AIMessageChunk) for chunk in chunks)
-    assert "".join(str(chunk.content) for chunk in chunks) == expected_text
+    assert "".join(chunk.text for chunk in chunks) == expected_text
     if expected_route == "legacy":
         sdk_client.stream.assert_called_once()
         sdk_client.chat.stream.assert_not_called()
@@ -230,7 +230,7 @@ async def test_async_streaming_routing_matrix(
     chunks = [chunk async for chunk in llm.astream("Hello")]
 
     assert all(isinstance(chunk, AIMessageChunk) for chunk in chunks)
-    assert "".join(str(chunk.content) for chunk in chunks) == expected_text
+    assert "".join(chunk.text for chunk in chunks) == expected_text
     if expected_route == "legacy":
         sdk_client.astream.assert_called_once()
         sdk_client.achat.stream.assert_not_called()

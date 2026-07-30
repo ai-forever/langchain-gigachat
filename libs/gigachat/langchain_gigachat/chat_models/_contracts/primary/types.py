@@ -39,6 +39,8 @@ class StreamState:
 
     first_chunk: bool = True
     next_block_index: int = 0
+    active_text_block_index: int | str | None = None
+    active_text_block_role: Optional[str] = None
     message_id: Optional[str] = None
     provider_message_id: Optional[str] = None
     tools_state_id: Optional[str] = None

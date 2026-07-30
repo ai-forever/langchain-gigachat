@@ -53,12 +53,19 @@ def test_converts_sdk_message_delta_and_uses_request_id() -> None:
     chunk = _convert(event, state)
 
     assert chunk.text == "Привет"
-    assert chunk.message.content == "Привет"
+    assert chunk.message.content == [
+        {
+            "type": "text",
+            "text": "Привет",
+            "index": 0,
+        }
+    ]
     assert chunk.message.id == "request-1"
     assert chunk.message.response_metadata == {
         "events": ["response.message.delta"],
         "message_id": "provider-message",
         "model": "GigaChat-3-Ultra",
+        "output_version": "v1",
         "thread_id": "thread-1",
         "x_headers": {"x-request-id": "request-1"},
     }
@@ -115,6 +122,7 @@ def test_event_names_aggregate_as_an_ordered_list() -> None:
         "response.message.delta",
         "response.message.done",
     ]
+    assert aggregate.message.response_metadata["output_version"] == "v1"
 
 
 def test_fragmented_text_aggregates_and_callback_text_is_only_text() -> None:
@@ -135,7 +143,9 @@ def test_fragmented_text_aggregates_and_callback_text_is_only_text() -> None:
 
     assert [chunk.text for chunk in chunks] == ["one", " ", "two"]
     assert aggregate.text == "one two"
-    assert aggregate.message.content == "one two"
+    assert aggregate.message.content == [
+        {"type": "text", "text": "one two", "index": 0},
+    ]
     assert {chunk.message.id for chunk in chunks} == {"message-1"}
 
 
@@ -580,6 +590,7 @@ def test_done_without_messages_preserves_finish_usage_and_metadata() -> None:
         "events": ["response.message.done"],
         "finish_reason": "stop",
         "message_id": "message-1",
+        "output_version": "v1",
         "thread_id": "thread-1",
     }
     assert _message(chunk).usage_metadata == {

@@ -120,6 +120,27 @@ def _take_numeric_block_index(state: StreamState) -> int:
     return index
 
 
+def _take_text_block_index(
+    state: StreamState,
+    *,
+    role: str,
+    explicit: Any = None,
+) -> int | str:
+    if explicit is None and state.active_text_block_role == role:
+        if state.active_text_block_index is not None:
+            return state.active_text_block_index
+
+    index = _take_block_index(state, explicit)
+    state.active_text_block_index = index
+    state.active_text_block_role = role
+    return index
+
+
+def _close_text_block(state: StreamState) -> None:
+    state.active_text_block_index = None
+    state.active_text_block_role = None
+
+
 def _request_id(x_headers: Mapping[str, Any]) -> str | None:
     for key, value in x_headers.items():
         if key.lower() == "x-request-id" and value is not None:
@@ -335,14 +356,13 @@ def _convert_content_part(
     part_value: Any,
     *,
     role: str,
-    plain_text_output: bool,
     message_inline_data: Any,
     event_name: str | None,
     incoming_tools_state_id: str | None,
     state: StreamState,
-) -> tuple[list[str | dict[str, Any]], list[ToolCallChunk]]:
+) -> tuple[list[dict[str, Any]], list[ToolCallChunk]]:
     part = _as_dict(part_value)
-    content: list[str | dict[str, Any]] = []
+    content: list[dict[str, Any]] = []
     tool_calls: list[ToolCallChunk] = []
     inline_data_value = part.get("inline_data")
     if inline_data_value is None:
@@ -350,23 +370,27 @@ def _convert_content_part(
     extra = unknown_provider_fields(part, _CONTENT_FIELDS)
 
     if part.get("text") is not None:
-        if plain_text_output:
-            content.append(str(part["text"]))
-        else:
-            content.append(
-                convert_text_content(
-                    str(part["text"]),
+        content.append(
+            convert_text_content(
+                str(part["text"]),
+                role=role,
+                inline_data=inline_data_value,
+                provider_data=extra,
+                index=_take_text_block_index(
+                    state,
                     role=role,
-                    inline_data=inline_data_value,
-                    provider_data=extra,
-                    index=_take_block_index(state, part.get("index")),
-                )
+                    explicit=part.get("index"),
+                ),
             )
+        )
 
+    if part.get("files"):
+        _close_text_block(state)
     for file_value in part.get("files") or []:
         content.append(_file_block(file_value, state=state))
 
     if part.get("function_call") is not None:
+        _close_text_block(state)
         tool_calls.append(
             _tool_call_chunk(
                 part["function_call"],
@@ -376,6 +400,7 @@ def _convert_content_part(
         )
 
     if part.get("tool_execution") is not None:
+        _close_text_block(state)
         tool_execution_block = _tool_execution_block(
             part["tool_execution"],
             event_name=event_name,
@@ -390,6 +415,7 @@ def _convert_content_part(
         content.append(tool_execution_block)
 
     if part.get("function_result") is not None:
+        _close_text_block(state)
         content.append(
             {
                 "type": "non_standard",
@@ -401,6 +427,7 @@ def _convert_content_part(
 
     reasoning = part.get("reasoning", part.get("reasoning_content"))
     if reasoning is not None:
+        _close_text_block(state)
         content.append(
             _reasoning_block(
                 reasoning,
@@ -410,52 +437,12 @@ def _convert_content_part(
         )
 
     if not content and not tool_calls and (inline_data_value is not None or extra):
+        _close_text_block(state)
         value: dict[str, Any] = dict(extra)
         if inline_data_value is not None:
             value["inline_data"] = _as_dict(inline_data_value)
         content.append({"type": "non_standard", "value": value})
     return content, tool_calls
-
-
-def _is_plain_text_messages(messages: Sequence[Mapping[str, Any]]) -> bool:
-    if not messages:
-        return False
-    for message in messages:
-        if str(message.get("role") or "assistant") != "assistant":
-            return False
-        if any(
-            message.get(field) is not None
-            for field in (
-                "function_call",
-                "inline_data",
-                "reasoning",
-                "reasoning_content",
-                "tool_execution",
-            )
-        ):
-            return False
-        if unknown_provider_fields(message, _MESSAGE_FIELDS):
-            return False
-        parts = _as_dict_list(message.get("content"), field="messages.content")
-        for part in parts:
-            if part.get("text") is None or part.get("index") is not None:
-                return False
-            if any(
-                part.get(field) is not None
-                for field in (
-                    "files",
-                    "function_call",
-                    "function_result",
-                    "inline_data",
-                    "reasoning",
-                    "reasoning_content",
-                    "tool_execution",
-                )
-            ):
-                return False
-            if unknown_provider_fields(part, _CONTENT_FIELDS):
-                return False
-    return True
 
 
 def _convert_messages(
@@ -465,14 +452,13 @@ def _convert_messages(
     incoming_tools_state_id: str | None,
     state: StreamState,
 ) -> tuple[
-    str | list[str | dict[str, Any]],
+    list[str | dict[str, Any]],
     list[ToolCallChunk],
     bool,
 ]:
     content: list[str | dict[str, Any]] = []
     tool_calls: list[ToolCallChunk] = []
     messages = _as_dict_list(messages_value, field="messages")
-    plain_text_output = _is_plain_text_messages(messages)
     # The SDK can mirror one execution across levels; prefer the deepest source.
     has_part_tool_execution = any(
         part.get("tool_execution") is not None
@@ -496,7 +482,6 @@ def _convert_messages(
             part_content, part_tool_calls = _convert_content_part(
                 part,
                 role=role,
-                plain_text_output=plain_text_output,
                 message_inline_data=message_inline_data,
                 event_name=event_name,
                 incoming_tools_state_id=tool_state_id,
@@ -506,6 +491,7 @@ def _convert_messages(
             tool_calls.extend(part_tool_calls)
 
         if message.get("function_call") is not None:
+            _close_text_block(state)
             tool_calls.append(
                 _tool_call_chunk(
                     message["function_call"],
@@ -514,6 +500,7 @@ def _convert_messages(
                 )
             )
         if has_message_tool_execution and message.get("tool_execution") is not None:
+            _close_text_block(state)
             content.append(
                 _tool_execution_block(
                     message["tool_execution"],
@@ -525,9 +512,11 @@ def _convert_messages(
 
         reasoning = message.get("reasoning", message.get("reasoning_content"))
         if reasoning is not None:
+            _close_text_block(state)
             content.append(_reasoning_block(reasoning, state=state))
 
         if not message.get("content") and message_inline_data is not None:
+            _close_text_block(state)
             content.append(
                 {
                     "type": "non_standard",
@@ -539,6 +528,7 @@ def _convert_messages(
         if role not in {"assistant", "reasoning", "tool"}:
             metadata["role"] = role
         if metadata:
+            _close_text_block(state)
             content.append(
                 {
                     "type": "non_standard",
@@ -549,14 +539,8 @@ def _convert_messages(
 
     if tool_calls and len({call["id"] for call in tool_calls}) > 1:
         raise ValueError("Primary streaming supports one client tool call per message")
-    if content and all(isinstance(item, str) for item in content):
-        normalized_content: str | list[str | dict[str, Any]] = "".join(
-            item for item in content if isinstance(item, str)
-        )
-    else:
-        normalized_content = content
     return (
-        normalized_content,
+        content,
         tool_calls,
         has_part_tool_execution or has_message_tool_execution,
     )
@@ -659,7 +643,7 @@ def _response_metadata(
     event_name: str | None,
     observed_metadata: Mapping[str, Any],
 ) -> dict[str, Any]:
-    metadata: dict[str, Any] = {}
+    metadata: dict[str, Any] = {"output_version": "v1"}
     if event_name is not None:
         metadata["events"] = [event_name]
     metadata.update(observed_metadata)
@@ -753,16 +737,14 @@ def convert_stream_event(
 
     top_level_tool_execution = event_data.get("tool_execution")
     if top_level_tool_execution is not None and not has_nested_tool_execution:
+        _close_text_block(state)
         block = _tool_execution_block(
             top_level_tool_execution,
             event_name=event_name,
             incoming_tools_state_id=provider_tools_state_id,
             state=state,
         )
-        if isinstance(content, str):
-            content = [content, block] if content else [block]
-        else:
-            content.append(block)
+        content.append(block)
 
     response_metadata = _response_metadata(
         event_data,
