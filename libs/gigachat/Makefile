@@ -6,9 +6,10 @@ all: help
 # Define a variable for the test file path.
 TEST_FILE ?= tests/unit_tests/
 integration_test integration_tests: TEST_FILE = tests/integration_tests/
+test tests: PYTEST_ARGS = --cov-fail-under=90
 
 test tests integration_test integration_tests:
-	uv run pytest $(TEST_FILE)
+	uv run pytest $(TEST_FILE) $(PYTEST_ARGS)
 
 check_imports: $(shell find langchain_gigachat -name '*.py')
 	uv run python ./scripts/check_imports.py $^
