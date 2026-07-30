@@ -560,7 +560,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         kwargs.pop("use_api_v2", None)
         strict = kwargs.pop("strict", None)
         response_format = kwargs.get("response_format")
-        if response_format is not None:
+        if response_format is not None or strict is not None:
             normalized_response_format = primary.normalize_response_format(
                 response_format,
                 strict=strict,
@@ -1213,6 +1213,8 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         **kwargs: Any,
     ) -> Runnable[LanguageModelInput, AIMessage]:
         """Bind tools and an optional structured response schema to this model."""
+        if strict is not None and response_format is None:
+            raise ValueError("strict is supported only together with response_format.")
         formatted_tools = [normalize_tool_for_binding(tool) for tool in tools]
         if tool_choice is not None and tool_choice:
             if isinstance(tool_choice, str):

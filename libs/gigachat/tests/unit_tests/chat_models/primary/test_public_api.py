@@ -420,6 +420,19 @@ def test_bind_tools_accepts_pydantic_response_format(
     assert response_format.strict is True
 
 
+@pytest.mark.parametrize("use_api_v2", [False, True])
+def test_bind_tools_rejects_strict_without_response_format(
+    use_api_v2: bool,
+) -> None:
+    llm = GigaChat(model=MODEL, use_api_v2=use_api_v2)
+
+    with pytest.raises(
+        ValueError,
+        match="strict is supported only together with response_format",
+    ):
+        llm.bind_tools([get_weather], strict=True)
+
+
 def test_bind_tools_response_format_leaves_tool_call_unparsed(
     sdk_client: MagicMock,
 ) -> None:
