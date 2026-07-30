@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Iterator
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import gigachat.models as gm
 import pytest
 from langchain_core.exceptions import OutputParserException
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessageChunk, HumanMessage
+from langchain_core.outputs import ChatGenerationChunk
 from pydantic import BaseModel
 
 from langchain_gigachat.chat_models.gigachat import GigaChat
@@ -20,6 +21,11 @@ from .fixtures import CREATED_AT, MESSAGE_ID, MODEL
 
 class OutputSchema(BaseModel):
     value: int
+
+
+def _message(chunk: ChatGenerationChunk) -> AIMessageChunk:
+    assert isinstance(chunk.message, AIMessageChunk)
+    return cast(AIMessageChunk, chunk.message)
 
 
 def _tool_failed_then_done() -> Iterator[gm.PrimaryChatCompletionChunk]:
@@ -85,12 +91,12 @@ def test_tool_terminal_does_not_replace_authoritative_message_done(
 
     assert len(chunks) == 2
     assert chunks[0].generation_info == {"finish_reason": "tool_error"}
-    assert chunks[0].message.chunk_position is None
+    assert _message(chunks[0]).chunk_position is None
     assert chunks[0].message.response_metadata["provider_field_events"] == [
         {"error": {"message": "tool failed"}}
     ]
     assert chunks[1].generation_info == {"finish_reason": "stop"}
-    assert chunks[1].message.chunk_position == "last"
+    assert _message(chunks[1]).chunk_position == "last"
 
 
 def _primary_json_response(
@@ -128,6 +134,7 @@ def test_native_structured_output_rejects_valid_json_from_unsuccessful_finish(
 
     result = chain.invoke("Hello")
 
+    assert isinstance(result, dict)
     assert result["raw"].content == '{"value": 7}'
     assert result["raw"].response_metadata["finish_reason"] == finish_reason
     assert result["parsed"] is None

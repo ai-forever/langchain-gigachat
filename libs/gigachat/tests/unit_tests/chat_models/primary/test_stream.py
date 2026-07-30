@@ -1098,7 +1098,7 @@ def test_tool_failure_is_a_non_terminal_metadata_chunk() -> None:
 
     assert chunk.text == ""
     assert chunk.generation_info == {"finish_reason": "tool_error"}
-    assert chunk.message.chunk_position is None
+    assert _message(chunk).chunk_position is None
     assert chunk.message.response_metadata["provider_field_events"] == [
         {"error": {"message": "boom"}}
     ]

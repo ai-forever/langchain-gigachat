@@ -42,6 +42,7 @@ def test_pydantic_v1_schema_remains_accepted_at_compatibility_boundaries() -> No
     assert function["description"] == "Look up a legacy value."
     assert response_format is not None
     assert response_format.type == "json_schema"
+    assert isinstance(response_format.schema_, dict)
     assert response_format.schema_["title"] == "LegacyArguments"
 
 

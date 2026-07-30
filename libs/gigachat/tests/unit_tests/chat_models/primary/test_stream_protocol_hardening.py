@@ -210,8 +210,8 @@ def test_only_message_done_is_completion_terminal() -> None:
         state,
     )
 
-    assert tool_failed.message.chunk_position is None
-    assert done.message.chunk_position == "last"
+    assert _message(tool_failed).chunk_position is None
+    assert _message(done).chunk_position == "last"
 
 
 def test_identical_message_done_is_deduplicated() -> None:
@@ -277,8 +277,8 @@ def test_metadata_after_message_done_remains_mergeable_but_not_terminal() -> Non
         state,
     )
 
-    assert done.message.chunk_position == "last"
-    assert metadata.message.chunk_position is None
+    assert _message(done).chunk_position == "last"
+    assert _message(metadata).chunk_position is None
     assert metadata.message.response_metadata["provider_field_events"] == [
         {"future_field": {"trace": "trace-1"}}
     ]

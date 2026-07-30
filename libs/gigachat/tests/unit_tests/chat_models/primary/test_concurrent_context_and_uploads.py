@@ -99,15 +99,12 @@ async def test_async_uploads_deduplicate_in_flight_content_across_tasks(
 ) -> None:
     model = GigaChat(auto_upload_attachments=True)
     upload_started = asyncio.Event()
-    second_upload_started = asyncio.Event()
     release_upload = asyncio.Event()
     calls = 0
 
     async def upload_file(*args: Any, **kwargs: Any) -> SimpleNamespace:
         nonlocal calls
         calls += 1
-        if calls == 2:
-            second_upload_started.set()
         upload_started.set()
         await release_upload.wait()
         return SimpleNamespace(id_="uploaded-file")
@@ -121,10 +118,9 @@ async def test_async_uploads_deduplicate_in_flight_content_across_tasks(
     second = asyncio.create_task(
         model._aupload_attachments([copy.deepcopy(_attachment_message())])
     )
-    try:
-        await asyncio.wait_for(second_upload_started.wait(), timeout=0.2)
-    except TimeoutError:
-        pass
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    assert calls == 1
     release_upload.set()
     await asyncio.gather(first, second)
 
@@ -191,7 +187,7 @@ def test_first_sdk_client_initialization_is_thread_safe(
     model = GigaChat()
     start = threading.Barrier(3)
 
-    def get_client() -> MagicMock:
+    def get_client() -> object:
         start.wait(timeout=1)
         return model._client
 
