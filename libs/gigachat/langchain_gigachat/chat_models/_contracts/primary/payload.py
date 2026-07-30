@@ -42,6 +42,7 @@ _LOCAL_CONTROL_KEYS = frozenset(
     }
 )
 _RANKER_FIELDS = frozenset(gm.ChatRankerOptions.model_fields)
+_MISSING = object()
 
 
 def _copy_mapping_or_model(value: Any, *, field_name: str) -> dict[str, Any]:
@@ -107,6 +108,51 @@ def _ranker_options(value: Any) -> gm.ChatRankerOptions | None:
     return gm.ChatRankerOptions.model_validate(ranker)
 
 
+def _normalize_primary_storage(
+    value: Any,
+) -> tuple[gm.ChatStorage | bool | None, str | None]:
+    """Normalize primary and legacy storage shapes without lossy coercion."""
+    if value is None or isinstance(value, bool):
+        return value, None
+
+    if isinstance(value, (gm.ChatStorage, gm.Storage)):
+        storage = value.model_dump(exclude_none=True, by_alias=True)
+    elif isinstance(value, Mapping):
+        storage = copy.deepcopy(dict(value))
+    else:
+        raise ValueError(
+            "storage must be None, a bool, gm.ChatStorage, a compatible mapping, "
+            "or legacy gm.Storage."
+        )
+
+    is_stateful = storage.pop("is_stateful", _MISSING)
+    assistant_id = storage.pop("assistant_id", None)
+
+    if is_stateful is not _MISSING:
+        if not isinstance(is_stateful, bool):
+            raise ValueError(
+                "Legacy storage field is_stateful must be a boolean for a "
+                "primary request."
+            )
+        if not is_stateful:
+            populated = sorted(
+                key for key, field_value in storage.items() if field_value is not None
+            )
+            if assistant_id is not None:
+                populated.append("assistant_id")
+                populated.sort()
+            if populated:
+                fields = ", ".join(populated)
+                raise ValueError(
+                    "Legacy storage with is_stateful=False cannot include "
+                    f"additional storage field(s): {fields}. Pass storage=False "
+                    "without stateful fields."
+                )
+            return False, None
+
+    return gm.ChatStorage.model_validate(storage), assistant_id
+
+
 def _copy_tool_binding(binding: ToolBinding) -> dict[str, Any]:
     values: dict[str, Any] = {}
     if binding.tools is not None:
@@ -139,6 +185,23 @@ def build_payload(
         messages,
         cached_uploads=cached_uploads,
     )
+
+    storage_assistant_id: str | None = None
+    if "storage" in kwargs:
+        storage, storage_assistant_id = _normalize_primary_storage(kwargs["storage"])
+        payload_values["storage"] = storage
+
+    assistant_id = kwargs.get("assistant_id")
+    if (
+        assistant_id is not None
+        and storage_assistant_id is not None
+        and assistant_id != storage_assistant_id
+    ):
+        raise ValueError(
+            "Conflicting assistant_id values in the top-level request and storage."
+        )
+    if assistant_id is None and storage_assistant_id is not None:
+        payload_values["assistant_id"] = storage_assistant_id
 
     model = invocation_kwargs.get("model")
     if model is None:
