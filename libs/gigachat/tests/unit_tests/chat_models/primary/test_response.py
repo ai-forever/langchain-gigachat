@@ -657,6 +657,72 @@ def test_message_level_metadata_is_promoted_without_raw_message_copy() -> None:
     assert "provider_messages" not in message.additional_kwargs
 
 
+def test_multiple_provider_message_ids_fail_before_returning_message() -> None:
+    response = _response(
+        message_id="response-message",
+        messages=[
+            {
+                "role": "assistant",
+                "message_id": "nested-message",
+                "content": [{"text": "Hello"}],
+            }
+        ],
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="multiple provider message_id values.*replay semantics are unsupported",
+    ):
+        create_chat_result(response)
+
+
+def test_multiple_tools_state_ids_fail_before_returning_message() -> None:
+    response = _response(
+        tools_state_id="response-state",
+        messages=[
+            {
+                "role": "assistant",
+                "tools_state_id": "nested-state",
+                "content": [{"text": "Hello"}],
+            }
+        ],
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="multiple tools_state_id values.*replay semantics are unsupported",
+    ):
+        create_chat_result(response)
+
+
+def test_repeated_identical_provider_ids_are_deduplicated() -> None:
+    message = _message(
+        _response(
+            message_id="message-1",
+            tools_state_id="state-1",
+            messages=[
+                {
+                    "role": "assistant",
+                    "message_id": "message-1",
+                    "tools_state_id": "state-1",
+                    "content": [{"text": "Hello"}],
+                },
+                {
+                    "role": "assistant",
+                    "message_id": "message-1",
+                    "tools_state_id": "state-1",
+                    "content": [{"text": " again"}],
+                },
+            ],
+        )
+    )
+
+    assert message.content == "Hello again"
+    assert message.response_metadata["message_id"] == "message-1"
+    assert message.response_metadata["tools_state_id"] == "state-1"
+    assert message.additional_kwargs["tools_state_id"] == "state-1"
+
+
 def test_unknown_content_and_provider_fields_are_preserved() -> None:
     response = _response(
         future_response_field={"enabled": True},

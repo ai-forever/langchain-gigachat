@@ -349,6 +349,27 @@ def _tools_state_ids(response: gm.ChatCompletionResponse) -> list[str]:
     return list(dict.fromkeys(value for value in values if value is not None))
 
 
+def _provider_message_ids(response: gm.ChatCompletionResponse) -> list[str]:
+    values = [
+        response.message_id,
+        *(message.message_id for message in response.messages),
+    ]
+    return list(dict.fromkeys(value for value in values if value is not None))
+
+
+def _validate_response_identity(response: gm.ChatCompletionResponse) -> None:
+    if len(_provider_message_ids(response)) > 1:
+        raise ValueError(
+            "Primary GigaChat completion contains multiple provider message_id "
+            "values; their replay semantics are unsupported."
+        )
+    if len(_tools_state_ids(response)) > 1:
+        raise ValueError(
+            "Primary GigaChat completion contains multiple tools_state_id values; "
+            "their replay semantics are unsupported."
+        )
+
+
 def _response_metadata(
     response: gm.ChatCompletionResponse,
     *,
@@ -413,6 +434,7 @@ def create_chat_result(response: gm.ChatCompletionResponse) -> ChatResult:
     """
     if not response.messages:
         raise ValueError("Primary chat completion response contains no messages")
+    _validate_response_identity(response)
 
     finish_reason = response.finish_reason
     if finish_reason is None:
