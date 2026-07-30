@@ -299,6 +299,20 @@ def _tool_execution_block(
         "failure",
         "success",
     }
+    incoming_name_value = execution.get("name")
+    incoming_name = (
+        str(incoming_name_value) if incoming_name_value is not None else None
+    )
+    known_name = state.server_tool_names.get(call_id)
+    if incoming_name:
+        if known_name is None:
+            state.server_tool_names[call_id] = incoming_name
+        elif incoming_name != known_name:
+            raise ValueError(
+                f"Conflicting names for primary server tool {call_id!r}: "
+                f"{known_name!r} and {incoming_name!r}"
+            )
+
     index_map = (
         state.server_tool_result_indexes if terminal else state.server_tool_indexes
     )
@@ -334,20 +348,10 @@ def _tool_execution_block(
         state.pending_server_tool_result_id = call_id
         return block
 
-    incoming_name_value = execution.get("name")
-    incoming_name = (
-        str(incoming_name_value) if incoming_name_value is not None else None
-    )
-    known_name = state.server_tool_names.get(call_id)
-    if known_name is None:
-        state.server_tool_names[call_id] = incoming_name or "unknown"
-    elif incoming_name is not None and incoming_name != known_name:
-        raise ValueError(
-            f"Conflicting names for primary server tool {call_id!r}: "
-            f"{known_name!r} and {incoming_name!r}"
-        )
+    if existing_index is None:
+        block["name"] = incoming_name or ""
     else:
-        block["name"] = ""
+        block["name"] = incoming_name if known_name is None and incoming_name else ""
         block["extras"] = {"provider_tool_execution_updates": [execution]}
     if execution.get("arguments", execution.get("args")) is None:
         block["args"] = ""
