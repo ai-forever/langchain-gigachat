@@ -169,3 +169,8 @@ cython_debug/
 .ruff_cache/
 .cursor/
 
+#PyCharm and local testing
+.idea/
+local/
+libs/gigachat/local/
+
