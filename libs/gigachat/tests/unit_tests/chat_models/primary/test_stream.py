@@ -194,6 +194,144 @@ def test_fragmented_function_call_keeps_stable_id_and_index() -> None:
     assert state.next_block_index == 1
 
 
+def test_tools_state_before_function_does_not_hide_first_fragment_name() -> None:
+    state = primary.StreamState()
+    metadata = _convert(
+        {
+            "event": "response.message.delta",
+            "tools_state_id": "tools-1",
+        },
+        state,
+    )
+    first = _convert(
+        {
+            "event": "response.message.delta",
+            "messages": [
+                {
+                    "function_call": {
+                        "name": "weather",
+                        "arguments": '{"city":',
+                    }
+                }
+            ],
+        },
+        state,
+    )
+    second = _convert(
+        {
+            "event": "response.message.delta",
+            "messages": [
+                {
+                    "function_call": {
+                        "name": "weather",
+                        "arguments": '"Moscow"}',
+                    }
+                }
+            ],
+        },
+        state,
+    )
+
+    calls = [
+        _message(first).tool_call_chunks[0],
+        _message(second).tool_call_chunks[0],
+    ]
+    aggregate = reduce(add, [metadata, first, second])
+
+    assert metadata.text == first.text == second.text == ""
+    assert [call["name"] for call in calls] == ["weather", None]
+    assert {call["id"] for call in calls} == {"tools-1"}
+    assert {call["index"] for call in calls} == {0}
+    assert _message(aggregate).tool_calls[0]["args"] == {"city": "Moscow"}
+    assert state.client_tool_started is True
+    assert state.client_tool_id == "tools-1"
+    assert state.client_tool_index == 0
+
+
+@pytest.mark.parametrize(
+    ("field", "first_value", "second_value", "error"),
+    [
+        ("name", "weather", "forecast", "Conflicting primary client tool names"),
+        ("id", "call-1", "call-2", "Conflicting primary client tool IDs"),
+    ],
+)
+def test_conflicting_client_tool_identity_fails_clearly(
+    field: str,
+    first_value: str,
+    second_value: str,
+    error: str,
+) -> None:
+    state = primary.StreamState()
+    first_call = {
+        "name": "weather",
+        "arguments": "{",
+        field: first_value,
+    }
+    second_call = {
+        "name": "weather",
+        "arguments": "}",
+        field: second_value,
+    }
+    _convert(
+        {
+            "messages": [{"function_call": first_call}],
+        },
+        state,
+    )
+
+    with pytest.raises(ValueError, match=error):
+        _convert(
+            {
+                "messages": [{"function_call": second_call}],
+            },
+            state,
+        )
+
+
+def test_invalid_fragmented_function_arguments_become_invalid_tool_call() -> None:
+    state = primary.StreamState()
+    chunks = [
+        _convert(
+            {
+                "event": "response.message.delta",
+                "tools_state_id": "tools-1",
+                "messages": [
+                    {
+                        "function_call": {
+                            "name": "weather",
+                            "arguments": fragment,
+                        }
+                    }
+                ],
+            },
+            state,
+        )
+        for fragment in ('{"city":', "invalid}")
+    ]
+    chunks.append(
+        _convert(
+            {
+                "event": "response.message.done",
+                "finish_reason": "tool_calls",
+            },
+            state,
+        )
+    )
+
+    aggregate = reduce(add, chunks)
+
+    assert _message(aggregate).tool_calls == []
+    assert _message(aggregate).invalid_tool_calls == [
+        {
+            "name": "weather",
+            "args": '{"city":invalid}',
+            "id": "tools-1",
+            "error": None,
+            "type": "invalid_tool_call",
+        }
+    ]
+
+
 def test_function_call_dict_arguments_are_serialized_without_mutation() -> None:
     event: dict[str, Any] = {
         "event": "response.message.delta",
@@ -282,6 +420,65 @@ def test_tool_completed_is_a_metadata_only_server_tool_result() -> None:
     assert chunk.message.response_metadata["event"] == "response.tool.completed"
 
 
+def test_server_tool_lifecycle_keeps_call_index_and_separate_result_index() -> None:
+    state = primary.StreamState()
+    started = _convert(
+        {
+            "event": "response.tool.started",
+            "tool_execution": {
+                "call_id": "server-1",
+                "name": "web_search",
+                "status": "running",
+                "arguments": '{"query":',
+            },
+        },
+        state,
+    )
+    delta = _convert(
+        {
+            "event": "response.tool.delta",
+            "tool_execution": {
+                "call_id": "server-1",
+                "name": "web_search",
+                "status": "running",
+                "arguments": '"Moscow"}',
+            },
+        },
+        state,
+    )
+    completed = _convert(
+        {
+            "event": "response.tool.completed",
+            "tool_execution": {
+                "call_id": "server-1",
+                "name": "web_search",
+                "status": "completed",
+                "output": {"matches": 1},
+            },
+        },
+        state,
+    )
+
+    started_block = _content_blocks(started)[0]
+    delta_block = _content_blocks(delta)[0]
+    result_block = _content_blocks(completed)[0]
+    aggregate = reduce(add, [started, delta, completed])
+    aggregate_blocks = _content_blocks(aggregate)
+
+    assert started.text == delta.text == completed.text == ""
+    assert started_block["id"] == delta_block["id"] == "server-1"
+    assert started_block["index"] == delta_block["index"] == 0
+    assert started_block["name"] == "web_search"
+    assert delta_block["name"] == ""
+    assert result_block["tool_call_id"] == "server-1"
+    assert result_block["index"] == 1
+    assert aggregate_blocks[0]["name"] == "web_search"
+    assert aggregate_blocks[0]["args"] == '{"query":"Moscow"}'
+    assert aggregate_blocks[1]["type"] == "server_tool_result"
+    assert state.server_tool_indexes == {"server-1": 0}
+    assert state.server_tool_result_indexes == {"server-1": 1}
+
+
 def test_done_without_messages_preserves_finish_usage_and_metadata() -> None:
     state = primary.StreamState()
     chunk = _convert(
@@ -335,6 +532,93 @@ def test_usage_only_event_is_not_dropped() -> None:
         "input_tokens": 2,
         "output_tokens": 1,
         "total_tokens": 3,
+    }
+
+
+def test_late_metadata_is_emitted_once_and_survives_aggregation() -> None:
+    state = primary.StreamState()
+    first = _convert(
+        {
+            "event": "response.message.delta",
+            "messages": [{"content": [{"text": "answer"}]}],
+        },
+        state,
+    )
+    final = _convert(
+        {
+            "event": "response.message.done",
+            "message_id": "provider-message",
+            "tools_state_id": "tools-state",
+            "thread_id": "thread-1",
+            "model": "GigaChat-3-Ultra",
+            "created_at": 1780321868,
+            "x_headers": {
+                "x-request-id": "late-request",
+                "x-trace-id": "trace-1",
+            },
+            "finish_reason": "stop",
+        },
+        state,
+    )
+    repeated = _convert(
+        {
+            "event": "response.message.done",
+            "message_id": "provider-message",
+            "tools_state_id": "tools-state",
+            "thread_id": "thread-1",
+            "model": "GigaChat-3-Ultra",
+            "created_at": 1780321868,
+            "x_headers": {
+                "x-request-id": "late-request",
+                "x-trace-id": "trace-1",
+            },
+        },
+        state,
+    )
+
+    aggregate = reduce(add, [first, final, repeated])
+    metadata = aggregate.message.response_metadata
+
+    assert first.message.id == final.message.id == repeated.message.id
+    assert final.message.response_metadata["message_id"] == "provider-message"
+    assert "message_id" not in repeated.message.response_metadata
+    assert metadata["message_id"] == "provider-message"
+    assert metadata["tools_state_id"] == "tools-state"
+    assert metadata["thread_id"] == "thread-1"
+    assert metadata["model"] == "GigaChat-3-Ultra"
+    assert metadata["created_at"] == 1780321868
+    assert metadata["x_headers"] == {
+        "x-request-id": "late-request",
+        "x-trace-id": "trace-1",
+    }
+    assert state.provider_message_id == "provider-message"
+    assert state.tools_state_id == "tools-state"
+    assert state.thread_id == "thread-1"
+    assert state.model == "GigaChat-3-Ultra"
+    assert state.created_at == 1780321868
+
+
+def test_late_header_addition_merges_without_repeating_existing_values() -> None:
+    state = primary.StreamState()
+    first = _convert({"x_headers": {"x-request-id": "request-1"}}, state)
+    second = _convert(
+        {
+            "event": "response.message.done",
+            "x_headers": {
+                "x-request-id": "request-1",
+                "x-trace-id": "trace-1",
+            },
+        },
+        state,
+    )
+
+    aggregate = first + second
+
+    assert first.message.response_metadata["x_headers"] == {"x-request-id": "request-1"}
+    assert second.message.response_metadata["x_headers"] == {"x-trace-id": "trace-1"}
+    assert aggregate.message.response_metadata["x_headers"] == {
+        "x-request-id": "request-1",
+        "x-trace-id": "trace-1",
     }
 
 
@@ -404,6 +688,11 @@ def test_files_citations_and_reasoning_keep_monotonic_indexes() -> None:
                             "files": [
                                 {"id": "image-1", "mime": "image/png"},
                                 {"id": "audio-1", "mime": "audio/wav"},
+                                {
+                                    "id": "document-1",
+                                    "mime": "application/pdf",
+                                    "target": "download",
+                                },
                             ]
                         },
                         {"reasoning_content": "checking"},
@@ -415,7 +704,7 @@ def test_files_citations_and_reasoning_keep_monotonic_indexes() -> None:
     )
 
     blocks = _content_blocks(chunk)
-    assert [block["index"] for block in blocks] == [0, 1, 2, 3]
+    assert [block["index"] for block in blocks] == [0, 1, 2, 3, 4]
     assert blocks[0] == {
         "type": "text",
         "text": "source",
@@ -432,12 +721,101 @@ def test_files_citations_and_reasoning_keep_monotonic_indexes() -> None:
     assert blocks[1]["type"] == "image"
     assert blocks[2]["type"] == "audio"
     assert blocks[3] == {
+        "type": "file",
+        "file_id": "document-1",
+        "mime_type": "application/pdf",
+        "index": 3,
+        "extras": {"target": "download"},
+    }
+    assert blocks[4] == {
         "type": "reasoning",
         "reasoning": "checking",
-        "index": 3,
+        "index": 4,
     }
     assert chunk.text == "source"
-    assert state.next_block_index == 4
+    assert state.next_block_index == 5
+
+
+def test_reasoning_role_and_video_match_non_stream_content_semantics() -> None:
+    state = primary.StreamState()
+    stream_chunk = _convert(
+        {
+            "event": "response.message.delta",
+            "messages": [
+                {"role": "reasoning", "content": [{"text": "Think"}]},
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"text": "Answer"},
+                        {"files": [{"id": "video-1", "mime": "video/mp4"}]},
+                    ],
+                },
+            ],
+        },
+        state,
+    )
+    response = gm.ChatCompletionResponse.model_validate(
+        {
+            "model": "GigaChat-3-Ultra",
+            "created_at": 1780321868,
+            "messages": [
+                {"role": "reasoning", "content": [{"text": "Think"}]},
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"text": "Answer"},
+                        {"files": [{"id": "video-1", "mime": "video/mp4"}]},
+                    ],
+                },
+            ],
+        }
+    )
+    non_stream_message = primary.create_chat_result(response).generations[0].message
+    stream_blocks = [
+        {key: value for key, value in block.items() if key != "index"}
+        for block in _content_blocks(stream_chunk)
+    ]
+
+    assert stream_chunk.text == "Answer"
+    assert [block["index"] for block in _content_blocks(stream_chunk)] == [0, 1, 2]
+    assert stream_blocks == non_stream_message.content
+    assert stream_blocks[0] == {"type": "reasoning", "reasoning": "Think"}
+    assert stream_blocks[2]["type"] == "video"
+
+
+def test_unknown_message_fields_match_non_stream_content_semantics() -> None:
+    messages = [
+        {
+            "role": "assistant",
+            "content": [{"text": "Answer"}],
+            "future_message_data": {"trace": "provider-value"},
+        }
+    ]
+    stream_chunk = _convert(
+        {
+            "event": "response.message.delta",
+            "messages": messages,
+        }
+    )
+    response = gm.ChatCompletionResponse.model_validate(
+        {
+            "model": "GigaChat-3-Ultra",
+            "created_at": 1780321868,
+            "messages": messages,
+        }
+    )
+    non_stream_message = primary.create_chat_result(response).generations[0].message
+    stream_blocks = [
+        {key: value for key, value in block.items() if key != "index"}
+        for block in _content_blocks(stream_chunk)
+    ]
+
+    assert stream_chunk.text == "Answer"
+    assert stream_blocks == non_stream_message.content
+    assert stream_blocks[1] == {
+        "type": "non_standard",
+        "value": {"future_message_data": {"trace": "provider-value"}},
+    }
 
 
 def test_empty_mapping_is_ignored() -> None:

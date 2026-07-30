@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Mapping, Optional, Sequence
 
 import gigachat.models as gm
@@ -40,4 +40,19 @@ class StreamState:
     first_chunk: bool = True
     next_block_index: int = 0
     message_id: Optional[str] = None
+    provider_message_id: Optional[str] = None
     tools_state_id: Optional[str] = None
+    thread_id: Optional[str] = None
+    model: Optional[str] = None
+    created_at: Optional[int] = None
+    x_headers: dict[str, Any] = field(default_factory=dict)
+    emitted_metadata_fields: set[str] = field(default_factory=set)
+
+    client_tool_started: bool = False
+    client_tool_name: Optional[str] = None
+    client_tool_id: Optional[str] = None
+    client_tool_index: Optional[int] = None
+
+    server_tool_indexes: dict[str, int] = field(default_factory=dict)
+    server_tool_result_indexes: dict[str, int] = field(default_factory=dict)
+    server_tool_names: dict[str, str] = field(default_factory=dict)

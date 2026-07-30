@@ -2,17 +2,24 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Mapping, Sequence
 from typing import Any
 from uuid import uuid4
 
 import gigachat.models as gm
 from langchain_core.messages import AIMessageChunk, ToolCallChunk
-from langchain_core.messages.ai import UsageMetadata
 from langchain_core.messages.tool import tool_call_chunk
 from langchain_core.outputs import ChatGenerationChunk
 
+from langchain_gigachat.chat_models._contracts.primary.content import (
+    convert_provider_file,
+    convert_text_content,
+    convert_tool_execution,
+    create_usage_metadata,
+    json_fragment,
+    provider_dict,
+    unknown_provider_fields,
+)
 from langchain_gigachat.chat_models._contracts.primary.types import StreamState
 
 _KNOWN_EVENTS = frozenset(
@@ -51,6 +58,8 @@ _MESSAGE_FIELDS = frozenset(
         "inline_data",
         "logprobs",
         "message_id",
+        "reasoning",
+        "reasoning_content",
         "role",
         "tool_execution",
         "tools_state_id",
@@ -72,16 +81,13 @@ _CONTENT_FIELDS = frozenset(
 
 
 def _as_dict(value: Any) -> dict[str, Any]:
-    if hasattr(value, "model_dump"):
-        dumped = value.model_dump(exclude_none=True, by_alias=True)
-        if isinstance(dumped, dict):
-            return dumped
-    if isinstance(value, Mapping):
-        return dict(value)
-    raise TypeError(
-        "Primary stream events must be SDK models or mappings; "
-        f"got {type(value).__name__}"
-    )
+    try:
+        return provider_dict(value)
+    except TypeError as error:
+        raise TypeError(
+            "Primary stream events must be SDK models or mappings; "
+            f"got {type(value).__name__}"
+        ) from error
 
 
 def _optional_dict(value: Any) -> dict[str, Any]:
@@ -108,42 +114,17 @@ def _take_block_index(state: StreamState, explicit: Any = None) -> int | str:
     return index
 
 
+def _take_numeric_block_index(state: StreamState) -> int:
+    index = state.next_block_index
+    state.next_block_index += 1
+    return index
+
+
 def _request_id(x_headers: Mapping[str, Any]) -> str | None:
     for key, value in x_headers.items():
         if key.lower() == "x-request-id" and value is not None:
             return str(value)
     return None
-
-
-def _usage_metadata(value: Any) -> UsageMetadata | None:
-    usage = _optional_dict(value)
-    if not usage:
-        return None
-
-    input_tokens = usage.get("input_tokens")
-    output_tokens = usage.get("output_tokens")
-    total_tokens = usage.get("total_tokens")
-    normalized = UsageMetadata(
-        input_tokens=int(input_tokens or 0),
-        output_tokens=int(output_tokens or 0),
-        total_tokens=int(
-            total_tokens
-            if total_tokens is not None
-            else (input_tokens or 0) + (output_tokens or 0)
-        ),
-    )
-    details = _optional_dict(usage.get("input_tokens_details"))
-    if details.get("cached_tokens") is not None:
-        normalized["input_token_details"] = {
-            "cache_read": int(details["cached_tokens"])
-        }
-    return normalized
-
-
-def _json_fragment(value: Any) -> str:
-    if isinstance(value, str):
-        return value
-    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
 def _file_block(
@@ -152,53 +133,10 @@ def _file_block(
     state: StreamState,
 ) -> dict[str, Any]:
     file_data = _as_dict(file_value)
-    mime = file_data.get("mime")
-    block_type = "file"
-    if isinstance(mime, str):
-        if mime.startswith("image/"):
-            block_type = "image"
-        elif mime.startswith("audio/"):
-            block_type = "audio"
-
-    block: dict[str, Any] = {
-        "type": block_type,
-        "file_id": str(file_data.get("id", "")),
-        "index": _take_block_index(state, file_data.get("index")),
-    }
-    if mime is not None:
-        block["mime_type"] = mime
-    extras = {
-        key: value
-        for key, value in file_data.items()
-        if key not in {"id", "index", "mime"}
-    }
-    if extras:
-        block["extras"] = extras
-    return block
-
-
-def _citation_annotations(inline_data: Mapping[str, Any]) -> list[dict[str, Any]]:
-    sources = inline_data.get("sources")
-    if not isinstance(sources, Mapping):
-        return []
-
-    annotations: list[dict[str, Any]] = []
-    for source_id, source_value in sources.items():
-        source = _optional_dict(source_value)
-        annotation: dict[str, Any] = {
-            "type": "citation",
-            "id": str(source_id),
-        }
-        for field in ("title", "url"):
-            if source.get(field) is not None:
-                annotation[field] = source[field]
-        extras = {
-            key: value for key, value in source.items() if key not in {"title", "url"}
-        }
-        if extras:
-            annotation["extras"] = extras
-        annotations.append(annotation)
-    return annotations
+    return convert_provider_file(
+        file_data,
+        index=_take_block_index(state, file_data.get("index")),
+    )
 
 
 def _reasoning_block(
@@ -220,14 +158,12 @@ def _reasoning_block(
         text = str(reasoning)
         extras = {}
 
-    block: dict[str, Any] = {
-        "type": "reasoning",
-        "reasoning": text,
-        "index": _take_block_index(state, explicit_index),
-    }
-    if extras:
-        block["extras"] = extras
-    return block
+    return convert_text_content(
+        str(text),
+        role="reasoning",
+        provider_data=extras,
+        index=_take_block_index(state, explicit_index),
+    )
 
 
 def _tool_call_chunk(
@@ -237,40 +173,67 @@ def _tool_call_chunk(
     state: StreamState,
 ) -> ToolCallChunk:
     function_call = _as_dict(function_call_value)
-    call_id = incoming_tools_state_id or state.tools_state_id
-    if call_id is None:
-        call_id = f"{state.message_id}:tool" if state.message_id else f"tool-{uuid4()}"
+    explicit_id = function_call.get("id")
+    explicit_id = str(explicit_id) if explicit_id is not None else None
+    incoming_name = function_call.get("name")
+    incoming_name = str(incoming_name) if incoming_name is not None else None
+    explicit_index = function_call.get("index")
 
-    if state.tools_state_id is not None and state.tools_state_id != call_id:
-        raise ValueError(
-            "Primary streaming supports one client tool call per message; "
-            f"received tool states {state.tools_state_id!r} and {call_id!r}"
-        )
-
-    is_first_fragment = state.tools_state_id is None
+    is_first_fragment = not state.client_tool_started
     if is_first_fragment:
-        state.tools_state_id = call_id
-        explicit_index = function_call.get("index")
-        if isinstance(explicit_index, int):
-            index = explicit_index
-            state.next_block_index = max(
-                state.next_block_index,
-                explicit_index + 1,
+        if not incoming_name:
+            raise ValueError("First primary client tool fragment must include a name")
+        call_id = (
+            explicit_id
+            or incoming_tools_state_id
+            or state.tools_state_id
+            or state.provider_message_id
+            or (
+                f"{state.message_id}:tool"
+                if state.message_id is not None
+                else f"tool-{uuid4()}"
             )
-        else:
-            index = state.next_block_index
-            state.next_block_index += 1
-    else:
-        explicit_index = function_call.get("index")
+        )
+        if explicit_index is not None and not isinstance(explicit_index, int):
+            raise TypeError("Primary client tool fragment index must be an integer")
+        index: int = (
+            explicit_index
+            if isinstance(explicit_index, int)
+            else _take_numeric_block_index(state)
+        )
         if isinstance(explicit_index, int):
-            index = explicit_index
-        else:
-            index = max(0, state.next_block_index - 1)
+            state.next_block_index = max(state.next_block_index, explicit_index + 1)
+
+        state.client_tool_started = True
+        state.client_tool_name = incoming_name
+        state.client_tool_id = call_id
+        state.client_tool_index = index
+    else:
+        stored_call_id = state.client_tool_id
+        stored_index = state.client_tool_index
+        if stored_call_id is None or stored_index is None:
+            raise RuntimeError("Primary client tool stream state is incomplete")
+        call_id = stored_call_id
+        index = stored_index
+        if explicit_id is not None and explicit_id != call_id:
+            raise ValueError(
+                f"Conflicting primary client tool IDs: {call_id!r} and {explicit_id!r}"
+            )
+        if incoming_name is not None and incoming_name != state.client_tool_name:
+            raise ValueError(
+                "Conflicting primary client tool names: "
+                f"{state.client_tool_name!r} and {incoming_name!r}"
+            )
+        if explicit_index is not None and explicit_index != index:
+            raise ValueError(
+                "Conflicting primary client tool indexes: "
+                f"{index!r} and {explicit_index!r}"
+            )
 
     arguments = function_call.get("arguments")
     return tool_call_chunk(
-        name=function_call.get("name") if is_first_fragment else None,
-        args=_json_fragment(arguments) if arguments is not None else "",
+        name=incoming_name if is_first_fragment else None,
+        args=json_fragment(arguments) if arguments is not None else "",
         id=call_id,
         index=index,
     )
@@ -284,15 +247,29 @@ def _tool_execution_block(
     state: StreamState,
 ) -> dict[str, Any]:
     execution = _as_dict(execution_value)
-    call_id = incoming_tools_state_id or state.tools_state_id
-    if call_id is None:
-        call_id = f"{state.message_id}:tool" if state.message_id else f"tool-{uuid4()}"
-    if state.tools_state_id is None:
-        state.tools_state_id = call_id
+    call_id_value = (
+        execution.get("call_id")
+        or execution.get("tool_call_id")
+        or execution.get("id")
+        or incoming_tools_state_id
+        or state.tools_state_id
+    )
+    call_id = (
+        str(call_id_value)
+        if call_id_value is not None
+        else (
+            f"{state.message_id}:server-tool"
+            if state.message_id is not None
+            else f"server-tool-{uuid4()}"
+        )
+    )
 
-    status = str(execution.get("status", "")).lower()
-    is_completed = event_name in {"response.tool.completed", "response.tool.failed"}
-    is_completed = is_completed or status in {
+    status = str(execution.get("status") or "").lower()
+    terminal = event_name in {
+        "response.tool.completed",
+        "response.tool.failed",
+    } or status in {
+        "complete",
         "completed",
         "done",
         "error",
@@ -300,39 +277,66 @@ def _tool_execution_block(
         "failure",
         "success",
     }
-    if is_completed:
-        failed = event_name == "response.tool.failed" or status in {
-            "error",
-            "failed",
-            "failure",
-        }
-        block: dict[str, Any] = {
-            "type": "server_tool_result",
-            "id": f"{call_id}:result",
-            "tool_call_id": call_id,
-            "status": "error" if failed else "success",
-            "index": _take_block_index(state, execution.get("index")),
-            "extras": {"provider_tool_execution": execution},
-        }
-        if execution.get("output") is not None:
-            block["output"] = execution["output"]
+    index_map = (
+        state.server_tool_result_indexes if terminal else state.server_tool_indexes
+    )
+    explicit_index = execution.get("index")
+    existing_index = index_map.get(call_id)
+    if existing_index is None:
+        if explicit_index is not None and not isinstance(explicit_index, int):
+            raise TypeError("Primary server tool block index must be an integer")
+        index = (
+            explicit_index
+            if isinstance(explicit_index, int)
+            else _take_numeric_block_index(state)
+        )
+        if isinstance(explicit_index, int):
+            state.next_block_index = max(state.next_block_index, explicit_index + 1)
+        index_map[call_id] = index
+    else:
+        index = existing_index
+        if explicit_index is not None and explicit_index != index:
+            raise ValueError(
+                f"Conflicting indexes for primary server tool {call_id!r}: "
+                f"{index!r} and {explicit_index!r}"
+            )
+
+    block = convert_tool_execution(
+        execution,
+        tool_call_id=call_id,
+        event_name=event_name,
+        index=index,
+        streaming=True,
+    )[0]
+    if terminal:
         return block
 
-    arguments = execution.get("arguments", execution.get("args"))
-    block = {
-        "type": "server_tool_call_chunk",
-        "id": call_id,
-        "name": execution.get("name", ""),
-        "args": _json_fragment(arguments) if arguments is not None else "",
-        "index": _take_block_index(state, execution.get("index")),
-        "extras": {"provider_tool_execution": execution},
-    }
+    incoming_name_value = execution.get("name")
+    incoming_name = (
+        str(incoming_name_value) if incoming_name_value is not None else None
+    )
+    known_name = state.server_tool_names.get(call_id)
+    if known_name is None:
+        state.server_tool_names[call_id] = incoming_name or "unknown"
+    elif incoming_name is not None and incoming_name != known_name:
+        raise ValueError(
+            f"Conflicting names for primary server tool {call_id!r}: "
+            f"{known_name!r} and {incoming_name!r}"
+        )
+    else:
+        block["name"] = ""
+        block["extras"] = {"provider_tool_execution_updates": [execution]}
+    if execution.get("arguments", execution.get("args")) is None:
+        block["args"] = ""
     return block
 
 
 def _convert_content_part(
     part_value: Any,
     *,
+    role: str,
+    plain_text_output: bool,
+    message_inline_data: Any,
     event_name: str | None,
     incoming_tools_state_id: str | None,
     state: StreamState,
@@ -340,32 +344,24 @@ def _convert_content_part(
     part = _as_dict(part_value)
     content: list[str | dict[str, Any]] = []
     tool_calls: list[ToolCallChunk] = []
-    inline_data = _optional_dict(part.get("inline_data"))
-    extra = {key: value for key, value in part.items() if key not in _CONTENT_FIELDS}
+    inline_data_value = part.get("inline_data")
+    if inline_data_value is None:
+        inline_data_value = message_inline_data
+    extra = unknown_provider_fields(part, _CONTENT_FIELDS)
 
     if part.get("text") is not None:
-        annotations = _citation_annotations(inline_data)
-        if (
-            annotations
-            or extra
-            or any(key in inline_data for key in ("images", "widgets"))
-        ):
-            block: dict[str, Any] = {
-                "type": "text",
-                "text": str(part["text"]),
-                "index": _take_block_index(state, part.get("index")),
-            }
-            if annotations:
-                block["annotations"] = annotations
-            provider_extras = dict(extra)
-            provider_extras.update(
-                {key: value for key, value in inline_data.items() if key != "sources"}
-            )
-            if provider_extras:
-                block["extras"] = provider_extras
-            content.append(block)
-        else:
+        if plain_text_output:
             content.append(str(part["text"]))
+        else:
+            content.append(
+                convert_text_content(
+                    str(part["text"]),
+                    role=role,
+                    inline_data=inline_data_value,
+                    provider_data=extra,
+                    index=_take_block_index(state, part.get("index")),
+                )
+            )
 
     for file_value in part.get("files") or []:
         content.append(_file_block(file_value, state=state))
@@ -409,9 +405,53 @@ def _convert_content_part(
             )
         )
 
-    if not content and not tool_calls and part:
-        content.append({"type": "non_standard", "value": part})
+    if not content and not tool_calls and (inline_data_value is not None or extra):
+        value: dict[str, Any] = dict(extra)
+        if inline_data_value is not None:
+            value["inline_data"] = _as_dict(inline_data_value)
+        content.append({"type": "non_standard", "value": value})
     return content, tool_calls
+
+
+def _is_plain_text_messages(messages: Sequence[Mapping[str, Any]]) -> bool:
+    if not messages:
+        return False
+    for message in messages:
+        if str(message.get("role") or "assistant") != "assistant":
+            return False
+        if any(
+            message.get(field) is not None
+            for field in (
+                "function_call",
+                "inline_data",
+                "reasoning",
+                "reasoning_content",
+                "tool_execution",
+            )
+        ):
+            return False
+        if unknown_provider_fields(message, _MESSAGE_FIELDS):
+            return False
+        parts = _as_dict_list(message.get("content"), field="messages.content")
+        for part in parts:
+            if part.get("text") is None or part.get("index") is not None:
+                return False
+            if any(
+                part.get(field) is not None
+                for field in (
+                    "files",
+                    "function_call",
+                    "function_result",
+                    "inline_data",
+                    "reasoning",
+                    "reasoning_content",
+                    "tool_execution",
+                )
+            ):
+                return False
+            if unknown_provider_fields(part, _CONTENT_FIELDS):
+                return False
+    return True
 
 
 def _convert_messages(
@@ -423,13 +463,15 @@ def _convert_messages(
 ) -> tuple[
     str | list[str | dict[str, Any]],
     list[ToolCallChunk],
-    list[dict[str, Any]],
 ]:
     content: list[str | dict[str, Any]] = []
     tool_calls: list[ToolCallChunk] = []
-    message_metadata: list[dict[str, Any]] = []
+    messages = _as_dict_list(messages_value, field="messages")
+    plain_text_output = _is_plain_text_messages(messages)
 
-    for message in _as_dict_list(messages_value, field="messages"):
+    for message in messages:
+        role = str(message.get("role") or "assistant")
+        message_inline_data = message.get("inline_data")
         message_tool_state = message.get("tools_state_id")
         tool_state_id = (
             str(message_tool_state)
@@ -439,6 +481,9 @@ def _convert_messages(
         for part in _as_dict_list(message.get("content"), field="messages.content"):
             part_content, part_tool_calls = _convert_content_part(
                 part,
+                role=role,
+                plain_text_output=plain_text_output,
+                message_inline_data=message_inline_data,
                 event_name=event_name,
                 incoming_tools_state_id=tool_state_id,
                 state=state,
@@ -468,13 +513,25 @@ def _convert_messages(
         if reasoning is not None:
             content.append(_reasoning_block(reasoning, state=state))
 
-        metadata = {
-            key: value for key, value in message.items() if key not in _MESSAGE_FIELDS
-        }
-        if message.get("role") not in (None, "assistant"):
-            metadata["role"] = message["role"]
+        if not message.get("content") and message_inline_data is not None:
+            content.append(
+                {
+                    "type": "non_standard",
+                    "value": {"inline_data": _as_dict(message_inline_data)},
+                }
+            )
+
+        metadata = unknown_provider_fields(message, _MESSAGE_FIELDS)
+        if role not in {"assistant", "reasoning", "tool"}:
+            metadata["role"] = role
         if metadata:
-            message_metadata.append(metadata)
+            content.append(
+                {
+                    "type": "non_standard",
+                    "value": metadata,
+                    "index": _take_numeric_block_index(state),
+                }
+            )
 
     if tool_calls and len({call["id"] for call in tool_calls}) > 1:
         raise ValueError("Primary streaming supports one client tool call per message")
@@ -484,31 +541,111 @@ def _convert_messages(
         )
     else:
         normalized_content = content
-    return normalized_content, tool_calls, message_metadata
+    return normalized_content, tool_calls
+
+
+def _observe_scalar_metadata(
+    state: StreamState,
+    *,
+    state_field: str,
+    metadata_field: str,
+    value: Any,
+) -> dict[str, Any]:
+    if value is None:
+        return {}
+
+    current = getattr(state, state_field)
+    if current is None:
+        setattr(state, state_field, value)
+    elif current != value:
+        raise ValueError(
+            f"Conflicting primary stream {metadata_field}: {current!r} and {value!r}"
+        )
+
+    if metadata_field in state.emitted_metadata_fields:
+        return {}
+    state.emitted_metadata_fields.add(metadata_field)
+    return {metadata_field: value}
+
+
+def _update_stream_metadata(
+    state: StreamState,
+    *,
+    provider_message_id: str | None,
+    provider_tools_state_id: str | None,
+    thread_id: Any,
+    model: Any,
+    created_at: Any,
+    x_headers: Mapping[str, Any],
+) -> dict[str, Any]:
+    metadata: dict[str, Any] = {}
+    metadata.update(
+        _observe_scalar_metadata(
+            state,
+            state_field="provider_message_id",
+            metadata_field="message_id",
+            value=provider_message_id,
+        )
+    )
+    metadata.update(
+        _observe_scalar_metadata(
+            state,
+            state_field="tools_state_id",
+            metadata_field="tools_state_id",
+            value=provider_tools_state_id,
+        )
+    )
+    metadata.update(
+        _observe_scalar_metadata(
+            state,
+            state_field="thread_id",
+            metadata_field="thread_id",
+            value=str(thread_id) if thread_id is not None else None,
+        )
+    )
+    metadata.update(
+        _observe_scalar_metadata(
+            state,
+            state_field="model",
+            metadata_field="model",
+            value=str(model) if model is not None else None,
+        )
+    )
+    metadata.update(
+        _observe_scalar_metadata(
+            state,
+            state_field="created_at",
+            metadata_field="created_at",
+            value=int(created_at) if created_at is not None else None,
+        )
+    )
+
+    new_headers: dict[str, Any] = {}
+    for key, value in x_headers.items():
+        current = state.x_headers.get(key)
+        if key not in state.x_headers or current is None:
+            state.x_headers[key] = value
+            new_headers[key] = value
+        elif value is not None and current != value:
+            raise ValueError(
+                f"Conflicting primary stream header {key!r}: {current!r} and {value!r}"
+            )
+    if new_headers:
+        metadata["x_headers"] = new_headers
+        state.emitted_metadata_fields.add("x_headers")
+    return metadata
 
 
 def _response_metadata(
     event: Mapping[str, Any],
     *,
     event_name: str | None,
-    provider_message_id: str | None,
-    provider_tools_state_id: str | None,
-    first_chunk: bool,
+    observed_metadata: Mapping[str, Any],
 ) -> dict[str, Any]:
     metadata: dict[str, Any] = {}
     if event_name is not None:
         metadata["event"] = event_name
-
-    if first_chunk:
-        for field in ("created_at", "model", "thread_id"):
-            if event.get(field) is not None:
-                metadata[field] = event[field]
-        if event.get("x_headers") is not None:
-            metadata["x_headers"] = event["x_headers"]
-    if provider_message_id is not None and first_chunk:
-        metadata["message_id"] = provider_message_id
-    if provider_tools_state_id is not None and first_chunk:
-        metadata["tools_state_id"] = provider_tools_state_id
+    metadata.update(observed_metadata)
 
     for field in ("additional_data", "finish_reason", "logprobs"):
         if event.get(field) is not None:
@@ -573,29 +710,29 @@ def convert_stream_event(
         else None
     )
     x_headers = _optional_dict(event_data.get("x_headers"))
+    observed_metadata = _update_stream_metadata(
+        state,
+        provider_message_id=provider_message_id,
+        provider_tools_state_id=provider_tools_state_id,
+        thread_id=event_data.get("thread_id"),
+        model=event_data.get("model"),
+        created_at=event_data.get("created_at"),
+        x_headers=x_headers,
+    )
 
     if state.message_id is None:
         state.message_id = (
-            _request_id(x_headers) or provider_message_id or f"primary-stream-{uuid4()}"
+            _request_id(state.x_headers)
+            or state.provider_message_id
+            or f"primary-stream-{uuid4()}"
         )
 
-    first_chunk = state.first_chunk
-    content, tool_calls, message_metadata = _convert_messages(
+    content, tool_calls = _convert_messages(
         normalized_messages,
         event_name=event_name,
         incoming_tools_state_id=provider_tools_state_id,
         state=state,
     )
-    if provider_tools_state_id is not None:
-        if (
-            state.tools_state_id is not None
-            and state.tools_state_id != provider_tools_state_id
-        ):
-            raise ValueError(
-                "Primary streaming supports one tool state per message; "
-                f"received {state.tools_state_id!r} and {provider_tools_state_id!r}"
-            )
-        state.tools_state_id = provider_tools_state_id
 
     top_level_tool_execution = event_data.get("tool_execution")
     if top_level_tool_execution is not None:
@@ -613,14 +750,10 @@ def convert_stream_event(
     response_metadata = _response_metadata(
         event_data,
         event_name=event_name,
-        provider_message_id=provider_message_id,
-        provider_tools_state_id=provider_tools_state_id,
-        first_chunk=first_chunk,
+        observed_metadata=observed_metadata,
     )
-    if message_metadata:
-        response_metadata["message_metadata"] = message_metadata
 
-    usage_metadata = _usage_metadata(event_data.get("usage"))
+    usage_metadata = create_usage_metadata(event_data.get("usage"))
     generation_info = None
     if event_data.get("finish_reason") is not None:
         generation_info = {"finish_reason": event_data["finish_reason"]}
@@ -638,5 +771,6 @@ def convert_stream_event(
         response_metadata=response_metadata,
         tool_call_chunks=tool_calls,
         usage_metadata=usage_metadata,
+        chunk_position=("last" if event_name == "response.message.done" else None),
     )
     return ChatGenerationChunk(message=message, generation_info=generation_info)
