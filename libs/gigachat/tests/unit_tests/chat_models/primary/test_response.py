@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import copy
+
 import pytest
 from gigachat import models as gm
 from langchain_core.messages import AIMessage
@@ -86,6 +88,7 @@ def test_mixed_text_and_files_use_standard_content_blocks() -> None:
                                     "target": "preview",
                                 },
                                 {"id": "audio-1", "mime": "audio/opus"},
+                                {"id": "video-1", "mime": "video/mp4"},
                                 {"id": "document-1", "mime": "application/pdf"},
                             ]
                         },
@@ -104,6 +107,7 @@ def test_mixed_text_and_files_use_standard_content_blocks() -> None:
             "extras": {"target": "preview"},
         },
         {"type": "audio", "file_id": "audio-1", "mime_type": "audio/opus"},
+        {"type": "video", "file_id": "video-1", "mime_type": "video/mp4"},
         {
             "type": "file",
             "file_id": "document-1",
@@ -186,6 +190,8 @@ def test_client_function_call_uses_tools_state_id() -> None:
         "name": "get_weather",
         "arguments": {"location": "Moscow"},
     }
+    assert message.content == []
+    assert message.content_blocks == message.tool_calls
 
 
 def test_message_level_function_call_is_supported() -> None:
@@ -208,7 +214,92 @@ def test_message_level_function_call_is_supported() -> None:
     assert message.tool_calls[0]["args"] == {"key": "value"}
 
 
-def test_invalid_function_arguments_raise_clear_error() -> None:
+def test_invalid_function_arguments_become_invalid_tool_call() -> None:
+    message = _message(
+        _response(
+            message_id="provider-message-1",
+            messages=[
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "text": "I could not prepare the tool arguments.",
+                            "function_call": {
+                                "name": "broken",
+                                "arguments": "not-json",
+                            },
+                        }
+                    ],
+                }
+            ],
+        )
+    )
+
+    assert message.content == [
+        {"type": "text", "text": "I could not prepare the tool arguments."}
+    ]
+    assert message.tool_calls == []
+    assert message.invalid_tool_calls == [
+        {
+            "type": "invalid_tool_call",
+            "name": "broken",
+            "args": "not-json",
+            "id": "provider-message-1",
+            "error": (
+                "Function 'broken' arguments contain invalid JSON: "
+                "Expecting value: line 1 column 1 (char 0)"
+            ),
+        }
+    ]
+    assert message.additional_kwargs["function_call"]["arguments"] == "not-json"
+
+
+def test_valid_and_invalid_function_calls_are_preserved_together() -> None:
+    message = _message(
+        _response(
+            messages=[
+                {
+                    "role": "assistant",
+                    "message_id": "valid-call",
+                    "function_call": {
+                        "name": "lookup",
+                        "arguments": {"key": "value"},
+                    },
+                },
+                {
+                    "role": "assistant",
+                    "message_id": "invalid-call",
+                    "function_call": {
+                        "name": "broken",
+                        "arguments": "[]",
+                    },
+                },
+            ],
+        )
+    )
+
+    assert message.tool_calls == [
+        {
+            "type": "tool_call",
+            "name": "lookup",
+            "args": {"key": "value"},
+            "id": "valid-call",
+        }
+    ]
+    assert message.invalid_tool_calls == [
+        {
+            "type": "invalid_tool_call",
+            "name": "broken",
+            "args": "[]",
+            "id": "invalid-call",
+            "error": ("Function 'broken' arguments must be a JSON object; got list"),
+        }
+    ]
+    assert message.content == []
+    assert message.content_blocks == message.tool_calls
+
+
+def test_response_conversion_does_not_mutate_provider_model() -> None:
     response = _response(
         messages=[
             {
@@ -216,17 +307,20 @@ def test_invalid_function_arguments_raise_clear_error() -> None:
                 "content": [
                     {
                         "function_call": {
-                            "name": "broken",
-                            "arguments": "not-json",
+                            "name": "lookup",
+                            "arguments": {"nested": {"value": 1}},
                         }
                     }
                 ],
             }
-        ]
+        ],
+        additional_data=[{"nested": {"value": 2}}],
     )
+    before = copy.deepcopy(response.model_dump(exclude_none=False, by_alias=True))
 
-    with pytest.raises(ValueError, match="broken.*invalid JSON arguments"):
-        create_chat_result(response)
+    create_chat_result(response)
+
+    assert response.model_dump(exclude_none=False, by_alias=True) == before
 
 
 @pytest.mark.parametrize(

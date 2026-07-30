@@ -2,14 +2,23 @@
 
 from __future__ import annotations
 
-import json
 from typing import Any, Iterable, cast
 
 import gigachat.models as gm
-from langchain_core.messages import AIMessage, UsageMetadata
+from langchain_core.messages import AIMessage
 from langchain_core.messages.content import ContentBlock
+from langchain_core.messages.tool import InvalidToolCall, ToolCall
 from langchain_core.outputs import ChatGeneration, ChatResult
 from pydantic import BaseModel
+
+from langchain_gigachat.chat_models._contracts.primary.content import (
+    convert_function_call,
+    convert_provider_file,
+    convert_text_content,
+    convert_tool_execution,
+    create_usage_metadata,
+    unknown_provider_fields,
+)
 
 _MESSAGE_FIELDS = {
     "content",
@@ -30,16 +39,6 @@ _PART_FIELDS = {
     "text",
     "tool_execution",
 }
-_TERMINAL_TOOL_STATUSES = {
-    "complete",
-    "completed",
-    "done",
-    "error",
-    "failed",
-    "failure",
-    "success",
-}
-_SUCCESS_TOOL_STATUSES = {"complete", "completed", "done", "success"}
 
 
 def _dump(value: BaseModel | None) -> dict[str, Any] | None:
@@ -52,200 +51,29 @@ def _without_none(values: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in values.items() if value is not None}
 
 
-def _unknown_fields(value: BaseModel, known_fields: set[str]) -> dict[str, Any]:
-    dumped = value.model_dump(exclude_none=True, by_alias=True)
-    return {key: item for key, item in dumped.items() if key not in known_fields}
-
-
-def _usage_metadata(usage: gm.ChatUsage | None) -> UsageMetadata | None:
-    if usage is None:
-        return None
-
-    input_tokens = usage.input_tokens or 0
-    output_tokens = usage.output_tokens or 0
-    result = UsageMetadata(
-        input_tokens=input_tokens,
-        output_tokens=output_tokens,
-        total_tokens=usage.total_tokens
-        if usage.total_tokens is not None
-        else input_tokens + output_tokens,
-    )
-    if (
-        usage.input_tokens_details is not None
-        and usage.input_tokens_details.cached_tokens is not None
-    ):
-        result["input_token_details"] = {
-            "cache_read": usage.input_tokens_details.cached_tokens
-        }
-    return result
-
-
-def _source_annotations(inline_data: gm.ChatInlineData | None) -> list[dict[str, Any]]:
-    if inline_data is None or not inline_data.sources:
-        return []
-
-    annotations: list[dict[str, Any]] = []
-    for source_id, source in inline_data.sources.items():
-        annotation = _without_none(
-            {
-                "type": "citation",
-                "id": source_id,
-                "url": source.url,
-                "title": source.title,
-            }
-        )
-        if source.model_extra:
-            annotation["extras"] = {"provider_data": dict(source.model_extra)}
-        annotations.append(annotation)
-    return annotations
-
-
-def _inline_extras(inline_data: gm.ChatInlineData | None) -> dict[str, Any]:
-    if inline_data is None:
-        return {}
-
-    extras = _without_none(
-        {
-            "images": inline_data.images,
-            "widgets": inline_data.widgets,
-        }
-    )
-    if inline_data.model_extra:
-        extras.update(inline_data.model_extra)
-    return extras
-
-
-def _file_block(file_: gm.ChatContentFile) -> dict[str, Any]:
-    mime = file_.mime
-    if mime and mime.startswith("image/"):
-        block_type = "image"
-    elif mime and mime.startswith("audio/"):
-        block_type = "audio"
-    elif mime and mime.startswith("video/"):
-        block_type = "video"
-    else:
-        block_type = "file"
-
-    block = _without_none(
-        {
-            "type": block_type,
-            "file_id": file_.id_,
-            "mime_type": mime,
-        }
-    )
-    extras = _without_none({"target": file_.target})
-    if file_.model_extra:
-        extras.update(file_.model_extra)
-    if extras:
-        block["extras"] = extras
-    return block
-
-
-def _arguments(function_call: gm.PrimaryChatFunctionCall) -> dict[str, Any]:
-    arguments = function_call.arguments
-    if isinstance(arguments, dict):
-        return dict(arguments)
-    if isinstance(arguments, str):
-        try:
-            parsed = json.loads(arguments)
-        except json.JSONDecodeError as error:
-            raise ValueError(
-                f"Primary function call {function_call.name!r} has invalid JSON "
-                "arguments"
-            ) from error
-        if isinstance(parsed, dict):
-            return parsed
-    raise ValueError(
-        f"Primary function call {function_call.name!r} arguments must be an object"
-    )
-
-
-def _tool_call_block(
-    function_call: gm.PrimaryChatFunctionCall,
-    *,
-    tool_call_id: str | None,
-) -> dict[str, Any]:
-    block: dict[str, Any] = {
-        "type": "tool_call",
-        "id": tool_call_id,
-        "name": function_call.name,
-        "args": _arguments(function_call),
-    }
-    if function_call.model_extra:
-        block["extras"] = {"provider_data": dict(function_call.model_extra)}
-    return block
-
-
-def _server_tool_blocks(
-    execution: gm.ChatToolExecution,
-    *,
-    tool_call_id: str,
-) -> list[dict[str, Any]]:
-    raw = execution.model_dump(exclude_none=True, by_alias=True)
-    status = (execution.status or "").lower()
-    if status in _TERMINAL_TOOL_STATUSES:
-        result: dict[str, Any] = {
-            "type": "server_tool_result",
-            "id": f"{tool_call_id}:result",
-            "tool_call_id": tool_call_id,
-            "status": "success" if status in _SUCCESS_TOOL_STATUSES else "error",
-            "extras": {"provider_tool_execution": raw},
-        }
-        output = raw.get("output")
-        if output is not None:
-            result["output"] = output
-        return [result]
-
-    arguments = raw.get("arguments", raw.get("args", {}))
-    return [
-        {
-            "type": "server_tool_call",
-            "id": tool_call_id,
-            "name": execution.name or "unknown",
-            "args": arguments,
-            "extras": {"provider_tool_execution": raw},
-        }
-    ]
-
-
 def _part_blocks(
     part: gm.ChatContentPart,
     *,
     role: str,
-    tool_call_id: str | None,
     server_tool_id: str,
     message_inline_data: gm.ChatInlineData | None,
 ) -> list[dict[str, Any]]:
     blocks: list[dict[str, Any]] = []
     inline_data = part.inline_data or message_inline_data
-    inline_extras = _inline_extras(inline_data)
-    unknown = _unknown_fields(part, _PART_FIELDS)
+    unknown = unknown_provider_fields(part, _PART_FIELDS)
 
     if part.text is not None:
-        if role == "reasoning":
-            text_block: dict[str, Any] = {
-                "type": "reasoning",
-                "reasoning": part.text,
-            }
-        else:
-            text_block = {"type": "text", "text": part.text}
-            annotations = _source_annotations(inline_data)
-            if annotations:
-                text_block["annotations"] = annotations
-        extras = {}
-        if inline_extras:
-            extras["inline_data"] = inline_extras
-        if unknown:
-            extras["provider_data"] = unknown
-        if extras:
-            text_block["extras"] = extras
-        blocks.append(text_block)
+        blocks.append(
+            convert_text_content(
+                part.text,
+                role=role,
+                inline_data=inline_data,
+                provider_data=unknown,
+            )
+        )
 
     for file_ in part.files or []:
-        blocks.append(_file_block(file_))
-
-    if part.function_call is not None:
-        blocks.append(_tool_call_block(part.function_call, tool_call_id=tool_call_id))
+        blocks.append(convert_provider_file(file_))
 
     if part.function_result is not None:
         blocks.append(
@@ -261,17 +89,19 @@ def _part_blocks(
 
     if part.tool_execution is not None:
         blocks.extend(
-            _server_tool_blocks(part.tool_execution, tool_call_id=server_tool_id)
+            convert_tool_execution(
+                part.tool_execution,
+                tool_call_id=server_tool_id,
+            )
         )
 
-    if not blocks:
-        raw = part.model_dump(exclude_none=True, by_alias=True)
-        if raw:
-            blocks.append({"type": "non_standard", "value": raw})
-    elif part.text is None and (inline_extras or unknown):
+    if part.text is None and (inline_data is not None or unknown):
         value = {}
-        if inline_extras:
-            value["inline_data"] = inline_extras
+        if inline_data is not None:
+            value["inline_data"] = inline_data.model_dump(
+                exclude_none=True,
+                by_alias=True,
+            )
         if unknown:
             value.update(unknown)
         blocks.append({"type": "non_standard", "value": value})
@@ -291,7 +121,7 @@ def _is_plain_text_message(message: gm.ChatMessage) -> bool:
         )
     ):
         return False
-    if _unknown_fields(message, _MESSAGE_FIELDS):
+    if unknown_provider_fields(message, _MESSAGE_FIELDS):
         return False
 
     for part in message.content or []:
@@ -308,7 +138,7 @@ def _is_plain_text_message(message: gm.ChatMessage) -> bool:
             )
         ):
             return False
-        if _unknown_fields(part, _PART_FIELDS):
+        if unknown_provider_fields(part, _PART_FIELDS):
             return False
     return True
 
@@ -337,9 +167,16 @@ def _message_tool_id(
 
 def _content_blocks(
     response: gm.ChatCompletionResponse,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+) -> tuple[
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[ToolCall],
+    list[InvalidToolCall],
+]:
     blocks: list[dict[str, Any]] = []
     raw_function_calls: list[dict[str, Any]] = []
+    tool_calls: list[ToolCall] = []
+    invalid_tool_calls: list[InvalidToolCall] = []
 
     for message_index, message in enumerate(response.messages):
         tool_call_id = _message_tool_id(
@@ -353,11 +190,18 @@ def _content_blocks(
                 raw_function_calls.append(
                     part.function_call.model_dump(exclude_none=True, by_alias=True)
                 )
+                tool_call, invalid_call = convert_function_call(
+                    part.function_call,
+                    tool_call_id=tool_call_id,
+                )
+                if tool_call is not None:
+                    tool_calls.append(tool_call)
+                if invalid_call is not None:
+                    invalid_tool_calls.append(invalid_call)
             blocks.extend(
                 _part_blocks(
                     part,
                     role=message.role,
-                    tool_call_id=tool_call_id,
                     server_tool_id=tool_call_id,
                     message_inline_data=message.inline_data,
                 )
@@ -367,16 +211,18 @@ def _content_blocks(
             raw_function_calls.append(
                 message.function_call.model_dump(exclude_none=True, by_alias=True)
             )
-            blocks.append(
-                _tool_call_block(
-                    message.function_call,
-                    tool_call_id=tool_call_id,
-                )
+            tool_call, invalid_call = convert_function_call(
+                message.function_call,
+                tool_call_id=tool_call_id,
             )
+            if tool_call is not None:
+                tool_calls.append(tool_call)
+            if invalid_call is not None:
+                invalid_tool_calls.append(invalid_call)
 
         if message.tool_execution is not None:
             blocks.extend(
-                _server_tool_blocks(
+                convert_tool_execution(
                     message.tool_execution,
                     tool_call_id=tool_call_id,
                 )
@@ -394,7 +240,7 @@ def _content_blocks(
                 }
             )
 
-        message_unknown = _unknown_fields(message, _MESSAGE_FIELDS)
+        message_unknown = unknown_provider_fields(message, _MESSAGE_FIELDS)
         if message.role not in {"assistant", "reasoning", "tool"}:
             message_unknown["role"] = message.role
         if message_unknown:
@@ -402,13 +248,13 @@ def _content_blocks(
 
     if response.tool_execution is not None:
         blocks.extend(
-            _server_tool_blocks(
+            convert_tool_execution(
                 response.tool_execution,
                 tool_call_id=response.message_id or "server_tool_response",
             )
         )
 
-    return blocks, raw_function_calls
+    return blocks, raw_function_calls, tool_calls, invalid_tool_calls
 
 
 def _tools_state_ids(response: gm.ChatCompletionResponse) -> list[str]:
@@ -498,7 +344,7 @@ def create_chat_result(response: gm.ChatCompletionResponse) -> ChatResult:
         finish_reason=finish_reason,
         x_headers=x_headers,
     )
-    usage_metadata = _usage_metadata(response.usage)
+    usage_metadata = create_usage_metadata(response.usage)
 
     additional_kwargs: dict[str, Any] = {
         "provider_messages": [
@@ -522,7 +368,9 @@ def create_chat_result(response: gm.ChatCompletionResponse) -> ChatResult:
             usage_metadata=usage_metadata,
         )
     else:
-        blocks, raw_function_calls = _content_blocks(response)
+        blocks, raw_function_calls, tool_calls, invalid_tool_calls = _content_blocks(
+            response
+        )
         if raw_function_calls:
             additional_kwargs["function_calls"] = raw_function_calls
             if len(raw_function_calls) == 1:
@@ -531,6 +379,8 @@ def create_chat_result(response: gm.ChatCompletionResponse) -> ChatResult:
             content_blocks=cast("list[ContentBlock]", blocks),
             additional_kwargs=additional_kwargs,
             response_metadata=metadata,
+            tool_calls=tool_calls,
+            invalid_tool_calls=invalid_tool_calls,
             usage_metadata=usage_metadata,
         )
 
