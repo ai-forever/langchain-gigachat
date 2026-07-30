@@ -25,6 +25,18 @@ from pydantic import BaseModel
 
 _ATTACHMENT_BLOCK_TYPES = frozenset({"audio", "file", "image"})
 _ATTACHMENT_URL_BLOCK_TYPES = frozenset({"audio_url", "document_url", "image_url"})
+_ASSISTANT_ATTACHMENT_BLOCK_TYPES = _ATTACHMENT_BLOCK_TYPES | {"video"}
+_ASSISTANT_OUTPUT_ONLY_BLOCK_TYPES = frozenset(
+    {
+        "non_standard",
+        "reasoning",
+        "server_tool_call",
+        "server_tool_call_chunk",
+        "server_tool_result",
+        "tool_call",
+        "tool_call_chunk",
+    }
+)
 
 
 def _file_part(
@@ -68,7 +80,7 @@ def _file_part(
     return gm.ChatContentPart(files=[gm.ChatContentFile(id=file_id, mime=mime)])
 
 
-def _convert_content(
+def _convert_input_content(
     content: str | list[str | dict[str, Any]],
     *,
     cached_uploads: Mapping[str, str],
@@ -104,6 +116,46 @@ def _convert_content(
     return parts
 
 
+def _convert_assistant_history_content(
+    content: str | list[str | dict[str, Any]],
+    *,
+    cached_uploads: Mapping[str, str],
+) -> list[gm.ChatContentPart]:
+    """Convert replayable assistant output without inventing request fields."""
+    if isinstance(content, str):
+        return [gm.ChatContentPart(text=content)]
+
+    parts: list[gm.ChatContentPart] = []
+    for block in content:
+        if isinstance(block, str):
+            parts.append(gm.ChatContentPart(text=block))
+            continue
+        if not isinstance(block, Mapping):
+            raise TypeError(
+                "Primary assistant history content items must be strings or "
+                f"mappings; got {type(block).__name__}."
+            )
+
+        block_type = block.get("type")
+        if block_type == "text":
+            text = block.get("text", "")
+            if not isinstance(text, str):
+                raise ValueError("Primary text content must contain string 'text'.")
+            parts.append(gm.ChatContentPart(text=text))
+        elif block_type in (
+            _ASSISTANT_ATTACHMENT_BLOCK_TYPES | _ATTACHMENT_URL_BLOCK_TYPES
+        ):
+            parts.append(_file_part(block, cached_uploads=cached_uploads))
+        elif block_type in _ASSISTANT_OUTPUT_ONLY_BLOCK_TYPES:
+            continue
+        else:
+            # Provider extensions have no request-side SDK representation. The
+            # response adapter wraps them as non_standard, but tolerate future
+            # standard output blocks here as well so stored history stays usable.
+            continue
+    return parts
+
+
 def _additional_file_part(message: BaseMessage) -> gm.ChatContentPart | None:
     attachments = message.additional_kwargs.get("attachments")
     if attachments is None:
@@ -121,24 +173,31 @@ def _additional_file_part(message: BaseMessage) -> gm.ChatContentPart | None:
     return gm.ChatContentPart(files=files) if files else None
 
 
+def _metadata_value(message: BaseMessage, names: Sequence[str]) -> Any:
+    for source in (message.additional_kwargs, message.response_metadata):
+        for name in names:
+            value = source.get(name)
+            if value is not None:
+                return value
+    return None
+
+
 def _message_metadata(message: BaseMessage) -> dict[str, Any]:
     metadata: dict[str, Any] = {}
-    message_id = message.additional_kwargs.get("message_id")
+    message_id = _metadata_value(message, ("message_id",))
     if message_id is not None:
         if not isinstance(message_id, str) or not message_id:
-            raise ValueError("additional_kwargs['message_id'] must be a string.")
+            raise ValueError("Primary message_id metadata must be a non-empty string.")
         metadata["message_id"] = message_id
 
-    tools_state_id = message.additional_kwargs.get("tools_state_id")
-    if tools_state_id is None:
-        for alias in ("tool_state_id", "functions_state_id"):
-            if message.additional_kwargs.get(alias) is not None:
-                tools_state_id = message.additional_kwargs[alias]
-                break
+    tools_state_id = _metadata_value(
+        message,
+        ("tools_state_id", "tool_state_id", "functions_state_id"),
+    )
     if tools_state_id is not None:
         if not isinstance(tools_state_id, str) or not tools_state_id:
             raise ValueError(
-                "additional_kwargs['tools_state_id'] must be a non-empty string."
+                "Primary tools_state_id metadata must be a non-empty string."
             )
         metadata["tools_state_id"] = tools_state_id
     return metadata
@@ -198,7 +257,10 @@ def _convert_ai_message(
     cached_uploads: Mapping[str, str],
 ) -> gm.ChatMessage:
     kwargs = _message_metadata(message)
-    content = _convert_content(message.content, cached_uploads=cached_uploads)
+    content = _convert_assistant_history_content(
+        message.content,
+        cached_uploads=cached_uploads,
+    )
     additional_files = _additional_file_part(message)
     if additional_files is not None:
         content.append(additional_files)
@@ -326,7 +388,10 @@ def convert_messages(
                 f"Unsupported primary message type {type(message).__name__}."
             )
 
-        content = _convert_content(message.content, cached_uploads=cached_uploads)
+        content = _convert_input_content(
+            message.content,
+            cached_uploads=cached_uploads,
+        )
         additional_files = _additional_file_part(message)
         if additional_files is not None:
             content.append(additional_files)
