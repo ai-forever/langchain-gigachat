@@ -111,16 +111,20 @@ def _aggregate(chunks: Sequence[AIMessageChunk]) -> AIMessageChunk:
     return result
 
 
-def _assert_primary_metadata(message: AIMessage | AIMessageChunk) -> None:
+def _assert_transport_metadata(message: AIMessage | AIMessageChunk) -> None:
     metadata = message.response_metadata
     x_headers = metadata["x_headers"]
     assert isinstance(x_headers, dict)
     assert x_headers["x-request-id"]
-    assert metadata["thread_id"]
-    assert metadata["message_id"]
     assert message.id == x_headers["x-request-id"]
     assert message.usage_metadata
     assert message.usage_metadata["total_tokens"] > 0
+
+
+def _assert_stateful_metadata(message: AIMessage | AIMessageChunk) -> None:
+    metadata = message.response_metadata
+    assert metadata["thread_id"]
+    assert metadata["message_id"]
 
 
 def _assert_server_tool_blocks_if_reported(
@@ -144,7 +148,7 @@ def test_sync_invoke_uses_primary_route_from_v1_base_url(
     assert isinstance(result, AIMessage)
     assert _message_text(result).strip() == "PRIMARY_V2_SYNC_OK"
     assert primary_llm.base_url == _V1_BASE_URL
-    _assert_primary_metadata(result)
+    _assert_transport_metadata(result)
 
 
 async def test_async_invoke(primary_llm: GigaChat) -> None:
@@ -154,7 +158,7 @@ async def test_async_invoke(primary_llm: GigaChat) -> None:
 
     assert isinstance(result, AIMessage)
     assert _message_text(result).strip() == "PRIMARY_V2_ASYNC_OK"
-    _assert_primary_metadata(result)
+    _assert_transport_metadata(result)
 
 
 def test_sync_stream_aggregation_matches_non_stream(
@@ -173,7 +177,7 @@ def test_sync_stream_aggregation_matches_non_stream(
     assert any(
         chunk.response_metadata.get("finish_reason") is not None for chunk in chunks
     )
-    _assert_primary_metadata(aggregate)
+    _assert_transport_metadata(aggregate)
 
 
 async def test_async_stream(primary_llm: GigaChat) -> None:
@@ -191,7 +195,7 @@ async def test_async_stream(primary_llm: GigaChat) -> None:
     assert any(
         chunk.response_metadata.get("finish_reason") is not None for chunk in chunks
     )
-    _assert_primary_metadata(aggregate)
+    _assert_transport_metadata(aggregate)
 
 
 def test_json_schema_structured_output(primary_llm: GigaChat) -> None:
@@ -298,7 +302,8 @@ def test_existing_assistant_id(primary_llm: GigaChat) -> None:
 
     assert isinstance(result, AIMessage)
     assert _message_text(result).strip()
-    _assert_primary_metadata(result)
+    _assert_transport_metadata(result)
+    _assert_stateful_metadata(result)
 
 
 @pytest.mark.skipif(
@@ -314,7 +319,8 @@ def test_existing_thread_continuation(primary_llm: GigaChat) -> None:
     assert isinstance(result, AIMessage)
     assert _message_text(result).strip()
     assert result.response_metadata["thread_id"] == _THREAD_ID
-    _assert_primary_metadata(result)
+    _assert_transport_metadata(result)
+    _assert_stateful_metadata(result)
 
 
 @pytest.mark.skipif(
@@ -335,4 +341,4 @@ def test_existing_file_id_roundtrip(primary_llm: GigaChat) -> None:
 
     assert isinstance(result, AIMessage)
     assert _message_text(result).strip()
-    _assert_primary_metadata(result)
+    _assert_transport_metadata(result)
