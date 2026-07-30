@@ -25,8 +25,10 @@ This library is part of [GigaChain](https://github.com/ai-forever/gigachain) and
   - [Async](#async)
   - [Embeddings](#embeddings)
   - [Reasoning Models](#reasoning-models)
+  - [API v2 (`/v2/chat/completions`)](#api-v2-v2chatcompletions)
 - [Tool Calling](#tool-calling)
-  - [Legacy `bind_functions()`](#legacy-bind_functions)
+  - [Legacy tool transport](#legacy-tool-transport)
+  - [Primary API v2 tool transport](#primary-api-v2-tool-transport)
 - [Structured Output](#structured-output)
 - [Attachments](#attachments)
   - [File Operations](#file-operations)
@@ -168,22 +170,178 @@ print(msg.additional_kwargs.get("reasoning_content"))  # model's chain-of-though
 
 ### API v2 (`/v2/chat/completions`)
 
-The v2 contract is opt-in and keeps the legacy API as the default:
+The primary v2 contract is opt-in. Legacy requests remain the default.
+
+Enable it on the model for plain sync, async, and streaming calls:
 
 ```python
+import asyncio
+
+from langchain_gigachat import GigaChat
+
+
 llm = GigaChat(model="GigaChat-3-Ultra", use_api_v2=True)
+
 response = llm.invoke("What is the capital of Russia?")
+print(response.content)
+
+
+async def main() -> None:
+    response = await llm.ainvoke("Name three cities on the Volga.")
+    print(response.content)
+
+
+asyncio.run(main())
+
+for chunk in llm.stream("Write one sentence about Lake Baikal."):
+    print(chunk.text, end="", flush=True)
 ```
 
-Use `llm.bind(use_api_v2=True)` for a per-call override. V2 supports sync and
-async calls, streaming, client and built-in tools, attachments, and native
-`method="json_schema"` structured output. It currently requires the
-pre-release SDK API; wait for a stable SDK release containing the v2 chat
-methods before using this mode in a stable deployment.
+Use `bind()` when only one runnable should use v2:
+
+```python
+llm = GigaChat(model="GigaChat-3-Ultra")
+primary_llm = llm.bind(use_api_v2=True)
+response = primary_llm.invoke("Hello!")
+```
+
+#### Client tools and `ToolMessage` continuation
+
+Client functions use standard LangChain tools. The returned tool-call ID is also
+the provider continuation state; pass it back through `ToolMessage`:
+
+```python
+from langchain_core.messages import HumanMessage, ToolMessage
+from langchain_core.tools import tool
+
+from langchain_gigachat import GigaChat
+
+
+@tool
+def get_weather(city: str) -> str:
+    """Get current weather for a city."""
+    return f"{city}: sunny, 22C"
+
+
+llm = GigaChat(use_api_v2=True)
+with_tools = llm.bind_tools([get_weather], tool_choice="auto")
+
+question = HumanMessage("What is the weather in Moscow?")
+assistant = with_tools.invoke([question])
+call = assistant.tool_calls[0]
+tool_result = ToolMessage(
+    content=get_weather.invoke(call["args"]),
+    tool_call_id=call["id"],
+    name=call["name"],
+)
+answer = with_tools.invoke([question, assistant, tool_result])
+print(answer.content)
+```
+
+Primary continuation serializes the tool result as provider `role="tool"` with
+`function_result` and `tools_state_id`. It does not use the legacy
+`role="function"` transport.
+
+#### Provider built-in tools
+
+Provider built-ins use the public `bind_tools()` API:
+
+```python
+from langchain_gigachat import GigaChat
+
+llm = GigaChat(use_api_v2=True)
+with_search = llm.bind_tools(
+    [{"type": "web_search"}],
+    tool_choice="web_search",
+)
+response = with_search.invoke("Find the latest GigaChat SDK release.")
+print(response.content)
+```
+
+Built-ins require v2. Binding one and then overriding the runnable with
+`use_api_v2=False` raises an actionable `ValueError`.
+
+#### Native JSON Schema output
+
+```python
+from pydantic import BaseModel
+
+from langchain_gigachat import GigaChat
+
+
+class City(BaseModel):
+    name: str
+    population: int
+
+
+llm = GigaChat(use_api_v2=True)
+structured = llm.with_structured_output(City, method="json_schema")
+city = structured.invoke("Return information about Kazan.")
+```
+
+#### Assistant and thread state
+
+Stateful requests accept either a top-level assistant ID or a storage thread:
+
+```python
+llm = GigaChat(use_api_v2=True)
+
+assistant_reply = llm.invoke(
+    "Continue the assistant conversation.",
+    assistant_id="assistant-id",
+)
+thread_reply = llm.invoke(
+    "Continue this thread.",
+    storage={"thread_id": "thread-id"},
+)
+```
+
+For assistant/thread requests, the configured default model is omitted so the
+provider can resolve the model from stored state. Pass `model=...` on the
+individual invocation only when an explicit override is required.
+
+#### File ID input
+
+An existing provider file ID can be supplied without re-uploading the file:
+
+```python
+from langchain_core.messages import HumanMessage
+
+from langchain_gigachat import GigaChat
+
+llm = GigaChat(use_api_v2=True)
+message = HumanMessage(
+    content=[
+        {"type": "text", "text": "Summarize this document."},
+        {
+            "type": "file",
+            "file_id": "provider-file-id",
+            "mime_type": "application/pdf",
+        },
+    ]
+)
+response = llm.invoke([message])
+```
+
+#### Current release status and limitations
+
+`langchain-gigachat==0.5.2a1` requires `gigachat==0.2.3a1`. The latest stable SDK
+available when this prerelease was prepared (`0.2.1`) does not expose
+`chat.create`, `chat.stream`, `achat.create`, and `achat.stream`. Do not promote
+this integration to a stable package release until a stable SDK containing
+those resources is available and the dependency can be changed to a stable
+range.
+
+Primary v2 currently rejects parallel client tool calls in one assistant
+message. `tool_choice="any"` is also rejected because its provider semantics
+have not been confirmed; use `"auto"`, `"none"`, or a concrete tool name.
 
 ## Tool Calling
 
-Use the standard LangChain `@tool` decorator. Pass GigaChat-specific metadata via `extras`:
+### Legacy tool transport
+
+With the default `use_api_v2=False`, use the standard LangChain `@tool`
+decorator for client functions. Pass GigaChat-specific metadata via `extras`:
 
 ```python
 from langchain_gigachat import GigaChat
@@ -215,11 +373,13 @@ llm = GigaChat(function_ranker={"enabled": False})
 llm_with_tools = llm.bind_tools([get_weather], tool_choice="auto")
 ```
 
-> **Note:** `tool_choice="any"` is not supported by the GigaChat API. Use `"auto"`, `"none"`, or a specific tool name. If upstream code passes `"any"`, set `allow_any_tool_choice_fallback=True` to silently convert it to `"auto"`.
+> **Note:** `tool_choice="any"` is not supported by the legacy GigaChat API. Use
+> `"auto"`, `"none"`, or a specific tool name. If upstream code passes `"any"`,
+> set `allow_any_tool_choice_fallback=True` to convert it to `"auto"`.
 
 > **Note:** GigaChat API does not support parallel tool calls in a single assistant message. If `AIMessage` contains more than one `tool_calls` entry, a `ValueError` is raised.
 
-### Legacy `bind_functions()`
+#### Legacy `bind_functions()`
 
 For legacy LangChain function-calling flows, `bind_functions()` is still available:
 
@@ -241,9 +401,19 @@ llm_with_functions = llm.bind_functions(
 
 Use `bind_tools()` for new code. `bind_functions()` is kept as a compatibility layer over the provider's `function_call` transport and supports `None`, `"auto"`, `"none"`, or a specific function name.
 
-Internally, the provider transport is still function-oriented. That is why
-`ToolMessage` results are serialized back as provider `function` messages when
-continuing a conversation.
+The legacy provider transport is function-oriented. `ToolMessage` results are
+therefore serialized back as provider `role="function"` messages when
+continuing a legacy conversation. Provider built-in tools are not supported on
+this route.
+
+### Primary API v2 tool transport
+
+With `use_api_v2=True`, `bind_tools()` accepts both client functions and
+provider built-ins such as `{"type": "web_search"}`. Client tool results use
+provider `role="tool"`, `function_result`, and `tools_state_id`; see the
+[complete continuation example](#client-tools-and-toolmessage-continuation).
+The primary and legacy transports are selected only after the invocation-level
+`use_api_v2` override is resolved.
 
 ## Structured Output
 
