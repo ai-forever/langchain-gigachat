@@ -511,6 +511,4 @@ def test_unknown_provider_content_and_event_are_preserved() -> None:
     assert streamed.response_metadata["provider_fields"] == {
         "provider_metadata": {"preserve": True}
     }
-    assert streamed.response_metadata["raw_event"]["provider_metadata"] == {
-        "preserve": True
-    }
+    assert streamed.response_metadata["raw_events"] == [event]
