@@ -208,28 +208,6 @@ def _config_dump(value: Optional[gm.ChatToolConfig]) -> Any:
     return value.model_dump(exclude_none=True, by_alias=True)
 
 
-def normalize_response_format(response_format: Any) -> Optional[gm.ChatResponseFormat]:
-    """Normalize supported response formats for primary model options."""
-    if response_format is None:
-        return None
-    if isinstance(response_format, gm.ChatResponseFormat):
-        candidate = response_format.model_dump(exclude_none=True, by_alias=True)
-    elif isinstance(response_format, gm.JsonSchemaResponseFormat):
-        candidate = response_format.model_dump(exclude_none=True, by_alias=True)
-    elif isinstance(response_format, Mapping):
-        candidate = copy.deepcopy(dict(response_format))
-    else:
-        raise TypeError(
-            "response_format must be a ChatResponseFormat, "
-            "JsonSchemaResponseFormat, mapping, or None."
-        )
-
-    try:
-        return gm.ChatResponseFormat.model_validate(candidate)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"Invalid primary response_format: {exc}") from exc
-
-
 def build_tool_binding(
     *,
     functions: Sequence[Mapping[str, Any]],

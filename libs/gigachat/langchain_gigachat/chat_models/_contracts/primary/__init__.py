@@ -3,7 +3,10 @@
 from langchain_gigachat.chat_models._contracts.primary.messages import (
     convert_messages,
 )
-from langchain_gigachat.chat_models._contracts.primary.payload import build_payload
+from langchain_gigachat.chat_models._contracts.primary.payload import (
+    build_payload,
+    normalize_response_format,
+)
 from langchain_gigachat.chat_models._contracts.primary.response import (
     create_chat_result,
 )
@@ -12,7 +15,6 @@ from langchain_gigachat.chat_models._contracts.primary.stream import (
 )
 from langchain_gigachat.chat_models._contracts.primary.tools import (
     build_tool_binding,
-    normalize_response_format,
 )
 from langchain_gigachat.chat_models._contracts.primary.types import (
     RequestDefaults,

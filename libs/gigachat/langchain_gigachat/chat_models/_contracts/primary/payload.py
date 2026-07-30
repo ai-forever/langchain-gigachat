@@ -45,6 +45,29 @@ _RANKER_FIELDS = frozenset(gm.ChatRankerOptions.model_fields)
 _MISSING = object()
 
 
+def normalize_response_format(response_format: Any) -> gm.ChatResponseFormat | None:
+    """Normalize every primary response-format entry point to the SDK model."""
+    if response_format is None:
+        return None
+    if isinstance(
+        response_format,
+        (gm.ChatResponseFormat, gm.JsonSchemaResponseFormat),
+    ):
+        candidate = response_format.model_dump(exclude_none=True, by_alias=True)
+    elif isinstance(response_format, Mapping):
+        candidate = copy.deepcopy(dict(response_format))
+    else:
+        raise TypeError(
+            "response_format must be a ChatResponseFormat, "
+            "JsonSchemaResponseFormat, mapping, or None."
+        )
+
+    try:
+        return gm.ChatResponseFormat.model_validate(candidate)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Invalid primary response_format: {exc}") from exc
+
+
 def _copy_mapping_or_model(value: Any, *, field_name: str) -> dict[str, Any]:
     if isinstance(value, BaseModel):
         return value.model_dump(exclude_none=True, by_alias=True)
@@ -80,17 +103,12 @@ def _model_options(
         if effort is not None:
             options["reasoning"] = {"effort": effort}
 
-    if options.get("response_format") is None:
+    response_format = options.get("response_format")
+    if response_format is None:
         response_format = invocation_kwargs.get("response_format")
-        if response_format is not None:
-            if isinstance(response_format, BaseModel):
-                response_format = response_format.model_dump(
-                    exclude_none=True,
-                    by_alias=True,
-                )
-            else:
-                response_format = copy.deepcopy(response_format)
-            options["response_format"] = response_format
+    normalized_response_format = normalize_response_format(response_format)
+    if normalized_response_format is not None:
+        options["response_format"] = normalized_response_format
 
     if not options:
         return None

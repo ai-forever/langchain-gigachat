@@ -102,6 +102,35 @@ def test_build_payload_native_nested_options_win_over_convenience() -> None:
     assert payload.model_options.response_format.type == "text"
 
 
+@pytest.mark.parametrize("nested", [False, True])
+def test_build_payload_uses_one_response_format_normalizer(nested: bool) -> None:
+    response_format = gm.JsonSchemaResponseFormat(
+        schema={"type": "object"},
+        strict=False,
+    )
+    invocation_kwargs: dict[str, Any]
+    if nested:
+        invocation_kwargs = {
+            "model_options": {"response_format": response_format},
+        }
+    else:
+        invocation_kwargs = {"response_format": response_format}
+
+    payload = primary.build_payload(
+        [],
+        defaults=_defaults(),
+        invocation_kwargs=invocation_kwargs,
+        cached_uploads={},
+    )
+
+    assert payload.model_options is not None
+    assert payload.model_options.response_format == gm.ChatResponseFormat(
+        type="json_schema",
+        schema={"type": "object"},
+        strict=False,
+    )
+
+
 def test_build_payload_supports_primary_top_level_and_future_fields() -> None:
     payload = primary.build_payload(
         [],

@@ -635,10 +635,6 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
     ) -> gm.ChatCompletionRequest:
         invocation_kwargs = dict(kwargs)
         invocation_kwargs.pop("use_api_v2", None)
-        if invocation_kwargs.get("response_format") is not None:
-            invocation_kwargs["response_format"] = primary.normalize_response_format(
-                invocation_kwargs["response_format"]
-            )
         tool_binding = primary.build_tool_binding(
             functions=invocation_kwargs.get("functions", ()),
             tools=invocation_kwargs.get("tools", ()),
