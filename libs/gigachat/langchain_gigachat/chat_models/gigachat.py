@@ -117,6 +117,18 @@ MIME_EXTENSION_FALLBACK: Dict[str, str] = {
 DEFAULT_IMAGE_CACHE_MAX_SIZE = 1000
 
 ATTACHMENT_BLOCK_KEYS = ("image_url", "audio_url", "document_url")
+_PRIMARY_ONLY_KWARGS = frozenset(
+    {
+        "assistant_id",
+        "disable_filter",
+        "filter_config",
+        "model_options",
+        "ranker_options",
+        "storage",
+        "tools_state_id",
+        "user_info",
+    }
+)
 
 
 def _extension_for_mime(mime: str) -> str:
@@ -569,6 +581,15 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
     ) -> Literal["legacy", "primary"]:
         return "primary" if kwargs.get("use_api_v2", self.use_api_v2) else "legacy"
 
+    def _validate_legacy_kwargs(self, kwargs: Mapping[str, Any]) -> None:
+        unsupported = sorted(_PRIMARY_ONLY_KWARGS.intersection(kwargs))
+        if unsupported:
+            names = ", ".join(unsupported)
+            raise ValueError(
+                f"Legacy GigaChat does not support primary-only argument(s): {names}. "
+                "Use use_api_v2=True."
+            )
+
     def _primary_defaults(self) -> primary.RequestDefaults:
         function_ranker = self.function_ranker
         if isinstance(function_ranker, BaseModel):
@@ -719,6 +740,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             primary_client: Any = self._client.chat
             primary_response = primary_client.create(primary_payload)
             return primary.create_chat_result(primary_response)
+        self._validate_legacy_kwargs(kwargs)
         payload = self._build_payload(messages, **kwargs)
         response = self._client.chat(payload)
         return self._create_chat_result(response)
@@ -747,6 +769,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             primary_client: Any = self._client.achat
             primary_response = await primary_client.create(primary_payload)
             return primary.create_chat_result(primary_response)
+        self._validate_legacy_kwargs(kwargs)
         payload = self._build_payload(messages, **kwargs)
         response = await self._client.achat(payload)
         return self._create_chat_result(response)
@@ -773,6 +796,13 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 if run_manager:
                     run_manager.on_llm_new_token(
                         primary_chunk.text, chunk=primary_chunk
+                    )
+                if primary_chunk.message.content == []:
+                    primary_chunk = ChatGenerationChunk(
+                        message=primary_chunk.message.model_copy(
+                            update={"content": ""}
+                        ),
+                        generation_info=primary_chunk.generation_info,
                     )
                 yield primary_chunk
             return
@@ -814,6 +844,13 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 if run_manager:
                     await run_manager.on_llm_new_token(
                         primary_chunk.text, chunk=primary_chunk
+                    )
+                if primary_chunk.message.content == []:
+                    primary_chunk = ChatGenerationChunk(
+                        message=primary_chunk.message.model_copy(
+                            update={"content": ""}
+                        ),
+                        generation_info=primary_chunk.generation_info,
                     )
                 yield primary_chunk
             return
