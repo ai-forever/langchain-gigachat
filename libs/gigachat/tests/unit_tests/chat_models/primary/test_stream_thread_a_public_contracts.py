@@ -10,6 +10,7 @@ from unittest.mock import MagicMock
 
 from langchain_core.language_models.chat_models import generate_from_stream
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
+from langchain_core.outputs import ChatGenerationChunk
 
 from langchain_gigachat.chat_models.gigachat import GigaChat
 
@@ -41,6 +42,14 @@ def _assert_official_sdk_server_tool_message(
         "total_tokens": 3,
         "input_token_details": {"cache_read": 0},
     }
+
+
+def _count_internal_final_chunks(chunks: list[ChatGenerationChunk]) -> int:
+    count = 0
+    for chunk in chunks:
+        assert isinstance(chunk.message, AIMessageChunk)
+        count += chunk.message.chunk_position == "last"
+    return count
 
 
 def _finish_reason_events() -> Iterator[dict[str, Any]]:
@@ -350,7 +359,7 @@ def test_official_sdk_server_tool_stream_across_sync_public_workflows(
     public_aggregate = reduce(add, public_chunks)
     invoked = llm.invoke("Hello")
 
-    assert sum(chunk.message.chunk_position == "last" for chunk in internal) == 1
+    assert _count_internal_final_chunks(internal) == 1
     assert sum(chunk.chunk_position == "last" for chunk in public_chunks) == 1
     assert internal_aggregate.generation_info == {"finish_reason": "error"}
     assert generated.generation_info == {"finish_reason": "error"}
@@ -380,7 +389,7 @@ async def test_official_sdk_server_tool_stream_across_async_public_workflows(
     public_aggregate = reduce(add, public_chunks)
     invoked = await llm.ainvoke("Hello")
 
-    assert sum(chunk.message.chunk_position == "last" for chunk in internal) == 1
+    assert _count_internal_final_chunks(internal) == 1
     assert sum(chunk.chunk_position == "last" for chunk in public_chunks) == 1
     assert internal_aggregate.generation_info == {"finish_reason": "error"}
     for message in (internal_aggregate.message, public_aggregate, invoked):

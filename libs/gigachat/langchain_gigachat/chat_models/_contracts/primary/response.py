@@ -226,9 +226,7 @@ def _content_blocks(
         message: gm.ChatMessage | None = None,
     ) -> str:
         nonlocal next_server_tool_sequence
-        message_tools_state_id = (
-            message.tools_state_id if message is not None else None
-        )
+        message_tools_state_id = message.tools_state_id if message is not None else None
         resolved = server_tool_execution_id(
             execution,
             message_tools_state_id,

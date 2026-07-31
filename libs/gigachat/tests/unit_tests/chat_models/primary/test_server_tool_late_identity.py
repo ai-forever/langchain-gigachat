@@ -6,6 +6,7 @@ from functools import reduce
 from operator import add
 from typing import Any, cast
 
+import gigachat.models as gm
 import pytest
 from langchain_core.messages import AIMessageChunk
 from langchain_core.outputs import ChatGenerationChunk
@@ -16,7 +17,7 @@ from .fixtures import build_official_sdk_server_tool_stream
 
 
 def _convert(
-    event: dict[str, Any],
+    event: gm.PrimaryChatCompletionChunk | dict[str, Any],
     state: primary.StreamState,
 ) -> ChatGenerationChunk:
     chunk = primary.convert_stream_event(event, state=state)
@@ -222,6 +223,8 @@ def test_official_sdk_terminal_server_tool_without_identity_uses_local_id() -> N
     chunks = [_convert(event, state) for event in events]
 
     aggregate = reduce(add, chunks)
+    assert isinstance(aggregate.message, AIMessageChunk)
+    message = aggregate.message
     blocks = _blocks(aggregate)
     result = next(block for block in blocks if block["type"] == "server_tool_result")
     call_id = result["tool_call_id"]
@@ -232,19 +235,26 @@ def test_official_sdk_terminal_server_tool_without_identity_uses_local_id() -> N
         "status": "success",
         "censored": True,
     }
-    assert aggregate.message.additional_kwargs[
-        "provider_server_tool_state_by_call_id"
-    ] == {call_id: "tools-state-1"}
-    assert aggregate.message.response_metadata["tools_state_id"] == "tools-state-1"
-    assert aggregate.message.response_metadata["finish_reason"] == "error"
+    assert message.additional_kwargs["provider_server_tool_state_by_call_id"] == {
+        call_id: "tools-state-1"
+    }
+    assert message.response_metadata["tools_state_id"] == "tools-state-1"
+    assert message.response_metadata["finish_reason"] == "error"
     assert aggregate.generation_info == {"finish_reason": "error"}
-    assert aggregate.message.usage_metadata == {
+    assert message.usage_metadata == {
         "input_tokens": 1,
         "output_tokens": 2,
         "total_tokens": 3,
         "input_token_details": {"cache_read": 0},
     }
-    assert sum(chunk.message.chunk_position == "last" for chunk in chunks) == 1
+    assert (
+        sum(
+            isinstance(chunk.message, AIMessageChunk)
+            and chunk.message.chunk_position == "last"
+            for chunk in chunks
+        )
+        == 1
+    )
     assert [event.model_dump(mode="json") for event in events] == snapshots
 
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Sequence
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import pytest
 from langchain_core.messages import (
@@ -230,12 +230,13 @@ def test_sync_streamed_web_search_lifecycle(primary_llm: GigaChat) -> None:
         tool_choice="web_search",
     )
 
-    chunks = list(
-        runnable.stream(
+    chunks = [
+        cast(AIMessageChunk, chunk)
+        for chunk in runnable.stream(
             "Use web search to find the official Python website, then briefly "
             "identify what Python is."
         )
-    )
+    ]
     aggregate = _aggregate(chunks)
 
     _assert_streamed_builtin_tool_lifecycle(chunks, aggregate)
@@ -248,7 +249,7 @@ async def test_async_streamed_web_search_lifecycle(primary_llm: GigaChat) -> Non
     )
 
     chunks = [
-        chunk
+        cast(AIMessageChunk, chunk)
         async for chunk in runnable.astream(
             "Use web search to find the official Python website, then briefly "
             "identify what Python is."
