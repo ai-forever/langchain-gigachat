@@ -263,7 +263,7 @@ print(response.content)
 Built-ins require v2. Binding one and then overriding the runnable with
 `use_api_v2=False` raises an actionable `ValueError`.
 
-#### Native JSON Schema output
+#### Native structured JSON output
 
 ```python
 from pydantic import BaseModel
@@ -281,7 +281,23 @@ structured = llm.with_structured_output(City, method="json_schema")
 city = structured.invoke("Return information about Kazan.")
 ```
 
-Primary v2 also preserves explicit SDK response formats when binding directly:
+Primary v2 can also request a native JSON object without a schema and without
+`strict`:
+
+```python
+json_object_llm = llm.with_structured_output(None, method="json_mode")
+payload = json_object_llm.invoke("Return a JSON object with a short answer.")
+assert isinstance(payload, dict)
+```
+
+The equivalent low-level response format contains only the provider type:
+
+```python
+json_object_llm = llm.bind(response_format={"type": "json_schema"})
+```
+
+Primary v2 also preserves other explicit SDK response formats when binding
+directly:
 
 ```python
 ticket_id_llm = llm.bind(
@@ -294,10 +310,12 @@ ticket_id_llm = llm.bind(
 
 Supported explicit types are `text`, `json_schema`, and `regex`. A mapping
 without an explicit response-format discriminator is treated as a raw JSON
-Schema. Unknown explicit formats are rejected before the provider call.
-`strict` is supported only together with a JSON Schema `response_format`;
-GigaChat has no confirmed strict tool-schema field, so
-`bind_tools(..., strict=True)` without `response_format` raises.
+Schema. On the primary route, `{"type": "json_schema"}` is the schema-less
+form and is serialized without synthetic `schema` or `strict` fields. Supplying
+`strict` without a schema is rejected, including `strict=False`. Unknown
+explicit formats are rejected before the provider call. GigaChat has no
+confirmed strict tool-schema field, so `bind_tools(..., strict=True)` without
+`response_format` raises.
 
 #### Assistant and thread state
 
@@ -346,17 +364,13 @@ response = llm.invoke([message])
 #### Current release status and limitations
 
 `langchain-gigachat==0.5.2a1` requires `langchain-core>=1.2,<2` and
-`gigachat==0.2.3a1`. The latest stable SDK verified for this prerelease
-(`0.2.1`) does not expose
-`chat.create`, `chat.stream`, `achat.create`, and `achat.stream`. Do not promote
-this integration to a stable package release until a stable SDK containing
-those resources is available and the dependency can be changed to a stable
-range. The PR #78 hardening candidate is
-`a90617d459bb29f6a348cd30ef09d6a3c7807073`; its deterministic unit run passed
-761 tests with 5 optional Agent tests skipped and 94.07% coverage on Python
-3.12.12. See [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) for the single
-authoritative validation record. Live API validation has not been run and
-remains a separate release gate.
+`gigachat==0.2.3a1`. Do not promote this integration to a stable package
+release until a stable SDK exposes `chat.create`, `chat.stream`,
+`achat.create`, and `achat.stream`, and the dependency can be changed to a
+verified stable range. Deterministic, artifact-install, and live-provider
+evidence must all belong to the exact release candidate; see
+[RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md). A skipped live test is a blocked
+release gate, not a pass.
 
 Primary v2 currently rejects parallel client tool calls in one assistant
 message. `tool_choice="any"` is rejected by default on both routes because
@@ -471,20 +485,28 @@ print(parsed)
 
 By default, `with_structured_output()` uses GigaChat function calling for
 backward-compatible schema extraction. Native API-level JSON Schema constraints
-are also available explicitly:
+are available explicitly on a compatible model:
 
 ```python
-llm.with_structured_output(Answer, method="json_schema")
+primary = GigaChat(use_api_v2=True)
+primary.with_structured_output(Answer, method="json_schema")
 ```
 
-> **Note:** `method="json_schema"` requires `gigachat>=0.2.1` and a model that
-> supports the `response_format` API field. Support is currently in beta on
-> GigaChat side and may not be available for every model — fall back to the
-> default `method="function_calling"` if the API rejects the request.
+Use `schema=None` with `method="json_mode"` for schema-less native JSON. The
+primary request contains `response_format={"type": "json_schema"}` with no
+`schema` and no `strict`, and the runnable returns a parsed JSON object:
 
-The legacy `method="json_mode"` is still accepted for backward compatibility,
-but it emits a `DeprecationWarning` — prefer `method="json_schema"` for new
-code.
+```python
+json_object = primary.with_structured_output(None, method="json_mode")
+result = json_object.invoke("Return a JSON object with keys answer and confidence.")
+```
+
+`method="json_schema"` requires a schema; its `strict` option applies only to
+that schema-bearing form. Model support for native response formats remains
+provider-dependent, so retain the default `method="function_calling"` fallback
+for mixed model versions. The older schema-bearing
+`with_structured_output(schema, method="json_mode")` form remains accepted but
+deprecated; the new `schema=None` primary mode is not deprecated.
 
 ## Attachments
 

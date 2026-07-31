@@ -4,11 +4,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Primary v2 schema-less structured JSON through
+  `with_structured_output(None, method="json_mode")` and the equivalent direct
+  `response_format={"type": "json_schema"}` binding. The provider payload adds
+  neither a placeholder schema nor `strict`.
+
 ### Fixed
 
 - Primary client-tool continuation now serializes assistant `function_call`
   history inside `content`, matching the `/v2/chat/completions` request
   contract and allowing the following `function_result` to be accepted.
+- Stream and non-stream server-tool observations now share one mirror resolver.
+  Exact part/message/response mirrors emit once, execution IDs remain separate
+  from replay-state IDs, and ambiguous correlations fail closed.
 
 ## [0.5.2a1] — 2026-07-30
 
@@ -55,15 +65,14 @@ alpha SDK.
 - Stable release remains blocked until a stable SDK with those resources is
   published and the dependency is changed to a stable `<0.3` range.
 
-### Validation
+### Release gates
 
-- PR #78 hardening candidate:
-  `a90617d459bb29f6a348cd30ef09d6a3c7807073`.
-- The deterministic unit suite passed 761 tests with 5 optional Agent tests
-  skipped and 94.07% coverage on Python 3.12.12.
-- Complete artifact, clean-install, stable-SDK, and live-provider status is
-  recorded once in [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md).
-- Live API tests were not run and remain an explicit unchecked release gate.
+- Stable release remains blocked until a stable SDK provides all four required
+  sync/async primary chat resource methods.
+- Deterministic, clean-artifact, and live-provider evidence must identify the
+  exact candidate it validates. Required scenarios are defined in
+  [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md); volatile results belong in CI
+  summaries and attached artifacts.
 
 ### Known limitations
 

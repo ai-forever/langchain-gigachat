@@ -111,8 +111,8 @@ after the terminal still fail closed. No public stream emits a chunk after
 ### Structured output
 
 `with_structured_output()` still defaults to `method="function_calling"` for
-backward compatibility. `method="json_schema"` is normalized according to the
-selected route:
+backward compatibility. Schema-bearing `method="json_schema"` is normalized
+according to the selected route:
 
 - legacy uses the legacy SDK response-format representation;
 - primary places `ChatResponseFormat` under `model_options.response_format`.
@@ -121,37 +121,55 @@ Caller-owned schemas are copied before normalization. Model support for native
 JSON Schema is provider-dependent, so keep the function-calling fallback when
 deploying across mixed model versions.
 
+Primary v2 additionally supports schema-less native JSON:
+
+```python
+json_llm = GigaChat(use_api_v2=True).with_structured_output(
+    None,
+    method="json_mode",
+)
+result = json_llm.invoke("Return a JSON object.")
+```
+
+This sends exactly `{"type": "json_schema"}` under
+`model_options.response_format`: no placeholder schema and no implicit
+`strict=False`. The result parser accepts JSON objects and rejects arrays,
+scalars, invalid JSON, tool-call responses, and completions whose authoritative
+finish reason is not `stop`. Invocation-level routing is still authoritative;
+an override to the legacy route does not forward the primary-only native
+response-format marker.
+
 Primary response-format normalization preserves the SDK's explicit `text`,
 `json_schema`, and `regex` formats. OpenAI-style nested `json_schema` values are
 unwrapped to the SDK shape, while plain JSON Schema mappings remain schema
 payloads. Unknown explicit response-format types fail before network I/O.
 
-`strict` applies only to JSON Schema response formats. Because GigaChat does
-not expose a confirmed strict field for tool schemas,
-`bind_tools(..., strict=True)` without `response_format` now raises instead of
-silently accepting a no-op argument.
+`strict` applies only to schema-bearing JSON Schema response formats. It is
+rejected for schema-less JSON even when explicitly set to `False`. Because
+GigaChat does not expose a confirmed strict field for tool schemas,
+`bind_tools(..., strict=True)` without `response_format` raises instead of
+silently accepting a no-op argument. The older schema-bearing
+`method="json_mode"` compatibility path remains deprecated; the new
+`schema=None` form is not.
 
 ### Dependency and release status
 
 `langchain-gigachat==0.5.2a1` is a prerelease and requires
-`langchain-core>=1.2,<2` and `gigachat==0.2.3a1`. The latest stable SDK verified
-for this prerelease (`0.2.1`) does not expose `chat.create`, `chat.stream`,
-`achat.create`, or `achat.stream`.
-Therefore:
+`langchain-core>=1.2,<2` and `gigachat==0.2.3a1`. Therefore:
 
 - `0.5.2a1` must not be presented as stable-release ready;
-- the PR must remain draft/blocked for a stable release;
-- the PR #78 hardening candidate is
-  `a90617d459bb29f6a348cd30ef09d6a3c7807073`;
-- its deterministic unit run passed 761 tests with 5 optional Agent tests
-  skipped and 94.07% coverage on Python 3.12.12;
-- live API validation remains unchecked and must not be inferred from CI;
+- stable release remains blocked until a stable SDK exposes `chat.create`,
+  `chat.stream`, `achat.create`, and `achat.stream`;
+- deterministic CI does not substitute for the live provider matrix;
+- every deterministic, artifact, and live result must identify the exact
+  release candidate it validates;
 - after a stable SDK with those resources is published, replace the exact alpha
   pin with `gigachat>=<first-stable-v2-version>,<0.3`, regenerate the lockfile,
   and repeat the full package/install validation.
 
-The complete, non-secret validation evidence and live matrix are maintained in
-[RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md).
+The required deterministic, artifact, and live scenarios are defined in
+[RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md); volatile results belong in the CI
+summary and attached validation artifacts rather than package documentation.
 
 ## Requirements
 
