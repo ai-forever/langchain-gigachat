@@ -141,10 +141,10 @@ Therefore:
 
 - `0.5.2a1` must not be presented as stable-release ready;
 - the PR must remain draft/blocked for a stable release;
-- the assembled A–F implementation is
-  `ec0d185cc5c22fdac9d1a0da29f1bdd6a440505d`;
-- its deterministic unit run passed 694 tests with 5 optional Agent tests
-  skipped and 93.98% coverage on Python 3.12.12;
+- the PR #78 hardening candidate is
+  `a90617d459bb29f6a348cd30ef09d6a3c7807073`;
+- its deterministic unit run passed 761 tests with 5 optional Agent tests
+  skipped and 94.07% coverage on Python 3.12.12;
 - live API validation remains unchecked and must not be inferred from CI;
 - after a stable SDK with those resources is published, replace the exact alpha
   pin with `gigachat>=<first-stable-v2-version>,<0.3`, regenerate the lockfile,

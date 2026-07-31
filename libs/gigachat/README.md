@@ -351,9 +351,9 @@ response = llm.invoke([message])
 `chat.create`, `chat.stream`, `achat.create`, and `achat.stream`. Do not promote
 this integration to a stable package release until a stable SDK containing
 those resources is available and the dependency can be changed to a stable
-range. The assembled A–F implementation is
-`ec0d185cc5c22fdac9d1a0da29f1bdd6a440505d`; its deterministic unit run passed
-694 tests with 5 optional Agent tests skipped and 93.98% coverage on Python
+range. The PR #78 hardening candidate is
+`a90617d459bb29f6a348cd30ef09d6a3c7807073`; its deterministic unit run passed
+761 tests with 5 optional Agent tests skipped and 94.07% coverage on Python
 3.12.12. See [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) for the single
 authoritative validation record. Live API validation has not been run and
 remains a separate release gate.

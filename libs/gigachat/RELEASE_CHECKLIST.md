@@ -8,17 +8,19 @@ short summaries in README, MIGRATION, and CHANGELOG in the same commit.
 
 | Field | Verified value |
 |-------|----------------|
-| Assembled A–F implementation | `ec0d185cc5c22fdac9d1a0da29f1bdd6a440505d` |
+| PR #78 hardening candidate | `a90617d459bb29f6a348cd30ef09d6a3c7807073` |
 | Package | `langchain-gigachat==0.5.2a1` |
 | Python used for local validation | `3.12.12` |
 | Python used for clean artifact installs | `3.14.3` |
 | Locked LangChain Core | `1.2.5` |
 | Supported LangChain Core range | `>=1.2,<2` |
 | Pinned GigaChat SDK | `0.2.3a1` |
-| Unit suite | PASS — 694 passed, 5 skipped |
-| Coverage | PASS — 93.98% (required: 90%) |
+| Unit suite | PASS — 761 passed, 5 skipped |
+| Coverage | PASS — 94.07% (required: 90%) |
+| Python 3.10–3.14 local CI equivalent | PASS — 761 passed, 5 skipped on every version; 94.07% coverage (94.06% on 3.14) |
 | Hosted Agent contract equivalent | PASS — `langchain==1.3.14`, 5 passed |
-| Minimum/latest Core matrix | PASS — Core `1.2.0` and `1.5.3`; 694 passed, 5 skipped, 93.98% each |
+| Minimum/latest Core matrix | PASS — Core `1.2.0` and `1.5.3`; 761 passed, 5 skipped, 94.07% each |
+| Hosted CI for this candidate | PENDING — the local candidate has not been pushed |
 | Wheel build and clean install | PASS |
 | sdist build and clean install | PASS |
 | Live provider matrix | BLOCKED — credentials and provider state fixtures were unavailable |
@@ -28,6 +30,11 @@ The five skipped tests are optional LangChain Agent compatibility tests. The
 same five contracts passed in an isolated `langchain==1.3.14` environment;
 they are not counted as passed in the default unit-suite total.
 
+The exact pinned-SDK no-ID server-tool fixture and the assembled public
+sync/async workflows passed in the focused hardening matrix. The live module
+now also collects sync and async streamed built-in-tool lifecycle tests, but
+they remain live-provider evidence rather than deterministic evidence.
+
 Both clean artifact environments resolved `langchain-core==1.5.3` from the
 declared compatible range and `gigachat==0.2.3a1` from the exact SDK pin. The
 wheel and sdist each imported `langchain_gigachat.GigaChat`, reported package
@@ -36,12 +43,12 @@ version `0.5.2a1`, and exposed all four required SDK resource methods.
 Built artifact hashes:
 
 ```text
-692abbe7ef08ae2f5313389430ec97d72c75c675be8e8db50a1a0029fb701dce  langchain_gigachat-0.5.2a1.tar.gz
-4aa19eb1b287b33ca831ad1c77b1018e8295ddf0ce3055f2e4d0d39fc1000515  langchain_gigachat-0.5.2a1-py3-none-any.whl
+6b3eddd2e24d225152d55099ee5ea4a43d21b80907349ae2164fbc4a113d6bc5  langchain_gigachat-0.5.2a1.tar.gz
+69b19e957b9d1356593acf576198ab86389b0a2109b01d8fa50247abb024a2c4  langchain_gigachat-0.5.2a1-py3-none-any.whl
 ```
 
 The PR body must name the final documentation/validation commit, not only the
-assembled A–F implementation above. Re-run this checklist after any code change.
+hardening candidate above. Re-run this checklist after any code change.
 
 ## Deterministic validation
 
@@ -113,8 +120,8 @@ Run:
 make integration_tests
 ```
 
-In the recorded local environment this target collected 11 tests and skipped
-all 11 because no GigaChat authentication variables or provider state fixtures
+In the recorded local environment this target collected 13 tests and skipped
+all 13 because no GigaChat authentication variables or provider state fixtures
 were present. That confirms the gate wiring but is not live evidence.
 
 Record these non-secret facts for every run:
@@ -137,6 +144,7 @@ certificate material, or unsanitized cassettes.
 |----------|--------|
 | Plain `invoke` / `ainvoke` | NOT RUN |
 | Plain `stream` / `astream` | NOT RUN |
+| Streamed built-in-tool lifecycle (`stream` / `astream`) | NOT RUN |
 | Streamed client-function roundtrip | NOT RUN |
 | Non-stream client-function roundtrip | NOT RUN |
 | Web search | NOT RUN |

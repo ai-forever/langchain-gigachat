@@ -57,10 +57,10 @@ alpha SDK.
 
 ### Validation
 
-- Assembled A–F implementation:
-  `ec0d185cc5c22fdac9d1a0da29f1bdd6a440505d`.
-- The deterministic unit suite passed 694 tests with 5 optional Agent tests
-  skipped and 93.98% coverage on Python 3.12.12.
+- PR #78 hardening candidate:
+  `a90617d459bb29f6a348cd30ef09d6a3c7807073`.
+- The deterministic unit suite passed 761 tests with 5 optional Agent tests
+  skipped and 94.07% coverage on Python 3.12.12.
 - Complete artifact, clean-install, stable-SDK, and live-provider status is
   recorded once in [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md).
 - Live API tests were not run and remain an explicit unchecked release gate.
