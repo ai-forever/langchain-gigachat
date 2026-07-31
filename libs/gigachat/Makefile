@@ -3,10 +3,11 @@
 # Default target executed when no arguments are given to make.
 all: help
 
-# Define a variable for the test file path.
-TEST_FILE ?= tests/unit_tests/
+# Define variables for the full-suite and focused test paths.
+FULL_TEST_PATH := tests/unit_tests/
+TEST_FILE ?= $(FULL_TEST_PATH)
 integration_test integration_tests: TEST_FILE = tests/integration_tests/
-test tests: PYTEST_ARGS = --cov-fail-under=90
+test tests: PYTEST_ARGS += $(if $(filter $(FULL_TEST_PATH),$(TEST_FILE)),--cov-fail-under=90)
 
 test tests integration_test integration_tests:
 	uv run pytest $(TEST_FILE) $(PYTEST_ARGS)
@@ -53,5 +54,5 @@ help:
 	@echo 'lint                         - run linters'
 	@echo 'test                         - run unit tests'
 	@echo 'tests                        - run unit tests'
-	@echo 'test TEST_FILE=<test_file>   - run all tests in file'
+	@echo 'test TEST_FILE=<test_file>   - run focused tests without full-suite coverage'
 	@echo 'dev                          - configure development environment'
