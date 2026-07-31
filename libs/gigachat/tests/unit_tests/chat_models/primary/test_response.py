@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+from typing import Any
 
 import pytest
 from gigachat import models as gm
@@ -926,18 +927,18 @@ def test_distinct_nested_and_response_server_tools_are_both_preserved() -> None:
 
 
 def test_same_payload_with_distinct_explicit_ids_is_not_deduplicated() -> None:
-    common = {"name": "web_search", "status": "success"}
+    common: dict[str, Any] = {"name": "web_search", "status": "success"}
     message = _message(
         _response(
             messages=[
                 {
                     "role": "reasoning",
-                    "tool_execution": {"call_id": "search-1", **common},
+                    "tool_execution": common | {"call_id": "search-1"},
                     "content": [
                         {
-                            "tool_execution": {
+                            "tool_execution": common
+                            | {
                                 "call_id": "search-2",
-                                **common,
                             }
                         }
                     ],
@@ -954,13 +955,13 @@ def test_same_payload_with_distinct_explicit_ids_is_not_deduplicated() -> None:
 
 
 def test_unidentified_mirror_of_distinct_explicit_ids_fails_closed() -> None:
-    common = {"name": "web_search", "status": "success"}
+    common: dict[str, Any] = {"name": "web_search", "status": "success"}
     response = _response(
         messages=[
             {
                 "role": "reasoning",
-                "tool_execution": {"call_id": "search-1", **common},
-                "content": [{"tool_execution": {"call_id": "search-2", **common}}],
+                "tool_execution": common | {"call_id": "search-1"},
+                "content": [{"tool_execution": common | {"call_id": "search-2"}}],
             }
         ],
         tool_execution=common,
