@@ -320,7 +320,7 @@ def test_server_tool_contract_parity(
     output: dict[str, Any] | None,
 ) -> None:
     execution: dict[str, Any] = {
-        "call_id": "server-tool-1",
+        "call_id": "execution-1",
         "name": "web_search",
         "status": status,
         "arguments": {"query": "Moscow"},
@@ -331,7 +331,7 @@ def test_server_tool_contract_parity(
         [
             {
                 "role": "assistant",
-                "tools_state_id": "server-tool-1",
+                "tools_state_id": "state-1",
                 "tool_execution": execution,
             }
         ],
@@ -342,14 +342,23 @@ def test_server_tool_contract_parity(
         {
             "event": event_name,
             "message_id": _MESSAGE_ID,
-            "tools_state_id": "server-tool-1",
+            "tools_state_id": "state-1",
             "tool_execution": execution,
         },
         {"event": "response.message.done"},
     ]
 
-    _, streamed = _assert_semantic_parity(response, events)
+    non_stream, streamed = _assert_semantic_parity(response, events)
 
+    server_block = next(
+        block
+        for block in _semantic_content(non_stream)
+        if block["type"].startswith("server_tool")
+    )
+    identity_field = (
+        "tool_call_id" if server_block["type"] == "server_tool_result" else "id"
+    )
+    assert server_block[identity_field] == "execution-1"
     assert all(
         block["type"] != "server_tool_call_chunk" for block in streamed.content_blocks
     )

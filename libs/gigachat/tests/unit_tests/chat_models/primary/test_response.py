@@ -609,6 +609,82 @@ def test_terminal_server_tool_execution_emits_result(
     ]
 
 
+@pytest.mark.parametrize("execution_level", ["part", "message", "response"])
+def test_execution_identity_precedes_container_state_at_every_level(
+    execution_level: str,
+) -> None:
+    execution = {
+        "call_id": "execution-1",
+        "tool_call_id": "lower-priority-execution-1",
+        "id": "lowest-priority-execution-1",
+        "name": "web_search",
+        "status": "success",
+    }
+    response_values: dict[str, object] = {}
+    message_values: dict[str, object] = {
+        "role": "assistant",
+    }
+    if execution_level == "part":
+        message_values["tools_state_id"] = "state-1"
+        message_values["content"] = [{"tool_execution": execution}]
+    elif execution_level == "message":
+        message_values["tools_state_id"] = "state-1"
+        message_values["tool_execution"] = execution
+    else:
+        message_values["content"] = [{"text": "Generated"}]
+        response_values["tools_state_id"] = "response-state-1"
+        response_values["tool_execution"] = execution
+    response_values["messages"] = [message_values]
+    before = copy.deepcopy(response_values)
+
+    message = _message(_response(**response_values))
+
+    server_result = next(
+        block
+        for block in message.content_blocks
+        if block["type"] == "server_tool_result"
+    )
+    assert server_result["tool_call_id"] == "execution-1"
+    assert server_result["id"] == "execution-1:result"
+    assert response_values == before
+
+
+def test_censored_success_uses_completion_error_for_failure_semantics() -> None:
+    message = _message(
+        _response(
+            messages=[
+                {
+                    "role": "assistant",
+                    "tools_state_id": "state-1",
+                    "tool_execution": {
+                        "name": "image_generate",
+                        "status": "success",
+                        "censored": True,
+                    },
+                }
+            ],
+            finish_reason="error",
+        )
+    )
+
+    assert message.content == [
+        {
+            "type": "server_tool_result",
+            "id": "state-1:result",
+            "tool_call_id": "state-1",
+            "status": "success",
+            "extras": {
+                "provider_tool_execution": {
+                    "name": "image_generate",
+                    "status": "success",
+                    "censored": True,
+                }
+            },
+        }
+    ]
+    assert message.response_metadata["finish_reason"] == "error"
+
+
 def test_running_server_tool_execution_emits_call_only() -> None:
     message = _message(
         _response(
@@ -628,7 +704,7 @@ def test_running_server_tool_execution_emits_call_only() -> None:
     assert server_blocks == [
         {
             "type": "server_tool_call",
-            "id": "server_tool_response",
+            "id": "lc_primary-server-tool-0",
             "name": "image_generate",
             "args": {},
             "extras": {
@@ -640,6 +716,47 @@ def test_running_server_tool_execution_emits_call_only() -> None:
             },
         }
     ]
+
+
+def test_message_id_does_not_conflate_unidentified_server_tools() -> None:
+    message = _message(
+        _response(
+            message_id="provider-message-1",
+            messages=[
+                {
+                    "role": "assistant",
+                    "message_id": "provider-message-1",
+                    "content": [
+                        {
+                            "tool_execution": {
+                                "name": "web_search",
+                                "status": "success",
+                            }
+                        },
+                        {
+                            "tool_execution": {
+                                "name": "image_generate",
+                                "status": "success",
+                            }
+                        },
+                    ],
+                }
+            ],
+        )
+    )
+
+    server_results = [
+        block
+        for block in message.content_blocks
+        if block["type"] == "server_tool_result"
+    ]
+    assert [block["tool_call_id"] for block in server_results] == [
+        "lc_primary-server-tool-0",
+        "lc_primary-server-tool-1",
+    ]
+    assert all(
+        block["tool_call_id"] != "provider-message-1" for block in server_results
+    )
 
 
 def test_mirrored_server_tool_execution_uses_part_level_once() -> None:

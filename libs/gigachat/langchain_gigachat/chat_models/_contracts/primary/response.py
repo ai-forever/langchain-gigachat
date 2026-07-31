@@ -19,6 +19,7 @@ from langchain_gigachat.chat_models._contracts.primary.content import (
     convert_tool_execution,
     create_usage_metadata,
     reasoning_content,
+    server_tool_execution_id,
     unknown_provider_fields,
 )
 
@@ -91,7 +92,7 @@ def _part_blocks(
     part: gm.ChatContentPart,
     *,
     role: str,
-    server_tool_id: str,
+    server_tool_id: str | None,
     message_inline_data: gm.ChatInlineData | None,
 ) -> list[dict[str, Any]]:
     blocks: list[dict[str, Any]] = []
@@ -125,6 +126,8 @@ def _part_blocks(
 
     has_tool_execution = part.tool_execution is not None
     if has_tool_execution:
+        if server_tool_id is None:
+            raise RuntimeError("Primary server tool identity resolution failed")
         tool_blocks = convert_tool_execution(
             part.tool_execution,
             tool_call_id=server_tool_id,
@@ -194,22 +197,6 @@ def _text_content(messages: Iterable[gm.ChatMessage]) -> str:
     )
 
 
-def _message_tool_id(
-    message: gm.ChatMessage,
-    response: gm.ChatCompletionResponse,
-    *,
-    fallback: str,
-) -> str:
-    response_tools_state_id = getattr(response, "tools_state_id", None)
-    return (
-        message.tools_state_id
-        or response_tools_state_id
-        or message.message_id
-        or response.message_id
-        or fallback
-    )
-
-
 def _client_tool_state_id(
     message: gm.ChatMessage,
     response: gm.ChatCompletionResponse,
@@ -231,6 +218,28 @@ def _content_blocks(
     tool_calls: list[ToolCall] = []
     invalid_tool_calls: list[InvalidToolCall] = []
     function_call_seen = False
+    next_server_tool_sequence = 0
+
+    def resolve_server_tool_id(
+        execution: Any,
+        *,
+        message: gm.ChatMessage | None = None,
+    ) -> str:
+        nonlocal next_server_tool_sequence
+        message_tools_state_id = (
+            message.tools_state_id if message is not None else None
+        )
+        resolved = server_tool_execution_id(
+            execution,
+            message_tools_state_id,
+            getattr(response, "tools_state_id", None),
+        )
+        if resolved is not None:
+            return resolved
+
+        local_id = f"lc_primary-server-tool-{next_server_tool_sequence}"
+        next_server_tool_sequence += 1
+        return local_id
 
     def append_function_call(
         function_call: gm.PrimaryChatFunctionCall,
@@ -278,12 +287,7 @@ def _content_blocks(
         message.tool_execution is not None for message in response.messages
     )
 
-    for message_index, message in enumerate(response.messages):
-        tool_call_id = _message_tool_id(
-            message,
-            response,
-            fallback=f"client_tool_{message_index}",
-        )
+    for message in response.messages:
         client_tool_state_id = _client_tool_state_id(message, response)
         part_function_calls = [
             part.function_call
@@ -321,11 +325,19 @@ def _content_blocks(
             )
 
         for part in message.content or []:
+            server_tool_id = (
+                resolve_server_tool_id(
+                    part.tool_execution,
+                    message=message,
+                )
+                if part.tool_execution is not None
+                else None
+            )
             blocks.extend(
                 _part_blocks(
                     part,
                     role=message.role,
-                    server_tool_id=tool_call_id,
+                    server_tool_id=server_tool_id,
                     message_inline_data=message.inline_data,
                 )
             )
@@ -334,9 +346,13 @@ def _content_blocks(
             has_message_tool_execution and message.tool_execution is not None
         )
         if emitted_message_tool_execution:
+            server_tool_id = resolve_server_tool_id(
+                message.tool_execution,
+                message=message,
+            )
             tool_blocks = convert_tool_execution(
                 message.tool_execution,
-                tool_call_id=tool_call_id,
+                tool_call_id=server_tool_id,
             )
             _attach_tool_context(
                 tool_blocks,
@@ -371,10 +387,13 @@ def _content_blocks(
         and not has_part_tool_execution
         and not has_message_tool_execution
     ):
+        server_tool_id = resolve_server_tool_id(
+            response.tool_execution,
+        )
         blocks.extend(
             convert_tool_execution(
                 response.tool_execution,
-                tool_call_id=response.message_id or "server_tool_response",
+                tool_call_id=server_tool_id,
             )
         )
 

@@ -27,6 +27,7 @@ _TERMINAL_TOOL_STATUSES = {
     "success",
 }
 _FAILED_TOOL_STATUSES = {"error", "failed", "failure"}
+_SERVER_TOOL_ID_FIELDS = ("call_id", "tool_call_id", "id")
 
 
 @dataclass(frozen=True)
@@ -209,6 +210,30 @@ def reasoning_content(
     return "".join(fragments) if fragments else None
 
 
+def server_tool_execution_id(
+    execution: Any,
+    *fallbacks: object,
+) -> str | None:
+    """Resolve a provider-managed tool identity with one stable precedence.
+
+    Execution-level provider extensions are authoritative. Callers may then
+    supply level-specific state or local fallback IDs in descending priority.
+    Empty values are ignored so malformed extension fields cannot mask a valid
+    lower-priority identity.
+    """
+    raw = provider_dict(execution)
+    for value in (
+        *(raw.get(field) for field in _SERVER_TOOL_ID_FIELDS),
+        *fallbacks,
+    ):
+        if value is None:
+            continue
+        resolved = str(value)
+        if resolved:
+            return resolved
+    return None
+
+
 def convert_tool_execution(
     execution: Any,
     *,
@@ -225,6 +250,10 @@ def convert_tool_execution(
         "response.tool.failed",
     }
     if terminal:
+        # The official SDK stream fixture reports status=success together with
+        # censored=true and a completion-level finish_reason=error. Censorship
+        # therefore remains provider execution metadata; it does not rewrite a
+        # technically successful execution into a failed server tool result.
         failed = status in _FAILED_TOOL_STATUSES or event_name == "response.tool.failed"
         block: dict[str, Any] = {
             "type": "server_tool_result",

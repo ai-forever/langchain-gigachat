@@ -33,6 +33,27 @@ def _primary_json_response(content: str = '{"value": 7}') -> gm.ChatCompletionRe
     )
 
 
+def _primary_server_tool_response() -> gm.ChatCompletionResponse:
+    return gm.ChatCompletionResponse.model_validate(
+        {
+            "model": MODEL,
+            "created_at": CREATED_AT,
+            "messages": [
+                {
+                    "role": "assistant",
+                    "tools_state_id": "state-1",
+                    "tool_execution": {
+                        "call_id": "execution-1",
+                        "name": "web_search",
+                        "status": "success",
+                    },
+                }
+            ],
+            "finish_reason": "stop",
+        }
+    )
+
+
 def _legacy_json_response() -> gm.ChatCompletion:
     return gm.ChatCompletion(
         choices=[
@@ -161,6 +182,42 @@ def test_primary_bind_tools_routes_provider_builtins(
         tool_name=tool_name,
     )
     sdk_client.chat.assert_not_called()
+
+
+def test_primary_invoke_preserves_execution_level_server_tool_identity(
+    sdk_client: MagicMock,
+) -> None:
+    sdk_client.chat.create.return_value = _primary_server_tool_response()
+
+    result = GigaChat(model=MODEL, use_api_v2=True).invoke("Hello")
+
+    server_result = next(
+        block
+        for block in result.content_blocks
+        if block["type"] == "server_tool_result"
+    )
+    assert server_result["tool_call_id"] == "execution-1"
+    assert result.additional_kwargs["tools_state_id"] == "state-1"
+    sdk_client.chat.create.assert_called_once()
+    sdk_client.chat.assert_not_called()
+
+
+async def test_primary_ainvoke_preserves_execution_level_server_tool_identity(
+    sdk_client: MagicMock,
+) -> None:
+    sdk_client.achat.create.return_value = _primary_server_tool_response()
+
+    result = await GigaChat(model=MODEL, use_api_v2=True).ainvoke("Hello")
+
+    server_result = next(
+        block
+        for block in result.content_blocks
+        if block["type"] == "server_tool_result"
+    )
+    assert server_result["tool_call_id"] == "execution-1"
+    assert result.additional_kwargs["tools_state_id"] == "state-1"
+    sdk_client.achat.create.assert_awaited_once()
+    sdk_client.chat.create.assert_not_called()
 
 
 def test_legacy_bind_tools_client_function_is_unchanged(

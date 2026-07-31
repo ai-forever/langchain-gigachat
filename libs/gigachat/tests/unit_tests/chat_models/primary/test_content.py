@@ -15,6 +15,7 @@ from langchain_gigachat.chat_models._contracts.primary.content import (
     json_fragment,
     parse_function_arguments,
     provider_dict,
+    server_tool_execution_id,
     unknown_provider_fields,
 )
 
@@ -221,6 +222,67 @@ def test_server_tool_conversion_supports_response_and_stream_blocks() -> None:
                     "output": {"items": []},
                 }
             },
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("execution", "fallbacks", "expected"),
+    [
+        (
+            {
+                "call_id": "call-id",
+                "tool_call_id": "tool-call-id",
+                "id": "id",
+            },
+            ("tools-state", "local-fallback"),
+            "call-id",
+        ),
+        (
+            {"tool_call_id": "tool-call-id", "id": "id"},
+            ("tools-state", "local-fallback"),
+            "tool-call-id",
+        ),
+        (
+            {"id": "id"},
+            ("tools-state", "local-fallback"),
+            "id",
+        ),
+        ({}, ("tools-state", "local-fallback"), "tools-state"),
+        ({"call_id": ""}, (None, "local-fallback"), "local-fallback"),
+        ({}, (), None),
+    ],
+)
+def test_server_tool_execution_identity_precedence(
+    execution: dict[str, object],
+    fallbacks: tuple[object, ...],
+    expected: str | None,
+) -> None:
+    before = execution.copy()
+
+    assert server_tool_execution_id(execution, *fallbacks) == expected
+    assert execution == before
+
+
+def test_censored_success_remains_success_with_explicit_provider_evidence() -> None:
+    """Match the pinned SDK fixture's status/censorship separation."""
+    execution = {
+        "name": "image_generate",
+        "status": "success",
+        "censored": True,
+    }
+
+    assert convert_tool_execution(
+        execution,
+        tool_call_id="image-call-1",
+        event_name="response.tool.completed",
+    ) == [
+        {
+            "type": "server_tool_result",
+            "id": "image-call-1:result",
+            "tool_call_id": "image-call-1",
+            "status": "success",
+            "extras": {"provider_tool_execution": execution},
         }
     ]
 
