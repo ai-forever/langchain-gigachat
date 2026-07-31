@@ -82,6 +82,16 @@ def _configure_json_responses(sdk_client: MagicMock) -> None:
     sdk_client.chat.create.return_value = _primary_json_response()
 
 
+def _assert_schema_less_response_format(payload: Any) -> None:
+    assert isinstance(payload, gm.ChatCompletionRequest)
+    assert payload.model_options is not None
+    response_format = payload.model_options.response_format
+    assert isinstance(response_format, gm.ChatResponseFormat)
+    assert response_format.model_dump(exclude_none=True, by_alias=True) == {
+        "type": "json_schema"
+    }
+
+
 def _primary_json_stream() -> Iterator[gm.PrimaryChatCompletionChunk]:
     for text in ('{"value": ', "7}"):
         yield gm.PrimaryChatCompletionChunk(
@@ -386,6 +396,227 @@ def test_json_schema_structured_output_executes_pydantic_parser(
     )
 
     assert result == OutputSchema(value=7)
+
+
+def test_primary_direct_schema_less_json_binding_uses_exact_wire_format(
+    sdk_client: MagicMock,
+) -> None:
+    sdk_client.chat.create.return_value = _primary_json_response()
+
+    result = (
+        GigaChat(model=MODEL, use_api_v2=True)
+        .bind(response_format={"type": "json_schema"})
+        .invoke("Return JSON")
+    )
+
+    assert result.additional_kwargs["parsed"] == {"value": 7}
+    _assert_schema_less_response_format(sdk_client.chat.create.call_args.args[0])
+    sdk_client.chat.assert_not_called()
+
+
+async def test_primary_direct_schema_less_json_binding_supports_ainvoke(
+    sdk_client: MagicMock,
+) -> None:
+    sdk_client.achat.create.return_value = _primary_json_response()
+
+    result = await (
+        GigaChat(model=MODEL, use_api_v2=True)
+        .bind(response_format={"type": "json_schema"})
+        .ainvoke("Return JSON")
+    )
+
+    assert result.additional_kwargs["parsed"] == {"value": 7}
+    _assert_schema_less_response_format(sdk_client.achat.create.call_args.args[0])
+
+
+def test_primary_schema_less_json_mode_returns_object(
+    sdk_client: MagicMock,
+) -> None:
+    sdk_client.chat.create.return_value = _primary_json_response()
+
+    result = (
+        GigaChat(model=MODEL, use_api_v2=True)
+        .with_structured_output(None, method="json_mode")
+        .invoke("Return JSON")
+    )
+
+    assert result == {"value": 7}
+    _assert_schema_less_response_format(sdk_client.chat.create.call_args.args[0])
+
+
+def test_schema_less_json_mode_respects_primary_route_override(
+    sdk_client: MagicMock,
+) -> None:
+    sdk_client.chat.create.return_value = _primary_json_response()
+
+    result = (
+        GigaChat(model=MODEL)
+        .with_structured_output(None, method="json_mode")
+        .bind(use_api_v2=True)
+        .invoke("Return JSON")
+    )
+
+    assert result == {"value": 7}
+    _assert_schema_less_response_format(sdk_client.chat.create.call_args.args[0])
+    sdk_client.chat.assert_not_called()
+
+
+@pytest.mark.parametrize("initial_use_api_v2", [False, True])
+def test_schema_less_json_mode_preserves_legacy_transport(
+    sdk_client: MagicMock,
+    initial_use_api_v2: bool,
+) -> None:
+    sdk_client.chat.return_value = _legacy_json_response()
+    runnable = (
+        GigaChat(model=MODEL, use_api_v2=initial_use_api_v2)
+        .with_structured_output(None, method="json_mode")
+        .bind(use_api_v2=False)
+    )
+
+    result = runnable.invoke("Return JSON")
+
+    assert result == {"value": 7}
+    payload = sdk_client.chat.call_args.args[0]
+    assert isinstance(payload, gm.Chat)
+    assert payload.response_format is None
+    sdk_client.chat.assert_called_once()
+    sdk_client.chat.create.assert_not_called()
+
+
+async def test_primary_schema_less_json_mode_supports_ainvoke(
+    sdk_client: MagicMock,
+) -> None:
+    sdk_client.achat.create.return_value = _primary_json_response()
+
+    result = await (
+        GigaChat(model=MODEL, use_api_v2=True)
+        .with_structured_output(None, method="json_mode")
+        .ainvoke("Return JSON")
+    )
+
+    assert result == {"value": 7}
+    _assert_schema_less_response_format(sdk_client.achat.create.call_args.args[0])
+
+
+def test_primary_schema_less_json_mode_supports_streamed_invoke(
+    sdk_client: MagicMock,
+) -> None:
+    sdk_client.chat.stream.side_effect = lambda payload: _primary_json_stream()
+
+    result = (
+        GigaChat(model=MODEL, use_api_v2=True, streaming=True)
+        .with_structured_output(None, method="json_mode")
+        .invoke("Return JSON")
+    )
+
+    assert result == {"value": 7}
+    _assert_schema_less_response_format(sdk_client.chat.stream.call_args.args[0])
+
+
+def test_primary_direct_schema_less_json_binding_supports_stream(
+    sdk_client: MagicMock,
+) -> None:
+    sdk_client.chat.stream.side_effect = lambda payload: _primary_json_stream()
+
+    chunks = list(
+        GigaChat(model=MODEL, use_api_v2=True)
+        .bind(response_format={"type": "json_schema"})
+        .stream("Return JSON")
+    )
+
+    assert chunks
+    assert chunks[-1].additional_kwargs["parsed"] == {"value": 7}
+    _assert_schema_less_response_format(sdk_client.chat.stream.call_args.args[0])
+
+
+async def test_primary_schema_less_json_mode_supports_streamed_ainvoke(
+    sdk_client: MagicMock,
+) -> None:
+    sdk_client.achat.stream.side_effect = lambda payload: _async_items(
+        _primary_json_stream()
+    )
+
+    result = await (
+        GigaChat(model=MODEL, use_api_v2=True, streaming=True)
+        .with_structured_output(None, method="json_mode")
+        .ainvoke("Return JSON")
+    )
+
+    assert result == {"value": 7}
+    _assert_schema_less_response_format(sdk_client.achat.stream.call_args.args[0])
+
+
+async def test_primary_direct_schema_less_json_binding_supports_astream(
+    sdk_client: MagicMock,
+) -> None:
+    sdk_client.achat.stream.side_effect = lambda payload: _async_items(
+        _primary_json_stream()
+    )
+
+    chunks = [
+        chunk
+        async for chunk in GigaChat(model=MODEL, use_api_v2=True)
+        .bind(response_format={"type": "json_schema"})
+        .astream("Return JSON")
+    ]
+
+    assert chunks
+    assert chunks[-1].additional_kwargs["parsed"] == {"value": 7}
+    _assert_schema_less_response_format(sdk_client.achat.stream.call_args.args[0])
+
+
+@pytest.mark.parametrize("content", ["not JSON", '[{"value": 7}]'])
+def test_primary_schema_less_json_mode_include_raw_preserves_invalid_object(
+    sdk_client: MagicMock,
+    content: str,
+) -> None:
+    sdk_client.chat.create.return_value = _primary_json_response(content)
+
+    result = (
+        GigaChat(model=MODEL, use_api_v2=True)
+        .with_structured_output(
+            None,
+            method="json_mode",
+            include_raw=True,
+        )
+        .invoke("Return JSON")
+    )
+
+    assert isinstance(result, dict)
+    assert isinstance(result["raw"], AIMessage)
+    assert result["raw"].text == content
+    assert result["parsed"] is None
+    assert isinstance(result["parsing_error"], OutputParserException)
+
+
+@pytest.mark.parametrize("content", ["not JSON", '[{"value": 7}]'])
+def test_primary_schema_less_json_mode_rejects_invalid_object_without_raw(
+    sdk_client: MagicMock,
+    content: str,
+) -> None:
+    sdk_client.chat.create.return_value = _primary_json_response(content)
+    runnable = GigaChat(
+        model=MODEL,
+        use_api_v2=True,
+    ).with_structured_output(None, method="json_mode")
+
+    with pytest.raises(OutputParserException):
+        runnable.invoke("Return JSON")
+
+
+def test_primary_schema_less_json_binding_leaves_tool_call_unparsed(
+    sdk_client: MagicMock,
+) -> None:
+    sdk_client.chat.create.return_value = build_function_call_response()
+
+    result = (
+        GigaChat(model=MODEL, use_api_v2=True)
+        .bind(response_format={"type": "json_schema"})
+        .invoke("Call the tool")
+    )
+
+    assert result.tool_calls
+    assert "parsed" not in result.additional_kwargs
 
 
 @pytest.mark.parametrize(

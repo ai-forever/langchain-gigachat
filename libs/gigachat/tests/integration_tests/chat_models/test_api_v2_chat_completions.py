@@ -272,6 +272,21 @@ def test_json_schema_structured_output(primary_llm: GigaChat) -> None:
     assert result == StructuredAnswer(status="PRIMARY_V2_JSON_SCHEMA_OK")
 
 
+def test_schema_less_json_mode(primary_llm: GigaChat) -> None:
+    result = primary_llm.with_structured_output(
+        None,
+        method="json_mode",
+    ).invoke(
+        "Return one JSON object with exactly two fields: "
+        '"status" set to "PRIMARY_V2_JSON_MODE_OK" and "confidence" set to 1.'
+    )
+
+    assert result == {
+        "status": "PRIMARY_V2_JSON_MODE_OK",
+        "confidence": 1,
+    }
+
+
 def test_client_function_two_turn_roundtrip(primary_llm: GigaChat) -> None:
     initial_prompt = HumanMessage(
         "Call LookupWeather for Moscow. After the tool result, reply exactly "

@@ -106,6 +106,10 @@ def normalize_response_format(
                     else {}
                 ),
             }
+        elif candidate.get("type") == "json_schema" and "json_schema" in candidate:
+            raise ValueError(
+                "Nested response_format 'json_schema' requires a 'schema' field."
+            )
         elif candidate.get("type") in _SDK_RESPONSE_FORMAT_TYPES:
             pass
         elif "type" not in candidate or _is_json_schema_type(candidate["type"]):
@@ -133,6 +137,10 @@ def normalize_response_format(
             "Use 'text', 'json_schema', or 'regex'; pass a raw JSON Schema "
             "mapping for schema-based output."
         )
+
+    for optional_field in ("schema", "strict", "regex"):
+        if candidate.get(optional_field, _MISSING) is None:
+            candidate.pop(optional_field)
 
     if strict is not None:
         if format_type != "json_schema":
@@ -172,9 +180,11 @@ def normalize_response_format(
             raise ValueError(
                 "response_format type 'json_schema' cannot include field: regex."
             )
-        if "schema" not in candidate or candidate["schema"] is None:
+        has_schema = "schema" in candidate
+        if not has_schema and "strict" in candidate:
             raise ValueError(
-                "response_format type 'json_schema' requires a 'schema' field."
+                "schema-less response_format type 'json_schema' cannot include "
+                "field: strict."
             )
         if "strict" in candidate and not isinstance(candidate["strict"], bool):
             raise ValueError(

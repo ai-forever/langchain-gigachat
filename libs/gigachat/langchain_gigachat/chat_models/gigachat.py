@@ -138,6 +138,7 @@ _PRIMARY_ONLY_KWARGS = frozenset(
         "user_info",
     }
 )
+_SCHEMA_LESS_JSON_MODE_KEY = "_schema_less_json_mode"
 
 
 def _extension_for_mime(mime: str) -> str:
@@ -713,6 +714,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         messages_dicts = [_convert_message_to_dict(m, cached_uploads) for m in messages]
         kwargs.pop("messages", None)
         kwargs.pop("use_api_v2", None)
+        kwargs.pop(_SCHEMA_LESS_JSON_MODE_KEY, None)
         strict = kwargs.pop("strict", None)
         response_format = kwargs.get("response_format")
         if response_format is not None or strict is not None:
@@ -815,6 +817,17 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
     ) -> gm.ChatCompletionRequest:
         invocation_kwargs = dict(kwargs)
         invocation_kwargs.pop("use_api_v2", None)
+        schema_less_json_mode = bool(
+            invocation_kwargs.pop(_SCHEMA_LESS_JSON_MODE_KEY, False)
+        )
+        if schema_less_json_mode:
+            response_format = invocation_kwargs.get("response_format")
+            if response_format is not None:
+                raise ValueError(
+                    "Schema-less json_mode cannot be combined with an explicit "
+                    "response_format."
+                )
+            invocation_kwargs["response_format"] = {"type": "json_schema"}
         tool_binding = primary.build_tool_binding(
             functions=invocation_kwargs.get("functions", ()),
             tools=invocation_kwargs.get("tools", ()),
@@ -1345,7 +1358,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
     @override
     def with_structured_output(
         self,
-        schema: Dict[str, Any] | type,
+        schema: Dict[str, Any] | type | None,
         *,
         include_raw: bool = False,
         **kwargs: Any,
@@ -1354,7 +1367,9 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
 
         Args:
             schema: Output schema. Can be a dict-like tool/schema description
-                or a Pydantic class.
+                or a Pydantic class. Pass ``None`` with ``method="json_mode"``
+                to request a native JSON object without a schema on the primary
+                API route.
             include_raw: If ``False``, return only parsed structured output.
                 If ``True``, return a dict with ``raw``, ``parsed``, and
                 ``parsing_error`` keys.
@@ -1363,8 +1378,8 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 - ``method``: ``"function_calling"`` (default),
                   ``"json_schema"`` (native API-level JSON Schema
                   constraint; requires a model that supports
-                  ``response_format``), ``"json_mode"`` (deprecated,
-                  still accepted for backward compatibility), or
+                  ``response_format``), ``"json_mode"`` (schema-less native
+                  JSON on the primary API route), or
                   ``"format_instructions"`` (legacy).
                 - ``strict``: best-effort strict schema adherence. Only
                   valid with ``method="json_schema"``. Defaults to ``True``.
@@ -1393,9 +1408,12 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 "'json_mode' or 'format_instructions'. "
                 f"Received: {method}"
             )
-        if method == "json_mode":
+        native_json_mode = method == "json_mode" and schema is None
+        if method == "json_mode" and schema is not None:
             warnings.warn(
-                "method='json_mode' is deprecated; use method='json_schema'.",
+                "Legacy method='json_mode' behavior is deprecated; use "
+                "method='json_schema', or use the primary API route with "
+                "schema=None for native schema-less JSON.",
                 DeprecationWarning,
                 stacklevel=2,
             )
@@ -1404,9 +1422,12 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             raise ValueError("`strict` is only supported with method='json_schema'.")
         if kwargs:
             raise ValueError(f"Received unsupported arguments {kwargs}")
+        if schema is None and method != "json_mode":
+            raise TypeError(f"method={method!r} requires a schema.")
         output_parser: OutputParserLike
         parser_runnable: Runnable[Any, Any]
         if method == "function_calling":
+            assert schema is not None
             func = convert_to_gigachat_tool(schema)["function"]
             key_name = func.get(
                 "name", func.get("title")
@@ -1437,6 +1458,8 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                     strict=strict if strict is not None else True,
                 )
                 llm = self.bind(response_format=response_format)
+            elif native_json_mode:
+                llm = self.bind(**{_SCHEMA_LESS_JSON_MODE_KEY: True})
             else:
                 llm = self
             if _is_pydantic_class(schema):
@@ -1444,6 +1467,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             else:
                 output_parser = JsonOutputParser()
             if method == "format_instructions":
+                assert schema is not None
                 format_instructions = _format_instructions_for_schema(schema)
 
                 def _inject_fi(
@@ -1452,11 +1476,15 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                     return _add_format_instructions(_input, format_instructions)
 
                 llm = RunnableLambda(_inject_fi) | llm
-            if method == "json_schema":
+            if method == "json_schema" or native_json_mode:
                 parser_runnable = (
                     RunnableLambda(_require_successful_structured_finish)
                     | output_parser
                 )
+                if native_json_mode:
+                    parser_runnable = parser_runnable | RunnableLambda(
+                        _require_json_object
+                    )
             else:
                 parser_runnable = output_parser
 
@@ -1561,11 +1589,7 @@ def _parse_response_format_text(
         return False, None
 
     normalized = primary.normalize_response_format(response_format)
-    if (
-        normalized is None
-        or normalized.type != "json_schema"
-        or not isinstance(normalized.schema_, dict)
-    ):
+    if normalized is None or normalized.type != "json_schema":
         return False, None
     if finish_reason != "stop":
         return False, None
@@ -1576,7 +1600,10 @@ def _parse_response_format_text(
     try:
         if _is_pydantic_class(response_format):
             return True, response_format.model_validate_json(text)
-        return True, json.loads(text)
+        value = json.loads(text)
+        if normalized.schema_ is None and not isinstance(value, dict):
+            return False, None
+        return True, value
     except Exception:
         return False, None
 
@@ -1722,6 +1749,17 @@ def _require_successful_structured_finish(message: BaseMessage) -> BaseMessage:
             llm_output=message.text,
         )
     return message
+
+
+def _require_json_object(value: Any) -> dict[str, Any]:
+    """Require the object shape promised by schema-less ``json_mode``."""
+    if not isinstance(value, dict):
+        raise OutputParserException(
+            "GigaChat schema-less JSON mode returned valid JSON, but not a JSON "
+            "object.",
+            llm_output=json.dumps(value, ensure_ascii=False),
+        )
+    return value
 
 
 def _format_instructions_for_schema(schema: Dict[str, Any] | type) -> str:

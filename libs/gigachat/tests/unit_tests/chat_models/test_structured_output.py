@@ -144,6 +144,38 @@ def test_structured_output_json_mode_dict(llm: GigaChat) -> None:
     assert chain is not None
 
 
+def test_primary_structured_output_json_mode_without_schema() -> None:
+    llm = GigaChat(use_api_v2=True)
+
+    chain = llm.with_structured_output(None, method="json_mode")
+
+    assert isinstance(chain, RunnableSequence)
+    bound = chain.steps[0]
+    assert isinstance(bound, RunnableBinding)
+    assert bound.kwargs["_schema_less_json_mode"] is True
+
+
+def test_primary_structured_output_json_mode_rejects_strict() -> None:
+    llm = GigaChat(use_api_v2=True)
+
+    with pytest.raises(
+        ValueError,
+        match="`strict` is only supported with method='json_schema'",
+    ):
+        llm.with_structured_output(None, method="json_mode", strict=False)
+
+
+def test_schema_less_json_mode_defers_route_selection_until_invocation(
+    llm: GigaChat,
+) -> None:
+    chain = llm.with_structured_output(None, method="json_mode")
+
+    assert isinstance(chain, RunnableSequence)
+    bound = chain.steps[0]
+    assert isinstance(bound, RunnableBinding)
+    assert bound.kwargs["_schema_less_json_mode"] is True
+
+
 # ---------------------------------------------------------------------------
 # with_structured_output — format_instructions (prompt-based legacy)
 # ---------------------------------------------------------------------------

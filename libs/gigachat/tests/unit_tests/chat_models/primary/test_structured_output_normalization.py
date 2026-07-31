@@ -62,6 +62,39 @@ def test_normalizes_mapping_without_mutation() -> None:
     assert normalized.model_dump(exclude_none=True, by_alias=True) == original
 
 
+def test_accepts_schema_less_json_without_mutating_input() -> None:
+    response_format = {"type": "json_schema"}
+    original = copy.deepcopy(response_format)
+
+    normalized = primary.normalize_response_format(response_format)
+
+    assert response_format == original
+    assert normalized is not None
+    assert normalized.model_dump(exclude_none=True, by_alias=True) == {
+        "type": "json_schema"
+    }
+
+
+def test_explicit_none_schema_normalizes_to_schema_less_json() -> None:
+    response_format = {"type": "json_schema", "schema": None, "strict": None}
+
+    normalized = primary.normalize_response_format(response_format)
+
+    assert normalized is not None
+    assert normalized.model_dump(exclude_none=True, by_alias=True) == {
+        "type": "json_schema"
+    }
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_rejects_strict_without_schema(strict: bool) -> None:
+    with pytest.raises(
+        ValueError,
+        match="schema-less response_format.*cannot include field: strict",
+    ):
+        primary.normalize_response_format({"type": "json_schema", "strict": strict})
+
+
 def test_unwraps_openai_nested_json_schema_format() -> None:
     normalized = primary.normalize_response_format(
         {
@@ -79,6 +112,26 @@ def test_unwraps_openai_nested_json_schema_format() -> None:
         schema=Answer.model_json_schema(),
         strict=True,
     )
+
+
+@pytest.mark.parametrize(
+    "nested",
+    [
+        {},
+        {"strict": False},
+        {"strict": True},
+    ],
+)
+def test_rejects_nested_json_schema_without_schema(
+    nested: dict[str, Any],
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match="Nested response_format 'json_schema' requires a 'schema' field",
+    ):
+        primary.normalize_response_format(
+            {"type": "json_schema", "json_schema": nested}
+        )
 
 
 @pytest.mark.parametrize(
@@ -221,10 +274,6 @@ def test_regex_response_format_requires_regex() -> None:
                 "regex": "value",
             },
             "type 'json_schema' cannot include field: regex",
-        ),
-        (
-            {"type": "json_schema", "schema": None},
-            "type 'json_schema' requires a 'schema' field",
         ),
         (
             {
