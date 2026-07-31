@@ -138,7 +138,8 @@ def test_consumer_close_closes_provider_without_synthetic_terminal(
     )
 
     first = next(stream)
-    stream.close()
+    close = getattr(stream, "close")
+    close()
 
     assert first.text == "partial"
     assert provider.closed is True
@@ -235,7 +236,7 @@ async def test_async_consumer_cancellation_closes_provider(
     stream = GigaChat(model=MODEL, use_api_v2=use_api_v2)._astream(
         [HumanMessage("Hello")]
     )
-    pending = asyncio.create_task(anext(stream))
+    pending: asyncio.Future[Any] = asyncio.ensure_future(anext(stream))
     await provider.started.wait()
 
     pending.cancel()
