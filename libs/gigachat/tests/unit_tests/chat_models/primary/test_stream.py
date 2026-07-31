@@ -714,6 +714,7 @@ def test_web_search_inline_data_updates_server_tool_result() -> None:
         _convert(
             {
                 "event": "response.tool.completed",
+                "tools_state_id": "web-search-state-1",
                 "messages": [
                     {
                         "role": "assistant",

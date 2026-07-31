@@ -506,7 +506,10 @@ def test_event_diagnostics_aggregate_as_ordered_lists() -> None:
         _convert(
             {
                 "event": f"response.future.{step}",
-                "tool_execution": {"status": step},
+                "tool_execution": {
+                    "call_id": "provider-tool-1",
+                    "status": step,
+                },
                 "future_field": {"step": step},
             },
             state,
@@ -516,8 +519,8 @@ def test_event_diagnostics_aggregate_as_ordered_lists() -> None:
 
     metadata = (chunks[0] + chunks[1]).message.response_metadata
     assert metadata["tool_execution_events"] == [
-        {"status": "started"},
-        {"status": "completed"},
+        {"call_id": "provider-tool-1", "status": "started"},
+        {"call_id": "provider-tool-1", "status": "completed"},
     ]
     assert metadata["provider_field_events"] == [
         {"future_field": {"step": "started"}},

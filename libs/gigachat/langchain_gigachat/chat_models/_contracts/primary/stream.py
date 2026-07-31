@@ -316,6 +316,66 @@ def _client_tool_identity_update(
     }
 
 
+def _server_tool_call_id(
+    execution: Mapping[str, Any],
+    *,
+    incoming_tools_state_id: str | None,
+    terminal: bool,
+    state: StreamState,
+) -> tuple[str, str | None]:
+    provider_id_value = (
+        execution.get("call_id")
+        or execution.get("tool_call_id")
+        or execution.get("id")
+        or incoming_tools_state_id
+        or state.tools_state_id
+    )
+    provider_id = str(provider_id_value) if provider_id_value is not None else None
+    active_call_id = state.active_server_tool_call_id
+
+    if provider_id is not None:
+        call_id = state.server_tool_call_ids_by_provider.get(provider_id)
+        if call_id is None:
+            if active_call_id is not None:
+                active_provider_id = state.server_tool_provider_ids.get(active_call_id)
+                if active_provider_id is not None and active_provider_id != provider_id:
+                    raise ValueError(
+                        "Primary server tool identity changed while a tool "
+                        "lifecycle was active"
+                    )
+                call_id = active_call_id
+            else:
+                call_id = provider_id
+            state.server_tool_call_ids_by_provider[provider_id] = call_id
+            state.server_tool_provider_ids[call_id] = provider_id
+    elif active_call_id is not None:
+        call_id = active_call_id
+    elif terminal:
+        raise ValueError(
+            "Primary server tool completed without provider identity; "
+            "the result cannot be reconciled."
+        )
+    else:
+        call_id = f"lc_primary-server-tool-{state.next_server_tool_sequence}"
+        state.next_server_tool_sequence += 1
+
+    if terminal:
+        if call_id.startswith("lc_") and call_id not in state.server_tool_provider_ids:
+            raise ValueError(
+                "Primary server tool completed without provider identity; "
+                "the result cannot be reconciled."
+            )
+        state.active_server_tool_call_id = None
+    elif active_call_id is None:
+        state.active_server_tool_call_id = call_id
+    elif active_call_id != call_id:
+        raise ValueError(
+            "Primary streaming does not support overlapping server tool lifecycles"
+        )
+
+    return call_id, provider_id
+
+
 def _tool_execution_block(
     execution_value: Any,
     *,
@@ -324,22 +384,6 @@ def _tool_execution_block(
     state: StreamState,
 ) -> dict[str, Any]:
     execution = _as_dict(execution_value)
-    call_id_value = (
-        execution.get("call_id")
-        or execution.get("tool_call_id")
-        or execution.get("id")
-        or incoming_tools_state_id
-        or state.tools_state_id
-    )
-    call_id = (
-        str(call_id_value)
-        if call_id_value is not None
-        else (
-            f"{state.message_id}:server-tool"
-            if state.message_id is not None
-            else f"server-tool-{uuid4()}"
-        )
-    )
 
     status = str(execution.get("status") or "").lower()
     failed = event_name == "response.tool.failed" or status in {
@@ -359,6 +403,12 @@ def _tool_execution_block(
         "failure",
         "success",
     }
+    call_id, provider_id = _server_tool_call_id(
+        execution,
+        incoming_tools_state_id=incoming_tools_state_id,
+        terminal=terminal,
+        state=state,
+    )
     incoming_name_value = execution.get("name")
     incoming_name = (
         str(incoming_name_value) if incoming_name_value is not None else None
@@ -408,6 +458,11 @@ def _tool_execution_block(
         index=index,
         streaming=True,
     )[0]
+    if provider_id is not None and provider_id != call_id:
+        block_extras = block.setdefault("extras", {})
+        block_extras["provider_server_tool_state_by_call_id"] = {
+            call_id: provider_id,
+        }
     if terminal:
         state.pending_server_tool_result_id = None if failed else call_id
         return block
