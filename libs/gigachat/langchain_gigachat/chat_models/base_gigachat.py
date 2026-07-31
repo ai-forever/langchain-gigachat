@@ -51,6 +51,7 @@ class _BaseGigaChat(_GigaChatClientMixin):
     def _identifying_params(self) -> Dict[str, Any]:
         """Get the identifying parameters."""
         return {
+            "base_url": self.base_url,
             "use_api_v2": self.use_api_v2,
             "temperature": self.temperature,
             "model": self.model,

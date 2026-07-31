@@ -193,6 +193,7 @@ async def test_adelete_file(async_sdk_mock: MagicMock) -> None:
 def test_identifying_params() -> None:
     llm = GigaChat(
         temperature=0.5,
+        base_url="https://api.example.test",
         model="GigaChat-Pro",
         max_tokens=100,
         flags=["feature-a"],
@@ -205,6 +206,7 @@ def test_identifying_params() -> None:
         profile={"structured_output": True},
     )
     params = llm._identifying_params
+    assert params["base_url"] == "https://api.example.test"
     assert params["temperature"] == 0.5
     assert params["model"] == "GigaChat-Pro"
     assert params["max_tokens"] == 100
@@ -233,6 +235,13 @@ def test_request_affecting_models_have_distinct_identifying_params() -> None:
         baseline
         != GigaChat(
             model="GigaChat-Pro", auto_upload_attachments=True
+        )._identifying_params
+    )
+    assert (
+        baseline
+        != GigaChat(
+            model="GigaChat-Pro",
+            base_url="https://alternate.example.test",
         )._identifying_params
     )
 
