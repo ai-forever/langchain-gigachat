@@ -2,6 +2,20 @@
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- Schema-less native JSON output through
+  `with_structured_output(None, method="json_mode")`. Requests send
+  `response_format={"type": "json_schema"}` without `schema` or `strict` to
+  `v1/chat/completions`.
+
+### Dependencies
+
+- Pinned the `gigachat` SDK to `0.2.3a1` for schema-less response format
+  passthrough.
+
 ## [0.5.1] — 2026-05-04
 
 ### Added

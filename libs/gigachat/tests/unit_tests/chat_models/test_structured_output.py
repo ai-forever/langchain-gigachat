@@ -4,6 +4,7 @@ from typing import Any, Dict
 
 import gigachat.models as gm
 import pytest
+from langchain_core.messages import HumanMessage
 from langchain_core.prompt_values import ChatPromptValue, StringPromptValue
 from langchain_core.runnables import RunnableBinding, RunnableSequence
 from pydantic import BaseModel, Field
@@ -142,6 +143,47 @@ def test_structured_output_json_mode_dict(llm: GigaChat) -> None:
     with pytest.warns(DeprecationWarning, match="json_mode.*deprecated"):
         chain = llm.with_structured_output(schema, method="json_mode")
     assert chain is not None
+
+
+def test_structured_output_json_mode_without_schema_uses_exact_wire_format(
+    llm: GigaChat,
+) -> None:
+    chain = llm.with_structured_output(None, method="json_mode")
+
+    assert isinstance(chain, RunnableSequence)
+    bound = chain.steps[0]
+    assert isinstance(bound, RunnableBinding)
+    assert bound.kwargs["response_format"] == {"type": "json_schema"}
+
+    payload = llm._build_payload(
+        [HumanMessage(content="Return JSON")],
+        response_format=bound.kwargs["response_format"],
+    )
+    assert payload.model_dump(exclude_none=True, by_alias=True)["response_format"] == {
+        "type": "json_schema"
+    }
+
+
+def test_structured_output_json_mode_without_schema_rejects_strict(
+    llm: GigaChat,
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match="`strict` is only supported with method='json_schema'",
+    ):
+        llm.with_structured_output(None, method="json_mode", strict=False)
+
+
+@pytest.mark.parametrize(
+    "method",
+    ["function_calling", "json_schema", "format_instructions"],
+)
+def test_structured_output_none_requires_json_mode(
+    llm: GigaChat,
+    method: str,
+) -> None:
+    with pytest.raises(TypeError, match=rf"method='{method}' requires a schema"):
+        llm.with_structured_output(None, method=method)
 
 
 # ---------------------------------------------------------------------------
