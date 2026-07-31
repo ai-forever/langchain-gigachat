@@ -7,6 +7,7 @@ from operator import add
 from typing import Any, cast
 
 import pytest
+from langchain_core.language_models.chat_models import generate_from_stream
 from langchain_core.messages import AIMessage, AIMessageChunk
 from langchain_core.outputs import ChatGenerationChunk
 
@@ -212,6 +213,136 @@ def test_only_message_done_is_completion_terminal() -> None:
 
     assert _message(tool_failed).chunk_position is None
     assert _message(done).chunk_position == "last"
+
+
+def test_non_authoritative_finish_reasons_are_ordered_diagnostics() -> None:
+    state = primary.StreamState()
+    chunks = [
+        _convert(
+            {
+                "event": "response.tool.failed",
+                "finish_reason": "tool_error",
+            },
+            state,
+        ),
+        _convert(
+            {
+                "event": "response.message.delta",
+                "finish_reason": "provisional",
+            },
+            state,
+        ),
+        _convert(
+            {
+                "event": "response.message.done",
+                "finish_reason": "stop",
+            },
+            state,
+        ),
+    ]
+
+    aggregate = reduce(add, chunks)
+
+    assert chunks[0].generation_info is None
+    assert chunks[1].generation_info is None
+    assert aggregate.generation_info == {"finish_reason": "stop"}
+    assert aggregate.message.response_metadata["finish_reason"] == "stop"
+    assert aggregate.message.response_metadata["finish_reason_events"] == [
+        {
+            "event": "response.tool.failed",
+            "finish_reason": "tool_error",
+        },
+        {
+            "event": "response.message.delta",
+            "finish_reason": "provisional",
+        },
+    ]
+
+
+def test_tool_completed_reason_does_not_corrupt_final_finish_reason() -> None:
+    state = primary.StreamState()
+    tool_completed = _convert(
+        {
+            "event": "response.tool.completed",
+            "finish_reason": "tool_complete",
+        },
+        state,
+    )
+    done = _convert(
+        {
+            "event": "response.message.done",
+            "finish_reason": "stop",
+        },
+        state,
+    )
+
+    aggregate = tool_completed + done
+
+    assert aggregate.generation_info == {"finish_reason": "stop"}
+    assert aggregate.message.response_metadata["finish_reason"] == "stop"
+    assert aggregate.message.response_metadata["finish_reason_events"] == [
+        {
+            "event": "response.tool.completed",
+            "finish_reason": "tool_complete",
+        }
+    ]
+
+
+def test_repeated_done_reason_is_diagnostic_after_authoritative_done() -> None:
+    state = primary.StreamState()
+    done = _convert(
+        {
+            "event": "response.message.done",
+            "finish_reason": "stop",
+        },
+        state,
+    )
+    continuation = _convert(
+        {
+            "event": "response.message.done",
+            "finish_reason": "stop",
+            "future_field": {"trace": "trace-1"},
+        },
+        state,
+    )
+
+    aggregate = done + continuation
+
+    assert continuation.generation_info is None
+    assert aggregate.generation_info == {"finish_reason": "stop"}
+    assert aggregate.message.response_metadata["finish_reason"] == "stop"
+    assert aggregate.message.response_metadata["finish_reason_events"] == [
+        {
+            "event": "response.message.done",
+            "finish_reason": "stop",
+        }
+    ]
+
+
+def test_generate_from_stream_keeps_authoritative_finish_reason() -> None:
+    state = primary.StreamState()
+    chunks = [
+        _convert(
+            {
+                "event": "response.tool.failed",
+                "finish_reason": "tool_error",
+            },
+            state,
+        ),
+        _convert(
+            {
+                "event": "response.message.done",
+                "finish_reason": "stop",
+            },
+            state,
+        ),
+    ]
+
+    result = generate_from_stream(iter(chunks))
+    generation = result.generations[0]
+
+    assert generation.generation_info == {"finish_reason": "stop"}
+    assert generation.message.response_metadata["finish_reason"] == "stop"
 
 
 def test_identical_message_done_is_deduplicated() -> None:

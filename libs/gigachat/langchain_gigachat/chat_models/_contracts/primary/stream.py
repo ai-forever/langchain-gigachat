@@ -751,14 +751,24 @@ def _response_metadata(
     *,
     event_name: str | None,
     observed_metadata: Mapping[str, Any],
+    completion_authoritative: bool,
 ) -> dict[str, Any]:
     metadata: dict[str, Any] = {"output_version": "v1"}
     if event_name is not None:
         metadata["events"] = [event_name]
     metadata.update(observed_metadata)
 
-    if event.get("finish_reason") is not None:
-        metadata["finish_reason"] = event["finish_reason"]
+    finish_reason = event.get("finish_reason")
+    if finish_reason is not None:
+        if completion_authoritative:
+            metadata["finish_reason"] = finish_reason
+        else:
+            metadata["finish_reason_events"] = [
+                {
+                    "event": event_name,
+                    "finish_reason": finish_reason,
+                }
+            ]
     for source_field, event_field in (
         ("additional_data", "additional_data_events"),
         ("logprobs", "logprob_events"),
@@ -831,6 +841,9 @@ def convert_stream_event(
     top_level_tool_execution = event_data.get("tool_execution")
     completion_event = state.completion_event
     terminal_continuation = completion_event is not None
+    completion_authoritative = (
+        event_name == "response.message.done" and completion_event is None
+    )
     if completion_event is not None:
         if event_name == "response.message.done":
             if event_data == completion_event:
@@ -934,11 +947,12 @@ def convert_stream_event(
         event_data,
         event_name=event_name,
         observed_metadata=observed_metadata,
+        completion_authoritative=completion_authoritative,
     )
 
     usage_metadata = _usage_update(state, event_data.get("usage"))
     generation_info = None
-    if event_data.get("finish_reason") is not None:
+    if completion_authoritative and event_data.get("finish_reason") is not None:
         generation_info = {"finish_reason": event_data["finish_reason"]}
 
     has_payload = bool(

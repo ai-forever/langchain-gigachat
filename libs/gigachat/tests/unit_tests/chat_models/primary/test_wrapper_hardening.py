@@ -90,8 +90,14 @@ def test_tool_terminal_does_not_replace_authoritative_message_done(
     chunks = list(llm._stream([HumanMessage("Hello")]))
 
     assert len(chunks) == 2
-    assert chunks[0].generation_info == {"finish_reason": "tool_error"}
+    assert chunks[0].generation_info is None
     assert _message(chunks[0]).chunk_position is None
+    assert chunks[0].message.response_metadata["finish_reason_events"] == [
+        {
+            "event": "response.tool.failed",
+            "finish_reason": "tool_error",
+        }
+    ]
     assert chunks[0].message.response_metadata["provider_field_events"] == [
         {"error": {"message": "tool failed"}}
     ]
