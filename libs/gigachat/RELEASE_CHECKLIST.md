@@ -20,7 +20,7 @@ short summaries in README, MIGRATION, and CHANGELOG in the same commit.
 | Python 3.10–3.14 local CI equivalent | PASS — 761 passed, 5 skipped on every version; 94.07% coverage (94.06% on 3.14) |
 | Hosted Agent contract equivalent | PASS — `langchain==1.3.14`, 5 passed |
 | Minimum/latest Core matrix | PASS — Core `1.2.0` and `1.5.3`; 761 passed, 5 skipped, 94.07% each |
-| Hosted CI for this candidate | PENDING — the local candidate has not been pushed |
+| Hosted CI for this candidate | PASS — [run 30626480576](https://github.com/ai-forever/langchain-gigachat/actions/runs/30626480576) passed on `7e4dabfca308c317fa29ef2e88a1314f3d5ce769` |
 | Wheel build and clean install | PASS |
 | sdist build and clean install | PASS |
 | Live provider matrix | BLOCKED — credentials and provider state fixtures were unavailable |
