@@ -442,8 +442,8 @@ def _server_tool_repeat_call_id(
         previous = state.server_tool_terminal_payloads[call_id]
         if previous != payload:
             raise ValueError(
-                f"Conflicting repeated terminal payload for primary server tool "
-                f"{call_id!r}."
+                "Conflicting repeated terminal payload or shared provider state "
+                f"for primary server tool {call_id!r}."
             )
         return call_id
 
@@ -469,39 +469,75 @@ def _server_tool_call_id(
     terminal: bool,
     state: StreamState,
 ) -> tuple[str, str | None]:
-    provider_id_value = (
-        execution.get("call_id")
-        or execution.get("tool_call_id")
-        or execution.get("id")
-        or incoming_tools_state_id
+    execution_id_value = (
+        execution.get("call_id") or execution.get("tool_call_id") or execution.get("id")
     )
-    provider_id = str(provider_id_value) if provider_id_value is not None else None
+    execution_id = str(execution_id_value) if execution_id_value is not None else None
     active_call_id = state.active_server_tool_call_id
 
-    if provider_id is not None:
-        call_id = state.server_tool_call_ids_by_provider.get(provider_id)
+    if execution_id is not None:
+        call_id = state.server_tool_call_ids_by_provider.get(execution_id)
         if call_id is None:
             if active_call_id is not None:
-                active_provider_id = state.server_tool_provider_ids.get(active_call_id)
-                if active_provider_id is not None and active_provider_id != provider_id:
+                active_state_id = state.server_tool_provider_ids.get(active_call_id)
+                active_execution_ids = {
+                    provider_id
+                    for provider_id, known_call_id in (
+                        state.server_tool_call_ids_by_provider.items()
+                    )
+                    if known_call_id == active_call_id
+                    and provider_id != active_state_id
+                }
+                if active_execution_ids and execution_id not in active_execution_ids:
                     raise ValueError(
                         "Primary server tool identity changed while a tool "
                         "lifecycle was active"
                     )
                 call_id = active_call_id
             else:
-                call_id = provider_id
-            state.server_tool_call_ids_by_provider[provider_id] = call_id
-            state.server_tool_provider_ids[call_id] = provider_id
+                call_id = execution_id
+            state.server_tool_call_ids_by_provider[execution_id] = call_id
+    elif incoming_tools_state_id is not None:
+        call_id = state.server_tool_call_ids_by_provider.get(incoming_tools_state_id)
+        if call_id is None:
+            if active_call_id is not None:
+                call_id = active_call_id
+            else:
+                call_id = f"lc_primary-server-tool-{state.next_server_tool_sequence}"
+                state.next_server_tool_sequence += 1
     elif active_call_id is not None:
         call_id = active_call_id
     else:
         call_id = f"lc_primary-server-tool-{state.next_server_tool_sequence}"
         state.next_server_tool_sequence += 1
 
+    if incoming_tools_state_id is not None:
+        mapped_call_id = state.server_tool_call_ids_by_provider.get(
+            incoming_tools_state_id
+        )
+        if mapped_call_id is not None and mapped_call_id != call_id:
+            raise ValueError(
+                "Primary server tool state maps to conflicting tool lifecycles"
+            )
+        previous_state_id = state.server_tool_provider_ids.get(call_id)
+        if (
+            previous_state_id is not None
+            and previous_state_id != incoming_tools_state_id
+        ):
+            raise ValueError(
+                "Primary server tool lifecycle received conflicting tools_state_id "
+                "values"
+            )
+        state.server_tool_call_ids_by_provider[incoming_tools_state_id] = call_id
+        state.server_tool_provider_ids[call_id] = incoming_tools_state_id
+
     if terminal:
         state.active_server_tool_call_id = None
-        if call_id not in state.server_tool_provider_ids:
+        if (
+            execution_id is None
+            and call_id not in state.server_tool_provider_ids
+            and call_id not in state.unresolved_server_tool_call_ids
+        ):
             state.unresolved_server_tool_call_ids.append(call_id)
     elif active_call_id is None:
         state.active_server_tool_call_id = call_id
@@ -510,7 +546,7 @@ def _server_tool_call_id(
             "Primary streaming does not support overlapping server tool lifecycles"
         )
 
-    return call_id, provider_id
+    return call_id, incoming_tools_state_id
 
 
 def _server_tool_identity_update(
@@ -553,6 +589,11 @@ def _server_tool_identity_update(
                 "Primary repeated server tool execution matches multiple unresolved "
                 "tool lifecycles; correlation is ambiguous."
             )
+        if not matches and event_name == "response.message.done":
+            raise ValueError(
+                "Primary response.message.done repeated a conflicting server tool "
+                "execution for an unresolved lifecycle."
+            )
         if not matches:
             return {}
         unresolved = matches
@@ -566,11 +607,7 @@ def _server_tool_identity_update(
     state.server_tool_call_ids_by_provider[incoming_tools_state_id] = call_id
     state.server_tool_provider_ids[call_id] = incoming_tools_state_id
     state.unresolved_server_tool_call_ids.remove(call_id)
-    return {
-        "provider_server_tool_state_by_call_id": {
-            call_id: incoming_tools_state_id,
-        }
-    }
+    return {}
 
 
 def _tool_execution_block(
@@ -661,7 +698,11 @@ def _tool_execution_block(
         index=index,
         streaming=True,
     )[0]
-    if provider_id is not None and provider_id != call_id:
+    has_execution_id = any(
+        execution.get(identity_field) is not None
+        for identity_field in ("call_id", "tool_call_id", "id")
+    )
+    if not has_execution_id and provider_id is not None and provider_id != call_id:
         block_extras = block.setdefault("extras", {})
         block_extras["provider_server_tool_state_by_call_id"] = {
             call_id: provider_id,
@@ -851,15 +892,11 @@ def _convert_messages(
     if function_call_message_count > 1:
         raise ValueError(_MULTIPLE_CLIENT_TOOL_CALLS)
 
-    # The SDK can mirror one execution across levels; prefer the deepest source.
-    has_part_tool_execution = any(
+    has_nested_tool_execution = any(
         part.get("tool_execution") is not None
         for parts in message_parts
         for part in parts
-    )
-    has_message_tool_execution = not has_part_tool_execution and any(
-        message.get("tool_execution") is not None for message in messages
-    )
+    ) or any(message.get("tool_execution") is not None for message in messages)
 
     for message, parts in zip(messages, message_parts):
         role = str(message.get("role") or "assistant")
@@ -925,7 +962,7 @@ def _convert_messages(
                     state=state,
                 )
             )
-        if has_message_tool_execution and message.get("tool_execution") is not None:
+        if message.get("tool_execution") is not None:
             _close_text_block(state)
             block = _tool_execution_block(
                 message["tool_execution"],
@@ -981,7 +1018,7 @@ def _convert_messages(
     return (
         content,
         tool_calls,
-        has_part_tool_execution or has_message_tool_execution,
+        has_nested_tool_execution,
     )
 
 
@@ -1020,6 +1057,7 @@ def _tool_state_owner(
     incoming_tools_state_id: str | None,
     contains_client_function_call: bool,
     contains_server_tool_execution: bool,
+    server_execution_requires_state: bool,
 ) -> _ToolStateOwner | None:
     if incoming_tools_state_id is None:
         return None
@@ -1039,12 +1077,25 @@ def _tool_state_owner(
         )
     )
 
-    client_plausible = (
-        known_client_owner or contains_client_function_call or unresolved_client_owner
-    )
-    server_plausible = (
-        known_server_owner or contains_server_tool_execution or unresolved_server_owner
-    )
+    if contains_client_function_call:
+        if known_server_owner or (
+            contains_server_tool_execution and server_execution_requires_state
+        ):
+            raise ValueError(_AMBIGUOUS_TOOL_STATE_OWNER)
+        return "client"
+    if contains_server_tool_execution:
+        if known_client_owner:
+            raise ValueError(_AMBIGUOUS_TOOL_STATE_OWNER)
+        return "server"
+    if known_client_owner and known_server_owner:
+        raise ValueError(_AMBIGUOUS_TOOL_STATE_OWNER)
+    if known_client_owner:
+        return "client"
+    if known_server_owner:
+        return "server"
+
+    client_plausible = unresolved_client_owner
+    server_plausible = unresolved_server_owner
     if client_plausible and server_plausible:
         raise ValueError(_AMBIGUOUS_TOOL_STATE_OWNER)
     if client_plausible:
@@ -1128,10 +1179,7 @@ def _observe_tools_state_id(
         state.provider_tools_state_ids.append(value)
     _refresh_replay_tools_state_id(state)
 
-    if "tools_state_id" not in state.emitted_metadata_fields:
-        state.emitted_metadata_fields.add("tools_state_id")
-        return {"tools_state_id": value}
-    if is_new_observation:
+    if is_new_observation and len(state.provider_tools_state_ids) > 1:
         return {"tools_state_id_events": [value]}
     return {}
 
@@ -1392,6 +1440,13 @@ def convert_stream_event(
         incoming_tools_state_id=provider_tools_state_id,
         contains_client_function_call=has_client_function_call,
         contains_server_tool_execution=has_server_tool_execution,
+        server_execution_requires_state=any(
+            not any(
+                execution.get(identity_field) is not None
+                for identity_field in ("call_id", "tool_call_id", "id")
+            )
+            for execution in tool_executions
+        ),
     )
     _claim_unassigned_client_state(
         state,
@@ -1429,7 +1484,7 @@ def convert_stream_event(
     elif state.message_id is None:
         state.message_id = f"lc_primary-stream-{uuid4()}"
 
-    content, tool_calls, has_nested_tool_execution = _convert_messages(
+    content, tool_calls, _ = _convert_messages(
         normalized_messages,
         event_name=event_name,
         incoming_tools_state_id=provider_tools_state_id,
@@ -1437,7 +1492,7 @@ def convert_stream_event(
         state=state,
     )
 
-    if top_level_tool_execution is not None and not has_nested_tool_execution:
+    if top_level_tool_execution is not None:
         _close_text_block(state)
         block = _tool_execution_block(
             top_level_tool_execution,
@@ -1476,6 +1531,15 @@ def convert_stream_event(
         observed_metadata=observed_metadata,
         finish_reason_authoritative=finish_reason_authoritative,
     )
+    if (
+        event_name == "response.message.done"
+        and state.provider_tools_state_ids
+        and "final_tools_state" not in state.emitted_metadata_fields
+    ):
+        state.emitted_metadata_fields.add("final_tools_state")
+        response_metadata["tools_state_ids"] = list(state.provider_tools_state_ids)
+        if state.tools_state_id is not None:
+            response_metadata["tools_state_id"] = state.tools_state_id
 
     usage_metadata = _usage_update(state, event_data.get("usage"))
     generation_info = None
@@ -1501,6 +1565,10 @@ def convert_stream_event(
             additional_kwargs["tools_state_id"] = state.tools_state_id
         if state.provider_tools_state_ids:
             additional_kwargs["tools_state_ids"] = list(state.provider_tools_state_ids)
+        if state.server_tool_provider_ids:
+            additional_kwargs["provider_server_tool_state_by_call_id"] = dict(
+                state.server_tool_provider_ids
+            )
     reasoning = reasoning_content(content)
     if reasoning is not None:
         additional_kwargs["reasoning_content"] = reasoning
