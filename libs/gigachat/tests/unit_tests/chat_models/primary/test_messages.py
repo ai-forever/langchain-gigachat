@@ -260,6 +260,60 @@ def test_convert_messages_tool_result_prefers_explicit_name() -> None:
     assert converted.content[0].function_result.result == "not json"
 
 
+def test_tool_result_rejects_name_that_conflicts_with_history() -> None:
+    messages = [
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": "weather",
+                    "args": {},
+                    "id": "call-1",
+                    "type": "tool_call",
+                }
+            ],
+        ),
+        ToolMessage(
+            content="result",
+            tool_call_id="call-1",
+            name="calendar",
+        ),
+    ]
+
+    with pytest.raises(
+        ValueError,
+        match=r"name 'calendar' conflicts with function name 'weather'.*'call-1'",
+    ):
+        primary.convert_messages(messages, cached_uploads={})
+
+
+def test_convert_messages_tool_result_accepts_name_matching_history() -> None:
+    messages = [
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": "weather",
+                    "args": {},
+                    "id": "call-1",
+                    "type": "tool_call",
+                }
+            ],
+        ),
+        ToolMessage(
+            content="result",
+            tool_call_id="call-1",
+            name="weather",
+        ),
+    ]
+
+    converted = primary.convert_messages(messages, cached_uploads={})[1]
+
+    assert converted.content
+    assert converted.content[0].function_result
+    assert converted.content[0].function_result.name == "weather"
+
+
 def test_convert_messages_tool_result_accepts_nested_json_without_mutation() -> None:
     content: list[str | dict[Any, Any]] = [
         {
@@ -301,6 +355,49 @@ def test_convert_messages_tool_result_accepts_nested_json_without_mutation() -> 
     assert message.content == original
 
 
+def test_convert_messages_preserves_domain_json_that_resembles_text_block() -> None:
+    domain_value = {
+        "type": "text",
+        "text": "customer-authored value",
+        "domain": {"kind": "audit-record"},
+    }
+    message = ToolMessage(
+        content=[domain_value],
+        tool_call_id="tools-state",
+        name="weather",
+    )
+    original = copy.deepcopy(message.content)
+
+    converted = primary.convert_messages([message], cached_uploads={})[0]
+
+    assert converted.content
+    assert converted.content[0].function_result
+    assert converted.content[0].function_result.result == [domain_value]
+    assert message.content == original
+
+
+def test_convert_messages_collapses_recognized_text_block_metadata() -> None:
+    message = ToolMessage(
+        content=[
+            {
+                "type": "text",
+                "text": "plain text",
+                "id": "block-1",
+                "annotations": [],
+                "extras": {"source": "tool"},
+            }
+        ],
+        tool_call_id="tools-state",
+        name="weather",
+    )
+
+    converted = primary.convert_messages([message], cached_uploads={})[0]
+
+    assert converted.content
+    assert converted.content[0].function_result
+    assert converted.content[0].function_result.result == ["plain text"]
+
+
 @pytest.mark.parametrize(
     ("invalid", "match"),
     [
@@ -332,6 +429,17 @@ def test_convert_messages_rejects_tool_result_without_name() -> None:
     message = ToolMessage(content="result", tool_call_id="tools-state")
 
     with pytest.raises(ValueError, match="requires a function name"):
+        primary.convert_messages([message], cached_uploads={})
+
+
+def test_convert_messages_rejects_empty_tool_call_id() -> None:
+    message = ToolMessage(
+        content="result",
+        tool_call_id="",
+        name="weather",
+    )
+
+    with pytest.raises(ValueError, match="tool_call_id must be a non-empty string"):
         primary.convert_messages([message], cached_uploads={})
 
 

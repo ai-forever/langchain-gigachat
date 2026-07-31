@@ -38,6 +38,9 @@ _ASSISTANT_OUTPUT_ONLY_BLOCK_TYPES = frozenset(
         "tool_call_chunk",
     }
 )
+_TEXT_TOOL_RESULT_BLOCK_KEYS = frozenset(
+    {"annotations", "extras", "id", "index", "text", "type"}
+)
 
 
 def _file_part(
@@ -326,7 +329,11 @@ def _detach_json_tool_result(
                 for index, item in enumerate(value)
             ]
 
-        if value.get("type") == "text":
+        if (
+            value.get("type") == "text"
+            and "text" in value
+            and set(value).issubset(_TEXT_TOOL_RESULT_BLOCK_KEYS)
+        ):
             text = value.get("text", "")
             if not isinstance(text, str):
                 raise ValueError(
@@ -444,7 +451,27 @@ def _convert_tool_message(
     provider_tool_states: Mapping[str, str],
     tool_call_names: Mapping[str, str],
 ) -> gm.ChatMessage:
-    name = message.name or tool_call_names.get(message.tool_call_id)
+    tool_call_id = message.tool_call_id
+    if not isinstance(tool_call_id, str) or not tool_call_id:
+        raise ValueError("Primary ToolMessage tool_call_id must be a non-empty string.")
+
+    supplied_name = message.name
+    if supplied_name is not None and (
+        not isinstance(supplied_name, str) or not supplied_name
+    ):
+        raise ValueError("Primary ToolMessage name must be a non-empty string.")
+    original_name = tool_call_names.get(tool_call_id)
+    if (
+        supplied_name is not None
+        and original_name is not None
+        and supplied_name != original_name
+    ):
+        raise ValueError(
+            f"Primary ToolMessage name {supplied_name!r} conflicts with "
+            f"function name {original_name!r} for tool_call_id {tool_call_id!r}."
+        )
+
+    name = supplied_name or original_name
     if not name:
         raise ValueError(
             "Primary ToolMessage requires a function name. Set ToolMessage.name "
@@ -453,8 +480,8 @@ def _convert_tool_message(
     return gm.ChatMessage(
         role="tool",
         tools_state_id=provider_tool_states.get(
-            message.tool_call_id,
-            message.tool_call_id,
+            tool_call_id,
+            tool_call_id,
         ),
         content=[
             gm.ChatContentPart(
