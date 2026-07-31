@@ -305,7 +305,13 @@ def _convert_return_schema(
         return {}
 
     if isinstance(return_model, dict):
-        return_schema = copy.deepcopy(return_model)
+        source_schema = copy.deepcopy(return_model)
+        try:
+            return_schema = dereference_refs(source_schema, skip_keys=[])
+        except KeyError as error:
+            raise IncorrectSchemaException(
+                f"Return schema contains an unresolved local $ref: {error}"
+            ) from error
     else:
         return_schema = dereference_refs(_model_to_schema(return_model))
 

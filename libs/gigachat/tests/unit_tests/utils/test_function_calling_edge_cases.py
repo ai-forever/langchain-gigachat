@@ -17,6 +17,16 @@ from langchain_gigachat.utils.function_calling import (
     gigachat_fix_schema,
 )
 
+
+def _schema_refs(value: Any) -> list[Any]:
+    if isinstance(value, dict):
+        refs = [value["$ref"]] if "$ref" in value else []
+        return refs + [ref for nested in value.values() for ref in _schema_refs(nested)]
+    if isinstance(value, list):
+        return [ref for nested in value for ref in _schema_refs(nested)]
+    return []
+
+
 # ---------------------------------------------------------------------------
 # gigachat_fix_schema
 # ---------------------------------------------------------------------------
@@ -232,7 +242,53 @@ def test_convert_return_schema_dict() -> None:
     assert result is not schema
     assert "title" not in result
     assert "$defs" not in result
+    assert _schema_refs(result) == []
+    assert result["properties"]["r"]["allOf"] == [{"type": "integer"}]
     assert result["properties"]["r"]["description"] == ""
+
+
+def test_convert_return_schema_recursively_dereferences_raw_schema() -> None:
+    schema = {
+        "$defs": {
+            "Envelope": {
+                "type": "object",
+                "properties": {"payload": {"$ref": "#/$defs/Payload"}},
+            },
+            "Payload": {
+                "type": "object",
+                "properties": {"value": {"type": "integer"}},
+            },
+        },
+        "type": "object",
+        "properties": {"result": {"$ref": "#/$defs/Envelope"}},
+    }
+    original = copy.deepcopy(schema)
+
+    result = _convert_return_schema(schema)
+
+    assert schema == original
+    assert "$defs" not in result
+    assert _schema_refs(result) == []
+    assert result["properties"]["result"]["properties"]["payload"] == {
+        "type": "object",
+        "properties": {"value": {"type": "integer"}},
+    }
+
+
+def test_convert_return_schema_rejects_missing_local_ref_without_mutation() -> None:
+    schema = {
+        "type": "object",
+        "properties": {"result": {"$ref": "#/$defs/Missing"}},
+    }
+    original = copy.deepcopy(schema)
+
+    with pytest.raises(
+        IncorrectSchemaException,
+        match=r"unresolved local \$ref.*#/\$defs/Missing",
+    ):
+        _convert_return_schema(schema)
+
+    assert schema == original
 
 
 @pytest.mark.parametrize(
