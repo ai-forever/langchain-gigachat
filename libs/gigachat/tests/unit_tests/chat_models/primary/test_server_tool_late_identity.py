@@ -343,19 +343,31 @@ def test_sequential_server_tools_do_not_reuse_stale_global_state() -> None:
             },
             state,
         ),
+        _convert(
+            {
+                "event": "response.message.done",
+                "tools_state_id": "provider-state-2",
+                "finish_reason": "stop",
+            },
+            state,
+        ),
     ]
 
-    blocks = _blocks(reduce(add, chunks))
+    aggregate = reduce(add, chunks)
+    blocks = _blocks(aggregate)
     first_call_id = blocks[0]["id"]
     second_call_id = blocks[2]["id"]
 
-    assert first_call_id == "provider-state-1"
+    assert first_call_id == "lc_primary-server-tool-0"
     assert blocks[1]["tool_call_id"] == first_call_id
-    assert second_call_id == "lc_primary-server-tool-0"
+    assert second_call_id == "lc_primary-server-tool-1"
     assert blocks[3]["tool_call_id"] == second_call_id
     assert second_call_id != first_call_id
-    assert blocks[3]["extras"]["provider_server_tool_state_by_call_id"] == {
-        second_call_id: "provider-state-2"
+    assert aggregate.message.additional_kwargs[
+        "provider_server_tool_state_by_call_id"
+    ] == {
+        first_call_id: "provider-state-1",
+        second_call_id: "provider-state-2",
     }
     assert state.provider_tools_state_ids == ["provider-state-1", "provider-state-2"]
 

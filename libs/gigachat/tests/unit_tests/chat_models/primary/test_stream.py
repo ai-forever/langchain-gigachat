@@ -451,6 +451,7 @@ def test_function_call_dict_arguments_are_serialized_without_mutation() -> None:
 
 
 def test_tool_progress_is_a_server_tool_call_chunk() -> None:
+    state = primary.StreamState()
     chunk = _convert(
         {
             "event": "response.tool.started",
@@ -461,26 +462,33 @@ def test_tool_progress_is_a_server_tool_call_chunk() -> None:
                 "status": "running",
                 "seconds_left": 2,
             },
-        }
+        },
+        state,
+    )
+    done = _convert(
+        {
+            "event": "response.message.done",
+            "tools_state_id": "tool-1",
+            "finish_reason": "stop",
+        },
+        state,
     )
 
     assert chunk.text == ""
-    assert chunk.message.content == [
-        {
-            "type": "server_tool_call_chunk",
-            "id": "tool-1",
-            "name": "web_search",
-            "args": "",
-            "index": 0,
-            "extras": {
-                "provider_tool_execution": {
-                    "name": "web_search",
-                    "status": "running",
-                    "seconds_left": 2,
-                }
-            },
-        }
-    ]
+    block = _content_blocks(chunk)[0]
+    assert block["type"] == "server_tool_call_chunk"
+    assert block["id"] == "lc_primary-server-tool-0"
+    assert block["name"] == "web_search"
+    assert block["args"] == ""
+    assert block["index"] == 0
+    assert block["extras"]["provider_tool_execution"] == {
+        "name": "web_search",
+        "status": "running",
+        "seconds_left": 2,
+    }
+    assert done.message.additional_kwargs["provider_server_tool_state_by_call_id"] == {
+        "lc_primary-server-tool-0": "tool-1"
+    }
 
 
 def test_server_tool_name_can_arrive_after_started() -> None:
@@ -581,6 +589,7 @@ def test_conflicting_real_server_tool_names_fail_clearly() -> None:
 
 
 def test_tool_completed_is_a_metadata_only_server_tool_result() -> None:
+    state = primary.StreamState()
     chunk = _convert(
         {
             "event": "response.tool.completed",
@@ -591,27 +600,34 @@ def test_tool_completed_is_a_metadata_only_server_tool_result() -> None:
                 "status": "completed",
                 "output": {"stdout": "42"},
             },
-        }
+        },
+        state,
+    )
+    done = _convert(
+        {
+            "event": "response.message.done",
+            "tools_state_id": "tool-1",
+            "finish_reason": "stop",
+        },
+        state,
     )
 
     assert chunk.text == ""
-    assert chunk.message.content == [
-        {
-            "type": "server_tool_result",
-            "id": "tool-1:result",
-            "tool_call_id": "tool-1",
-            "status": "success",
-            "output": {"stdout": "42"},
-            "index": 0,
-            "extras": {
-                "provider_tool_execution": {
-                    "name": "code_interpreter",
-                    "status": "completed",
-                    "output": {"stdout": "42"},
-                }
-            },
-        }
-    ]
+    block = _content_blocks(chunk)[0]
+    assert block["type"] == "server_tool_result"
+    assert block["id"] == "lc_primary-server-tool-0:result"
+    assert block["tool_call_id"] == "lc_primary-server-tool-0"
+    assert block["status"] == "success"
+    assert block["output"] == {"stdout": "42"}
+    assert block["index"] == 0
+    assert block["extras"]["provider_tool_execution"] == {
+        "name": "code_interpreter",
+        "status": "completed",
+        "output": {"stdout": "42"},
+    }
+    assert done.message.additional_kwargs["provider_server_tool_state_by_call_id"] == {
+        "lc_primary-server-tool-0": "tool-1"
+    }
     assert chunk.message.response_metadata["events"] == ["response.tool.completed"]
 
 
