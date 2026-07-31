@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from gigachat import models as gm
 
 from langchain_gigachat.chat_models._contracts.primary.content import (
@@ -255,6 +256,30 @@ def test_function_call_conversion_uses_standard_langchain_helpers() -> None:
     assert invalid["name"] == "weather"
     assert invalid["args"] == "broken"
     assert invalid["error"] is not None
+
+
+@pytest.mark.parametrize(
+    "function_call",
+    [
+        {"arguments": {"city": "Moscow"}},
+        {"name": "", "arguments": {"city": "Moscow"}},
+        {"name": "   ", "arguments": {"city": "Moscow"}},
+    ],
+)
+def test_function_call_conversion_rejects_missing_or_empty_name(
+    function_call: dict[str, object],
+) -> None:
+    valid, invalid = convert_function_call(
+        function_call,
+        tool_call_id="call-1",
+    )
+
+    assert valid is None
+    assert invalid is not None
+    assert invalid["type"] == "invalid_tool_call"
+    assert invalid["id"] == "call-1"
+    assert invalid["args"] == '{"city":"Moscow"}'
+    assert invalid["error"] == "Function call name must be a non-empty string."
 
 
 def test_json_fragment_preserves_string_and_compacts_objects() -> None:

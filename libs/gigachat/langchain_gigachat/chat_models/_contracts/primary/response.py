@@ -229,13 +229,14 @@ def _content_blocks(
     raw_function_calls: list[dict[str, Any]] = []
     tool_calls: list[ToolCall] = []
     invalid_tool_calls: list[InvalidToolCall] = []
-    converted_function_calls: list[tuple[ToolCall | None, InvalidToolCall | None]] = []
+    function_call_seen = False
 
     def append_function_call(
         function_call: gm.PrimaryChatFunctionCall,
         *,
         tool_call_id: str | None,
     ) -> None:
+        nonlocal function_call_seen
         raw_function_call = function_call.model_dump(
             exclude_none=True,
             by_alias=True,
@@ -251,16 +252,15 @@ def _content_blocks(
             function_call,
             tool_call_id=tool_call_id,
         )
-        if converted in converted_function_calls:
-            return
-        if converted_function_calls:
+        if function_call_seen:
             raise ValueError(
-                "Primary GigaChat completion contains multiple distinct client "
+                "Primary GigaChat completion contains multiple client "
                 "function calls and cannot be replayed. Parallel client function "
-                "calls are not supported."
+                "calls are not supported, and duplicate-looking calls are not "
+                "assumed to be mirrors."
             )
 
-        converted_function_calls.append(converted)
+        function_call_seen = True
         raw_function_calls.append(raw_function_call)
         tool_call, invalid_call = converted
         if tool_call is not None:
@@ -284,13 +284,42 @@ def _content_blocks(
             fallback=f"client_tool_{message_index}",
         )
         client_tool_state_id = _client_tool_state_id(message, response)
+        part_function_calls = [
+            part.function_call
+            for part in message.content or []
+            if part.function_call is not None
+        ]
+        if len(part_function_calls) > 1:
+            raise ValueError(
+                "Primary GigaChat completion contains multiple client function "
+                "calls and cannot be replayed. Parallel client function calls "
+                "are not supported, and duplicate-looking calls are not assumed "
+                "to be mirrors."
+            )
+        selected_function_call = (
+            part_function_calls[0] if part_function_calls else message.function_call
+        )
+        if part_function_calls and message.function_call is not None:
+            part_raw = part_function_calls[0].model_dump(
+                exclude_none=True,
+                by_alias=True,
+            )
+            message_raw = message.function_call.model_dump(
+                exclude_none=True,
+                by_alias=True,
+            )
+            if part_raw != message_raw:
+                raise ValueError(
+                    "Primary GigaChat completion contains conflicting part-level "
+                    "and message-level client function calls and cannot be replayed."
+                )
+        if selected_function_call is not None:
+            append_function_call(
+                selected_function_call,
+                tool_call_id=client_tool_state_id,
+            )
 
         for part in message.content or []:
-            if part.function_call is not None:
-                append_function_call(
-                    part.function_call,
-                    tool_call_id=client_tool_state_id,
-                )
             blocks.extend(
                 _part_blocks(
                     part,
@@ -298,12 +327,6 @@ def _content_blocks(
                     server_tool_id=tool_call_id,
                     message_inline_data=message.inline_data,
                 )
-            )
-
-        if message.function_call is not None:
-            append_function_call(
-                message.function_call,
-                tool_call_id=client_tool_state_id,
             )
 
         emitted_message_tool_execution = (

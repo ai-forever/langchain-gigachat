@@ -357,7 +357,7 @@ def test_valid_and_invalid_function_calls_fail_during_response_conversion() -> N
 
     with pytest.raises(
         ValueError,
-        match="multiple distinct client function calls.*cannot be replayed",
+        match="multiple client function calls.*cannot be replayed",
     ):
         create_chat_result(response)
 
@@ -385,7 +385,52 @@ def test_multiple_valid_function_calls_fail_during_response_conversion() -> None
 
     with pytest.raises(
         ValueError,
-        match="multiple distinct client function calls.*cannot be replayed",
+        match="multiple client function calls.*cannot be replayed",
+    ):
+        create_chat_result(response)
+
+
+def test_identical_function_calls_in_different_messages_are_not_deduplicated() -> None:
+    function_call = {
+        "name": "lookup",
+        "arguments": {"key": "value"},
+    }
+    response = _response(
+        tools_state_id="tools-state-1",
+        messages=[
+            {"role": "assistant", "function_call": function_call},
+            {"role": "assistant", "function_call": function_call},
+        ],
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="multiple client function calls.*duplicate-looking calls",
+    ):
+        create_chat_result(response)
+
+
+def test_identical_part_level_function_calls_are_not_deduplicated() -> None:
+    function_call = {
+        "name": "lookup",
+        "arguments": {"key": "value"},
+    }
+    response = _response(
+        tools_state_id="tools-state-1",
+        messages=[
+            {
+                "role": "assistant",
+                "content": [
+                    {"function_call": function_call},
+                    {"function_call": function_call},
+                ],
+            }
+        ],
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="multiple client function calls.*duplicate-looking calls",
     ):
         create_chat_result(response)
 
@@ -418,6 +463,64 @@ def test_mirrored_function_call_is_emitted_once() -> None:
     ]
     assert message.additional_kwargs["function_calls"] == [function_call]
     assert message.additional_kwargs["function_call"] == function_call
+
+
+def test_conflicting_mirrored_function_calls_fail_closed() -> None:
+    response = _response(
+        messages=[
+            {
+                "role": "assistant",
+                "tools_state_id": "tools-state-1",
+                "function_call": {
+                    "name": "lookup",
+                    "arguments": {"key": "message"},
+                },
+                "content": [
+                    {
+                        "function_call": {
+                            "name": "lookup",
+                            "arguments": {"key": "part"},
+                        }
+                    }
+                ],
+            }
+        ],
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="conflicting part-level and message-level client function calls",
+    ):
+        create_chat_result(response)
+
+
+@pytest.mark.parametrize("name", ["", "   "])
+def test_empty_function_name_becomes_invalid_tool_call(name: str) -> None:
+    message = _message(
+        _response(
+            tools_state_id="tools-state-1",
+            messages=[
+                {
+                    "role": "assistant",
+                    "function_call": {
+                        "name": name,
+                        "arguments": {"key": "value"},
+                    },
+                }
+            ],
+        )
+    )
+
+    assert message.tool_calls == []
+    assert message.invalid_tool_calls == [
+        {
+            "type": "invalid_tool_call",
+            "name": name,
+            "args": '{"key":"value"}',
+            "id": "tools-state-1",
+            "error": "Function call name must be a non-empty string.",
+        }
+    ]
 
 
 def test_response_conversion_does_not_mutate_provider_model() -> None:

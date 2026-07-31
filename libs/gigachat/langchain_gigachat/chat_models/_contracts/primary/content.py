@@ -312,15 +312,25 @@ def convert_function_call(
     """Convert one client function call into a valid or invalid standard call."""
     raw = provider_dict(function_call_value)
     name_value = raw.get("name")
-    name = str(name_value) if name_value is not None else None
+    name = name_value if isinstance(name_value, str) else None
     parsed = parse_function_arguments(
         raw.get("arguments"),
         function_name=name,
     )
+    if name is None or not name.strip():
+        return (
+            None,
+            invalid_tool_call(
+                name=name,
+                args=parsed.raw,
+                id=tool_call_id,
+                error="Function call name must be a non-empty string.",
+            ),
+        )
     if parsed.value is not None:
         return (
             tool_call(
-                name=name or "",
+                name=name,
                 args=parsed.value,
                 id=tool_call_id,
             ),
