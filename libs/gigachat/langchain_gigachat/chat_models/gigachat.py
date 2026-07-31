@@ -442,10 +442,9 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             sending tokens.
         auto_upload_attachments: Auto-upload Base-64 content for image_url,
             audio_url, and document_url blocks. Not for production usage.
-        allow_any_tool_choice_fallback: Allow automatic fallback from
-            tool_choice='any' to 'auto'. By default, 'any' raises an error
-            because GigaChat API doesn't support it. Set to True to silently
-            convert to 'auto' (may cause unpredictable agent behavior).
+        allow_any_tool_choice_fallback: Explicitly convert
+            ``tool_choice='any'`` to ``'auto'`` with a warning. Disabled by
+            default because the conversion weakens forced-tool semantics.
         reasoning_effort: Reasoning effort for reasoning-capable models
             (e.g. GigaChat-2-Reasoning). When set, the API may return
             reasoning_content in the assistant message (see additional_kwargs).
@@ -457,8 +456,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
     """Auto-upload Base-64 image/audio/document blocks. Not for production usage."""
     allow_any_tool_choice_fallback: bool = False
     """
-    Allow automatic fallback from tool_choice='any' to 'auto'.
-    GigaChat API doesn't support 'any', so by default it raises an error.
+    Convert ``tool_choice='any'`` to ``'auto'`` with a compatibility warning.
     """
 
     _cached_uploads: Dict[str, str] = PrivateAttr(default_factory=dict)

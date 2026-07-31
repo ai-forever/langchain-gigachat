@@ -207,8 +207,8 @@ response = primary_llm.invoke("Hello!")
 
 #### Client tools and `ToolMessage` continuation
 
-Client functions use standard LangChain tools. The returned tool-call ID is also
-the provider continuation state; pass it back through `ToolMessage`:
+Client functions use standard LangChain tools. Pass the returned LangChain
+tool-call ID back unchanged through `ToolMessage`:
 
 ```python
 from langchain_core.messages import HumanMessage, ToolMessage
@@ -240,7 +240,9 @@ print(answer.content)
 
 Primary continuation serializes the tool result as provider `role="tool"` with
 `function_result` and `tools_state_id`. It does not use the legacy
-`role="function"` transport.
+`role="function"` transport. The adapter resolves the LangChain tool-call ID to
+the provider continuation state when the provider reports a distinct
+`tools_state_id`; callers must not assume that the two IDs are equal.
 
 #### Provider built-in tools
 
@@ -343,18 +345,24 @@ response = llm.invoke([message])
 
 #### Current release status and limitations
 
-`langchain-gigachat==0.5.2a1` requires `gigachat==0.2.3a1`. The latest stable SDK
-available when this prerelease was prepared (`0.2.1`) does not expose
+`langchain-gigachat==0.5.2a1` requires `langchain-core>=1.2,<2` and
+`gigachat==0.2.3a1`. The latest stable SDK verified for this prerelease
+(`0.2.1`) does not expose
 `chat.create`, `chat.stream`, `achat.create`, and `achat.stream`. Do not promote
 this integration to a stable package release until a stable SDK containing
 those resources is available and the dependency can be changed to a stable
-range. The reviewed prerelease CI passed 433 tests on Python 3.10–3.14, and its
-lint/mypy jobs are green. Live API validation has not been run and remains a
-separate release gate.
+range. The assembled A–F implementation is
+`ec0d185cc5c22fdac9d1a0da29f1bdd6a440505d`; its deterministic unit run passed
+694 tests with 5 optional Agent tests skipped and 93.98% coverage on Python
+3.12.12. See [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) for the single
+authoritative validation record. Live API validation has not been run and
+remains a separate release gate.
 
 Primary v2 currently rejects parallel client tool calls in one assistant
-message. `tool_choice="any"` is also rejected because its provider semantics
-have not been confirmed; use `"auto"`, `"none"`, or a concrete tool name.
+message. `tool_choice="any"` is rejected by default on both routes because
+mapping forced-tool semantics to `"auto"` weakens the request. Compatibility
+callers may explicitly set `allow_any_tool_choice_fallback=True`; this maps
+`"any"` to `"auto"` with a `UserWarning`.
 
 ## Tool Calling
 
@@ -393,9 +401,11 @@ llm = GigaChat(function_ranker={"enabled": False})
 llm_with_tools = llm.bind_tools([get_weather], tool_choice="auto")
 ```
 
-> **Note:** `tool_choice="any"` is not supported by the legacy GigaChat API. Use
-> `"auto"`, `"none"`, or a specific tool name. If upstream code passes `"any"`,
-> set `allow_any_tool_choice_fallback=True` to convert it to `"auto"`.
+> **Note:** `tool_choice="any"` is not supported by GigaChat. Use `"auto"`,
+> `"none"`, or a specific tool name. If compatibility with upstream code is
+> required, `allow_any_tool_choice_fallback=True` explicitly converts `"any"`
+> to `"auto"` and emits a `UserWarning` because forced-tool semantics are not
+> preserved.
 
 > **Note:** GigaChat API does not support parallel tool calls in a single assistant message. If `AIMessage` contains more than one `tool_calls` entry, a `ValueError` is raised.
 
@@ -569,7 +579,7 @@ Most commonly used parameters (all are optional):
 | `use_api_v2` | `bool` | `False` | Use the `/v2/chat/completions` contract |
 | `streaming` | `bool` | `False` | Stream results by default |
 | `auto_upload_attachments` | `bool` | `False` | Auto-upload base64 content from `image_url` / `audio_url` / `document_url` blocks |
-| `allow_any_tool_choice_fallback` | `bool` | `False` | Silently convert `tool_choice="any"` to `"auto"` |
+| `allow_any_tool_choice_fallback` | `bool` | `False` | Explicitly map `tool_choice="any"` to `"auto"` with a warning |
 
 For the full list of parameters (auth, SSL/mTLS, retry, flags, etc.), see the [GigaChat SDK README](https://github.com/ai-forever/gigachat#constructor-parameters) — the LangChain wrapper accepts the same constructor arguments.
 

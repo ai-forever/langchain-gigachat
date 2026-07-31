@@ -49,6 +49,7 @@ alpha SDK.
 ### Dependencies
 
 - Package version is `0.5.2a1`.
+- Requires `langchain-core>=1.2,<2`.
 - Requires `gigachat==0.2.3a1`, the published SDK build verified here with
   sync/async `chat.create` and `chat.stream` resource methods.
 - Stable release remains blocked until a stable SDK with those resources is
@@ -56,17 +57,20 @@ alpha SDK.
 
 ### Validation
 
-- Reviewed GitHub Actions completed successfully on Python 3.10–3.14 with 433
-  tests, plus green lint and mypy jobs.
-- The assembled follow-up branch passed 485 unit tests locally on Python
-  3.14.3 before packaging.
+- Assembled A–F implementation:
+  `ec0d185cc5c22fdac9d1a0da29f1bdd6a440505d`.
+- The deterministic unit suite passed 694 tests with 5 optional Agent tests
+  skipped and 93.98% coverage on Python 3.12.12.
+- Complete artifact, clean-install, stable-SDK, and live-provider status is
+  recorded once in [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md).
 - Live API tests were not run and remain an explicit unchecked release gate.
 
 ### Known limitations
 
 - Parallel client tool calls in one primary assistant message are unsupported.
-- Primary `tool_choice="any"` is rejected because provider semantics are not
-  confirmed.
+- `tool_choice="any"` is rejected by default on both routes. The explicit
+  `allow_any_tool_choice_fallback=True` compatibility path maps it to `"auto"`
+  with a `UserWarning` that forced-tool semantics are weakened.
 - Live API coverage requires credentials and is reported separately from the
   deterministic unit and package-install gates.
 

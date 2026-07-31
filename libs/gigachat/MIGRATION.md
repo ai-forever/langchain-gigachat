@@ -53,12 +53,16 @@ Primary v2 uses the new tools transport:
   `{"type": "web_search"}`;
 - a client result `ToolMessage` becomes provider `role="tool"` with
   `function_result` and `tools_state_id`;
-- returned `AIMessage.tool_calls` retain the continuation identity needed by
-  the next request.
+- returned `AIMessage.tool_calls` retain the LangChain call identity needed by
+  the next request; the adapter maps that ID to a distinct provider
+  `tools_state_id` when necessary.
 
 Parallel client tool calls in one assistant message remain unsupported.
-`tool_choice="any"` is rejected on primary because its provider semantics are
-not confirmed; choose `"auto"`, `"none"`, or a concrete tool.
+`tool_choice="any"` is rejected by default on both routes because converting
+forced-tool semantics to `"auto"` weakens the request. Prefer `"auto"`,
+`"none"`, or a concrete tool. For compatibility only,
+`allow_any_tool_choice_fallback=True` performs that conversion with a visible
+`UserWarning`.
 
 ### Storage and stateful requests
 
@@ -93,13 +97,16 @@ meaning in stream and non-stream results:
   standard LangChain content blocks;
 - usage, finish reason, message/thread IDs, tool state, logprobs, and request
   headers are promoted to standard message/generation metadata;
-- late metadata-only events are emitted instead of being discarded;
 - unknown provider extensions remain available under
   `response_metadata["provider_fields"]`; raw unknown stream events are kept
   in arrival order under `response_metadata["raw_events"]`.
 
-Applications that aggregate chunks should retain the final metadata-only chunk
-or use LangChain's normal stream aggregation helpers.
+Public `stream()` / `astream()` buffer the authoritative
+`response.message.done` terminal. Compatible metadata-only continuations are
+merged into that buffered terminal, so usage, headers, provider extensions,
+thread state, and raw events survive in one final chunk. Content or tool calls
+after the terminal still fail closed. No public stream emits a chunk after
+`chunk_position="last"`.
 
 ### Structured output
 
@@ -127,26 +134,32 @@ silently accepting a no-op argument.
 ### Dependency and release status
 
 `langchain-gigachat==0.5.2a1` is a prerelease and requires
-`gigachat==0.2.3a1`. At preparation time, the latest stable SDK (`0.2.1`) did
-not expose `chat.create`, `chat.stream`, `achat.create`, or `achat.stream`.
+`langchain-core>=1.2,<2` and `gigachat==0.2.3a1`. The latest stable SDK verified
+for this prerelease (`0.2.1`) does not expose `chat.create`, `chat.stream`,
+`achat.create`, or `achat.stream`.
 Therefore:
 
 - `0.5.2a1` must not be presented as stable-release ready;
 - the PR must remain draft/blocked for a stable release;
-- the reviewed prerelease CI is green on Python 3.10–3.14, with 433 tests plus
-  lint and mypy passing;
+- the assembled A–F implementation is
+  `ec0d185cc5c22fdac9d1a0da29f1bdd6a440505d`;
+- its deterministic unit run passed 694 tests with 5 optional Agent tests
+  skipped and 93.98% coverage on Python 3.12.12;
 - live API validation remains unchecked and must not be inferred from CI;
 - after a stable SDK with those resources is published, replace the exact alpha
   pin with `gigachat>=<first-stable-v2-version>,<0.3`, regenerate the lockfile,
   and repeat the full package/install validation.
 
+The complete, non-secret validation evidence and live matrix are maintained in
+[RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md).
+
 ## Requirements
 
-| Dependency | Before (0.3.x) | After (0.5.0) |
-|------------|-----------------|---------------|
-| Python | >= 3.9 | **>= 3.10** |
-| `langchain-core` | >= 0.3, < 1 | **>= 1, < 2** |
-| `gigachat` (SDK) | >= 0.1.41 | **>= 0.2.0, < 0.3** |
+| Dependency | Before (0.3.x) | Current preview (0.5.2a1) |
+|------------|-----------------|----------------------------|
+| Python | >= 3.9 | **>= 3.10, < 4** |
+| `langchain-core` | >= 0.3, < 1 | **>= 1.2, < 2** |
+| `gigachat` (SDK) | >= 0.1.41 | **== 0.2.3a1** |
 
 > LangChain Core 1.x dropped Python 3.9 support. GigaChat SDK 0.2.0 migrated to Pydantic V2.
 
@@ -287,7 +300,8 @@ If you previously relied on it, update call sites to stop passing `stop=...`.
 
 ### `tool_choice="any"` raises `ValueError`
 
-Previously, `tool_choice="any"` was silently converted to `"auto"`. Now it raises `ValueError` by default.
+Previously, `tool_choice="any"` was silently converted to `"auto"`. It now
+raises `ValueError` by default.
 
 ```python
 # Before — silently degraded to "auto"
@@ -299,12 +313,15 @@ llm.bind_tools(tools, tool_choice="any")
 llm.bind_tools(tools, tool_choice="auto")
 llm.bind_tools(tools, tool_choice="my_tool_name")
 
-# Option 2: opt-in to automatic fallback (with warning)
+# Option 2: explicit compatibility fallback (with warning)
 llm = GigaChat(allow_any_tool_choice_fallback=True, ...)
 llm.bind_tools(tools, tool_choice="any")  # converts to "auto" with UserWarning
 ```
 
-**Why:** GigaChat API does not support `tool_choice="any"` (forced tool calling). Silent conversion to `"auto"` changed semantics unpredictably — the user expected a forced tool call, but the model could return plain text. An explicit error is safer.
+**Why:** GigaChat API does not support `tool_choice="any"` (forced tool
+calling). Converting it to `"auto"` can allow plain text and weaken the
+caller's forced-tool requirement, so the compatibility path is explicit and
+warns at the call site.
 
 ---
 
