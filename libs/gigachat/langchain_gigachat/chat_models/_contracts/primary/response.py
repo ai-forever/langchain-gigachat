@@ -60,6 +60,13 @@ _RESPONSE_FIELDS = {
     "usage",
     "x_headers",
 }
+_ContentConversion = tuple[
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[ToolCall],
+    list[InvalidToolCall],
+    dict[str, str],
+]
 
 
 def _dump(value: BaseModel | None) -> dict[str, Any] | None:
@@ -302,12 +309,7 @@ def _tool_execution_candidates(
 
 def _content_blocks(
     response: gm.ChatCompletionResponse,
-) -> tuple[
-    list[dict[str, Any]],
-    list[dict[str, Any]],
-    list[ToolCall],
-    list[InvalidToolCall],
-]:
+) -> _ContentConversion:
     blocks: list[dict[str, Any]] = []
     raw_function_calls: list[dict[str, Any]] = []
     tool_calls: list[ToolCall] = []
@@ -321,6 +323,11 @@ def _content_blocks(
     }
     server_owned_state_ids = {
         resolved.provider_state_id
+        for resolved in resolved_executions
+        if resolved.provider_state_id is not None
+    }
+    provider_server_tool_state_by_call_id = {
+        resolved.tool_call_id: resolved.provider_state_id
         for resolved in resolved_executions
         if resolved.provider_state_id is not None
     }
@@ -468,7 +475,13 @@ def _content_blocks(
             )
         )
 
-    return blocks, raw_function_calls, tool_calls, invalid_tool_calls
+    return (
+        blocks,
+        raw_function_calls,
+        tool_calls,
+        invalid_tool_calls,
+        provider_server_tool_state_by_call_id,
+    )
 
 
 def _tools_state_ids(response: gm.ChatCompletionResponse) -> list[str]:
@@ -500,6 +513,7 @@ def _response_metadata(
     *,
     finish_reason: str | None,
     x_headers: dict[str, str | None],
+    replay_tools_state_id: str | None,
 ) -> dict[str, Any]:
     provider_message_ids = [
         message.message_id
@@ -533,7 +547,7 @@ def _response_metadata(
             "created_at": response.created_at,
             "message_id": message_id,
             "thread_id": response.thread_id,
-            "tools_state_id": tools_state_ids[0] if len(tools_state_ids) == 1 else None,
+            "tools_state_id": replay_tools_state_id,
             "tools_state_ids": tools_state_ids or None,
             "provider_message_ids": provider_message_ids or None,
             "tool_execution": _dump(tool_execution),
@@ -572,24 +586,44 @@ def create_chat_result(response: gm.ChatCompletionResponse) -> ChatResult:
             None,
         )
 
+    plain_text_response = response.tool_execution is None and all(
+        _is_plain_text_message(message) for message in response.messages
+    )
+    converted_content: _ContentConversion | None = None
+    if not plain_text_response:
+        converted_content = _content_blocks(response)
+
+    tools_state_ids = _tools_state_ids(response)
+    replay_tools_state_id = tools_state_ids[0] if len(tools_state_ids) == 1 else None
+    if converted_content is not None:
+        raw_function_calls = converted_content[1]
+        provider_server_tool_state_by_call_id = converted_content[4]
+        server_state_ids = list(
+            dict.fromkeys(provider_server_tool_state_by_call_id.values())
+        )
+        if (
+            server_state_ids
+            and not raw_function_calls
+            and set(tools_state_ids) == set(server_state_ids)
+        ):
+            replay_tools_state_id = server_state_ids[-1]
+
     x_headers = dict(response.x_headers or {})
     metadata = _response_metadata(
         response,
         finish_reason=finish_reason,
         x_headers=x_headers,
+        replay_tools_state_id=replay_tools_state_id,
     )
     usage_metadata = create_usage_metadata(response.usage)
 
     additional_kwargs: dict[str, Any] = {}
-    tools_state_ids = _tools_state_ids(response)
     if tools_state_ids:
         additional_kwargs["tools_state_ids"] = tools_state_ids
-        if len(tools_state_ids) == 1:
-            additional_kwargs["tools_state_id"] = tools_state_ids[0]
+        if replay_tools_state_id is not None:
+            additional_kwargs["tools_state_id"] = replay_tools_state_id
 
-    if response.tool_execution is None and all(
-        _is_plain_text_message(message) for message in response.messages
-    ):
+    if converted_content is None:
         message = AIMessage(
             content=_text_content(response.messages),
             additional_kwargs=additional_kwargs,
@@ -597,9 +631,17 @@ def create_chat_result(response: gm.ChatCompletionResponse) -> ChatResult:
             usage_metadata=usage_metadata,
         )
     else:
-        blocks, raw_function_calls, tool_calls, invalid_tool_calls = _content_blocks(
-            response
-        )
+        (
+            blocks,
+            raw_function_calls,
+            tool_calls,
+            invalid_tool_calls,
+            provider_server_tool_state_by_call_id,
+        ) = converted_content
+        if provider_server_tool_state_by_call_id:
+            additional_kwargs["provider_server_tool_state_by_call_id"] = (
+                provider_server_tool_state_by_call_id
+            )
         reasoning = reasoning_content(blocks)
         if reasoning is not None:
             additional_kwargs["reasoning_content"] = reasoning

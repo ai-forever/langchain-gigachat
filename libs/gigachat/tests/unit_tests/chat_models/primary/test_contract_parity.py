@@ -366,6 +366,7 @@ def test_server_tool_contract_parity(
 
 def test_mirrored_server_tool_with_inline_data_contract_parity() -> None:
     execution = {
+        "call_id": "server-tool-1",
         "name": "web_search",
         "status": "completed",
         "seconds_left": 0,

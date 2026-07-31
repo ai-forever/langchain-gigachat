@@ -595,8 +595,8 @@ def test_terminal_server_tool_execution_emits_result(
     assert message.content == [
         {
             "type": "server_tool_result",
-            "id": "server-state-1:result",
-            "tool_call_id": "server-state-1",
+            "id": "lc_primary-server-tool-0:result",
+            "tool_call_id": "lc_primary-server-tool-0",
             "status": expected_result_status,
             "extras": {
                 "provider_tool_execution": {
@@ -607,6 +607,9 @@ def test_terminal_server_tool_execution_emits_result(
             },
         }
     ]
+    assert message.additional_kwargs["provider_server_tool_state_by_call_id"] == {
+        "lc_primary-server-tool-0": "server-state-1"
+    }
 
 
 @pytest.mark.parametrize("execution_level", ["part", "message", "response"])
@@ -670,8 +673,8 @@ def test_censored_success_uses_completion_error_for_failure_semantics() -> None:
     assert message.content == [
         {
             "type": "server_tool_result",
-            "id": "state-1:result",
-            "tool_call_id": "state-1",
+            "id": "lc_primary-server-tool-0:result",
+            "tool_call_id": "lc_primary-server-tool-0",
             "status": "success",
             "extras": {
                 "provider_tool_execution": {
@@ -682,6 +685,9 @@ def test_censored_success_uses_completion_error_for_failure_semantics() -> None:
             },
         }
     ]
+    assert message.additional_kwargs["provider_server_tool_state_by_call_id"] == {
+        "lc_primary-server-tool-0": "state-1"
+    }
     assert message.response_metadata["finish_reason"] == "error"
 
 
@@ -797,8 +803,8 @@ def test_mirrored_server_tool_execution_uses_part_level_once() -> None:
     assert message.content == [
         {
             "type": "server_tool_result",
-            "id": "server-state-1:result",
-            "tool_call_id": "server-state-1",
+            "id": "lc_primary-server-tool-0:result",
+            "tool_call_id": "lc_primary-server-tool-0",
             "status": "success",
             "extras": {
                 "provider_tool_execution": execution,
@@ -816,6 +822,9 @@ def test_mirrored_server_tool_execution_uses_part_level_once() -> None:
             },
         }
     ]
+    assert message.additional_kwargs["provider_server_tool_state_by_call_id"] == {
+        "lc_primary-server-tool-0": "server-state-1"
+    }
 
 
 def test_distinct_part_and_message_server_tools_are_both_preserved() -> None:
@@ -1053,12 +1062,17 @@ def test_multiple_server_owned_states_are_supported_non_stream() -> None:
         block["tool_call_id"]
         for block in message.content_blocks
         if block["type"] == "server_tool_result"
-    ] == ["search-state", "image-state"]
+    ] == ["lc_primary-server-tool-0", "lc_primary-server-tool-1"]
+    assert message.additional_kwargs["provider_server_tool_state_by_call_id"] == {
+        "lc_primary-server-tool-0": "search-state",
+        "lc_primary-server-tool-1": "image-state",
+    }
     assert message.additional_kwargs["tools_state_ids"] == [
         "search-state",
         "image-state",
     ]
-    assert "tools_state_id" not in message.additional_kwargs
+    assert message.additional_kwargs["tools_state_id"] == "image-state"
+    assert message.response_metadata["tools_state_id"] == "image-state"
 
 
 def test_explicit_server_id_keeps_container_state_available_to_client_call() -> None:
@@ -1164,8 +1178,8 @@ def test_message_server_tool_execution_owns_inline_data() -> None:
     assert message.content == [
         {
             "type": "server_tool_result",
-            "id": "server-state-1:result",
-            "tool_call_id": "server-state-1",
+            "id": "lc_primary-server-tool-0:result",
+            "tool_call_id": "lc_primary-server-tool-0",
             "status": "error",
             "extras": {
                 "provider_tool_execution": {
@@ -1182,6 +1196,9 @@ def test_message_server_tool_execution_owns_inline_data() -> None:
             },
         }
     ]
+    assert message.additional_kwargs["provider_server_tool_state_by_call_id"] == {
+        "lc_primary-server-tool-0": "server-state-1"
+    }
 
 
 def test_usage_headers_and_ids_are_preserved() -> None:

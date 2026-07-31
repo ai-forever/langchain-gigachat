@@ -229,8 +229,6 @@ def resolve_tool_execution_candidates(
         provider_state_id = group_state_ids.get(group_index)
         if explicit_ids:
             tool_call_id = next(iter(explicit_ids))
-        elif provider_state_id is not None:
-            tool_call_id = provider_state_id
         else:
             tool_call_id = f"lc_primary-server-tool-{next_local_sequence}"
             next_local_sequence += 1
