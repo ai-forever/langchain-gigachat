@@ -1,0 +1,256 @@
+"""Mirroring and argument-snapshot contracts for primary function-call streams."""
+
+from __future__ import annotations
+
+from collections.abc import AsyncIterator
+from typing import Any, cast
+
+import pytest
+from langchain_core.language_models.chat_models import (
+    agenerate_from_stream,
+    generate_from_stream,
+)
+from langchain_core.messages import AIMessage, AIMessageChunk
+from langchain_core.outputs import ChatGenerationChunk
+
+from langchain_gigachat.chat_models._contracts import primary
+
+
+def _convert(
+    event: dict[str, Any],
+    state: primary.StreamState,
+) -> ChatGenerationChunk:
+    chunk = primary.convert_stream_event(event, state=state)
+    assert chunk is not None
+    return chunk
+
+
+def _message(chunk: ChatGenerationChunk) -> AIMessageChunk:
+    assert isinstance(chunk.message, AIMessageChunk)
+    return cast(AIMessageChunk, chunk.message)
+
+
+def _function_call(
+    arguments: Any,
+    *,
+    name: str = "weather",
+    call_id: str | None = None,
+) -> dict[str, Any]:
+    call = {"name": name, "arguments": arguments}
+    if call_id is not None:
+        call["id"] = call_id
+    return call
+
+
+@pytest.mark.parametrize("level", ["part", "message"])
+def test_part_only_and_message_only_calls_are_preserved(level: str) -> None:
+    function_call = _function_call({"city": "Moscow"})
+    message: dict[str, Any] = {"tools_state_id": "tools-state-1"}
+    if level == "part":
+        message["content"] = [{"function_call": function_call}]
+    else:
+        message["function_call"] = function_call
+
+    chunk = _convert({"messages": [message]}, primary.StreamState())
+
+    assert _message(chunk).tool_call_chunks == [
+        {
+            "name": "weather",
+            "args": '{"city":"Moscow"}',
+            "id": "tools-state-1",
+            "index": 0,
+            "type": "tool_call_chunk",
+        }
+    ]
+
+
+def test_mirrored_part_and_message_call_is_emitted_once() -> None:
+    function_call = _function_call({"city": "Moscow"})
+    chunk = _convert(
+        {
+            "messages": [
+                {
+                    "tools_state_id": "tools-state-1",
+                    "function_call": function_call,
+                    "content": [{"function_call": function_call}],
+                }
+            ]
+        },
+        primary.StreamState(),
+    )
+
+    assert len(_message(chunk).tool_call_chunks) == 1
+    assert _message(chunk).tool_call_chunks[0]["args"] == '{"city":"Moscow"}'
+
+
+def test_distinct_part_and_message_calls_are_not_deduplicated() -> None:
+    with pytest.raises(
+        ValueError,
+        match="supports one client tool call per completion",
+    ):
+        _convert(
+            {
+                "messages": [
+                    {
+                        "function_call": _function_call(
+                            {"city": "Moscow"},
+                            name="weather",
+                        ),
+                        "content": [
+                            {
+                                "function_call": _function_call(
+                                    {"query": "Moscow"},
+                                    name="search",
+                                )
+                            }
+                        ],
+                    }
+                ]
+            },
+            primary.StreamState(),
+        )
+
+
+def test_distinct_part_level_calls_are_not_treated_as_fragments() -> None:
+    with pytest.raises(
+        ValueError,
+        match="supports one client tool call per completion",
+    ):
+        _convert(
+            {
+                "messages": [
+                    {
+                        "content": [
+                            {
+                                "function_call": _function_call(
+                                    '{"city":"Moscow"}',
+                                    name="weather",
+                                )
+                            },
+                            {
+                                "function_call": _function_call(
+                                    '{"query":"Moscow"}',
+                                    name="search",
+                                )
+                            },
+                        ]
+                    }
+                ]
+            },
+            primary.StreamState(),
+        )
+
+
+def test_identical_calls_in_distinct_messages_are_not_treated_as_mirrors() -> None:
+    function_call = _function_call({"city": "Moscow"})
+
+    with pytest.raises(
+        ValueError,
+        match="supports one client tool call per completion",
+    ):
+        _convert(
+            {
+                "messages": [
+                    {"function_call": function_call},
+                    {"function_call": function_call},
+                ]
+            },
+            primary.StreamState(),
+        )
+
+
+def _mirrored_fragment_events() -> list[dict[str, Any]]:
+    return [
+        {
+            "event": "response.message.delta",
+            "tools_state_id": "tools-state-1",
+            "messages": [
+                {
+                    "function_call": _function_call(fragment),
+                    "content": [{"function_call": _function_call(fragment)}],
+                }
+            ],
+        }
+        for fragment in ('{"city":', '"Moscow"}')
+    ]
+
+
+def test_mirrored_string_fragments_aggregate_once() -> None:
+    state = primary.StreamState()
+    chunks = [_convert(event, state) for event in _mirrored_fragment_events()]
+
+    result = generate_from_stream(iter(chunks))
+
+    message = cast(AIMessage, result.generations[0].message)
+    assert message.tool_calls == [
+        {
+            "name": "weather",
+            "args": {"city": "Moscow"},
+            "id": "tools-state-1",
+            "type": "tool_call",
+        }
+    ]
+
+
+async def _async_chunks(
+    chunks: list[ChatGenerationChunk],
+) -> AsyncIterator[ChatGenerationChunk]:
+    for chunk in chunks:
+        yield chunk
+
+
+async def test_mirrored_string_fragments_aggregate_once_async() -> None:
+    state = primary.StreamState()
+    chunks = [_convert(event, state) for event in _mirrored_fragment_events()]
+
+    result = await agenerate_from_stream(_async_chunks(chunks))
+
+    message = cast(AIMessage, result.generations[0].message)
+    assert message.tool_calls[0]["args"] == {"city": "Moscow"}
+
+
+def test_single_dictionary_argument_snapshot_is_supported() -> None:
+    chunk = _convert(
+        {
+            "messages": [
+                {
+                    "tools_state_id": "tools-state-1",
+                    "function_call": _function_call({"city": "Moscow"}),
+                }
+            ]
+        },
+        primary.StreamState(),
+    )
+
+    assert _message(chunk).tool_call_chunks[0]["args"] == '{"city":"Moscow"}'
+
+
+def test_repeated_dictionary_argument_snapshots_fail_closed() -> None:
+    state = primary.StreamState()
+    _convert(
+        {
+            "messages": [
+                {
+                    "tools_state_id": "tools-state-1",
+                    "function_call": _function_call({"city": "Mos"}),
+                }
+            ]
+        },
+        state,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="cumulative snapshot semantics are unsupported",
+    ):
+        _convert(
+            {
+                "messages": [
+                    {
+                        "tools_state_id": "tools-state-1",
+                        "function_call": _function_call({"city": "Moscow"}),
+                    }
+                ]
+            },
+            state,
+        )

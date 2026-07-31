@@ -83,6 +83,9 @@ _CONTENT_FIELDS = frozenset(
         "tool_execution",
     }
 )
+_MULTIPLE_CLIENT_TOOL_CALLS = (
+    "Primary streaming supports one client tool call per completion"
+)
 
 
 def _as_dict(value: Any) -> dict[str, Any]:
@@ -259,6 +262,17 @@ def _tool_call_chunk(
             )
 
     arguments = function_call.get("arguments")
+    if arguments is not None:
+        argument_mode = "fragments" if isinstance(arguments, str) else "snapshot"
+        if state.client_tool_argument_mode is None:
+            state.client_tool_argument_mode = argument_mode
+        elif (
+            state.client_tool_argument_mode == "snapshot" or argument_mode == "snapshot"
+        ):
+            raise ValueError(
+                "Primary client tool arguments contain multiple or mixed "
+                "structured snapshots; cumulative snapshot semantics are unsupported."
+            )
     return tool_call_chunk(
         name=incoming_name if is_first_fragment else None,
         args=json_fragment(arguments) if arguments is not None else "",
@@ -552,17 +566,31 @@ def _convert_messages(
     content: list[str | dict[str, Any]] = []
     tool_calls: list[ToolCallChunk] = []
     messages = _as_dict_list(messages_value, field="messages")
+    message_parts = [
+        _as_dict_list(message.get("content"), field="messages.content")
+        for message in messages
+    ]
+    function_call_message_count = sum(
+        bool(
+            message.get("function_call") is not None
+            or any(part.get("function_call") is not None for part in parts)
+        )
+        for message, parts in zip(messages, message_parts)
+    )
+    if function_call_message_count > 1:
+        raise ValueError(_MULTIPLE_CLIENT_TOOL_CALLS)
+
     # The SDK can mirror one execution across levels; prefer the deepest source.
     has_part_tool_execution = any(
         part.get("tool_execution") is not None
-        for message in messages
-        for part in _as_dict_list(message.get("content"), field="messages.content")
+        for parts in message_parts
+        for part in parts
     )
     has_message_tool_execution = not has_part_tool_execution and any(
         message.get("tool_execution") is not None for message in messages
     )
 
-    for message in messages:
+    for message, parts in zip(messages, message_parts):
         role = str(message.get("role") or "assistant")
         message_inline_data = message.get("inline_data")
         message_tool_state = message.get("tools_state_id")
@@ -571,7 +599,27 @@ def _convert_messages(
             if message_tool_state is not None
             else incoming_tools_state_id
         )
-        for part in _as_dict_list(message.get("content"), field="messages.content"):
+        part_function_calls = [
+            part["function_call"]
+            for part in parts
+            if part.get("function_call") is not None
+        ]
+        if len(part_function_calls) > 1:
+            raise ValueError(_MULTIPLE_CLIENT_TOOL_CALLS)
+        message_function_call = message.get("function_call")
+        mirrored_message_function_call = (
+            message_function_call is not None
+            and len(part_function_calls) == 1
+            and _as_dict(message_function_call) == _as_dict(part_function_calls[0])
+        )
+        if (
+            message_function_call is not None
+            and part_function_calls
+            and not mirrored_message_function_call
+        ):
+            raise ValueError(_MULTIPLE_CLIENT_TOOL_CALLS)
+
+        for part in parts:
             part_content, part_tool_calls = _convert_content_part(
                 part,
                 role=role,
@@ -583,11 +631,11 @@ def _convert_messages(
             content.extend(part_content)
             tool_calls.extend(part_tool_calls)
 
-        if message.get("function_call") is not None:
+        if message_function_call is not None and not mirrored_message_function_call:
             _close_text_block(state)
             tool_calls.append(
                 _tool_call_chunk(
-                    message["function_call"],
+                    message_function_call,
                     incoming_tools_state_id=tool_state_id,
                     state=state,
                 )
@@ -637,7 +685,7 @@ def _convert_messages(
             )
 
     if tool_calls and len({call["id"] for call in tool_calls}) > 1:
-        raise ValueError("Primary streaming supports one client tool call per message")
+        raise ValueError(_MULTIPLE_CLIENT_TOOL_CALLS)
     return (
         content,
         tool_calls,
