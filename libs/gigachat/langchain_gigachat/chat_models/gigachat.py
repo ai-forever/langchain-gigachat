@@ -978,39 +978,43 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         if route == "primary":
             primary_payload = self._build_primary_payload(messages, kwargs)
             state = primary.StreamState()
-            for event in self._client.chat.stream(primary_payload):
-                primary_chunk = primary.convert_stream_event(event, state=state)
-                if primary_chunk is None:
-                    continue
-                saw_converted_chunk = True
-                streamed_text.append(primary_chunk.text)
-                streamed_tool_call = streamed_tool_call or _has_tool_call(
-                    primary_chunk.message
-                )
-                if primary_chunk.message.content == []:
-                    primary_chunk = ChatGenerationChunk(
-                        message=primary_chunk.message.model_copy(
-                            update={"content": ""}
-                        ),
-                        generation_info=primary_chunk.generation_info,
+            provider_stream = self._client.chat.stream(primary_payload)
+            try:
+                for event in provider_stream:
+                    primary_chunk = primary.convert_stream_event(event, state=state)
+                    if primary_chunk is None:
+                        continue
+                    saw_converted_chunk = True
+                    streamed_text.append(primary_chunk.text)
+                    streamed_tool_call = streamed_tool_call or _has_tool_call(
+                        primary_chunk.message
                     )
-                if _is_authoritative_primary_terminal(primary_chunk):
-                    terminal_chunk = _accept_terminal_chunk(
-                        terminal_chunk, primary_chunk, route="Primary"
-                    )
-                    continue
-                if terminal_chunk is not None:
-                    terminal_chunk = _merge_terminal_continuation(
-                        terminal_chunk,
-                        primary_chunk,
-                        route="Primary",
-                    )
-                    continue
-                if run_manager:
-                    run_manager.on_llm_new_token(
-                        primary_chunk.text, chunk=primary_chunk
-                    )
-                yield primary_chunk
+                    if primary_chunk.message.content == []:
+                        primary_chunk = ChatGenerationChunk(
+                            message=primary_chunk.message.model_copy(
+                                update={"content": ""}
+                            ),
+                            generation_info=primary_chunk.generation_info,
+                        )
+                    if _is_authoritative_primary_terminal(primary_chunk):
+                        terminal_chunk = _accept_terminal_chunk(
+                            terminal_chunk, primary_chunk, route="Primary"
+                        )
+                        continue
+                    if terminal_chunk is not None:
+                        terminal_chunk = _merge_terminal_continuation(
+                            terminal_chunk,
+                            primary_chunk,
+                            route="Primary",
+                        )
+                        continue
+                    if run_manager:
+                        run_manager.on_llm_new_token(
+                            primary_chunk.text, chunk=primary_chunk
+                        )
+                    yield primary_chunk
+            finally:
+                _close_stream_iterator(provider_stream)
             if not saw_converted_chunk:
                 return
             terminal_chunk = _finalize_response_format_chunk(
@@ -1030,34 +1034,38 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         payload = self._build_payload(messages, **kwargs)
         first_chunk = True
 
-        for chunk_d in self._client.stream(payload):
-            chunk = chunk_d if isinstance(chunk_d, dict) else chunk_d.model_dump()
-            if len(chunk["choices"]) == 0:
-                continue
+        legacy_provider_stream = self._client.stream(payload)
+        try:
+            for chunk_d in legacy_provider_stream:
+                chunk = chunk_d if isinstance(chunk_d, dict) else chunk_d.model_dump()
+                if len(chunk["choices"]) == 0:
+                    continue
 
-            chunk_m, generation_info, content = self._build_stream_chunk(
-                chunk, first_chunk
-            )
-            first_chunk = False
-            saw_converted_chunk = True
-            streamed_text.append(chunk_m.text)
-            streamed_tool_call = streamed_tool_call or _has_tool_call(chunk_m)
-            generation_chunk = ChatGenerationChunk(
-                message=chunk_m,
-                generation_info=generation_info,
-            )
-            if _is_terminal_stream_chunk(generation_chunk):
-                terminal_chunk = _accept_terminal_chunk(
-                    terminal_chunk, generation_chunk, route="Legacy"
+                chunk_m, generation_info, content = self._build_stream_chunk(
+                    chunk, first_chunk
                 )
-                continue
-            if terminal_chunk is not None:
-                raise ValueError(
-                    "Legacy stream emitted content after its terminal chunk"
+                first_chunk = False
+                saw_converted_chunk = True
+                streamed_text.append(chunk_m.text)
+                streamed_tool_call = streamed_tool_call or _has_tool_call(chunk_m)
+                generation_chunk = ChatGenerationChunk(
+                    message=chunk_m,
+                    generation_info=generation_info,
                 )
-            if run_manager:
-                run_manager.on_llm_new_token(content, chunk=generation_chunk)
-            yield generation_chunk
+                if _is_terminal_stream_chunk(generation_chunk):
+                    terminal_chunk = _accept_terminal_chunk(
+                        terminal_chunk, generation_chunk, route="Legacy"
+                    )
+                    continue
+                if terminal_chunk is not None:
+                    raise ValueError(
+                        "Legacy stream emitted content after its terminal chunk"
+                    )
+                if run_manager:
+                    run_manager.on_llm_new_token(content, chunk=generation_chunk)
+                yield generation_chunk
+        finally:
+            _close_stream_iterator(legacy_provider_stream)
         if not saw_converted_chunk:
             return
         if kwargs.get("response_format") is None:
@@ -1101,39 +1109,43 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         if route == "primary":
             primary_payload = self._build_primary_payload(messages, kwargs)
             state = primary.StreamState()
-            async for event in self._client.achat.stream(primary_payload):
-                primary_chunk = primary.convert_stream_event(event, state=state)
-                if primary_chunk is None:
-                    continue
-                saw_converted_chunk = True
-                streamed_text.append(primary_chunk.text)
-                streamed_tool_call = streamed_tool_call or _has_tool_call(
-                    primary_chunk.message
-                )
-                if primary_chunk.message.content == []:
-                    primary_chunk = ChatGenerationChunk(
-                        message=primary_chunk.message.model_copy(
-                            update={"content": ""}
-                        ),
-                        generation_info=primary_chunk.generation_info,
+            provider_stream = self._client.achat.stream(primary_payload)
+            try:
+                async for event in provider_stream:
+                    primary_chunk = primary.convert_stream_event(event, state=state)
+                    if primary_chunk is None:
+                        continue
+                    saw_converted_chunk = True
+                    streamed_text.append(primary_chunk.text)
+                    streamed_tool_call = streamed_tool_call or _has_tool_call(
+                        primary_chunk.message
                     )
-                if _is_authoritative_primary_terminal(primary_chunk):
-                    terminal_chunk = _accept_terminal_chunk(
-                        terminal_chunk, primary_chunk, route="Primary"
-                    )
-                    continue
-                if terminal_chunk is not None:
-                    terminal_chunk = _merge_terminal_continuation(
-                        terminal_chunk,
-                        primary_chunk,
-                        route="Primary",
-                    )
-                    continue
-                if run_manager:
-                    await run_manager.on_llm_new_token(
-                        primary_chunk.text, chunk=primary_chunk
-                    )
-                yield primary_chunk
+                    if primary_chunk.message.content == []:
+                        primary_chunk = ChatGenerationChunk(
+                            message=primary_chunk.message.model_copy(
+                                update={"content": ""}
+                            ),
+                            generation_info=primary_chunk.generation_info,
+                        )
+                    if _is_authoritative_primary_terminal(primary_chunk):
+                        terminal_chunk = _accept_terminal_chunk(
+                            terminal_chunk, primary_chunk, route="Primary"
+                        )
+                        continue
+                    if terminal_chunk is not None:
+                        terminal_chunk = _merge_terminal_continuation(
+                            terminal_chunk,
+                            primary_chunk,
+                            route="Primary",
+                        )
+                        continue
+                    if run_manager:
+                        await run_manager.on_llm_new_token(
+                            primary_chunk.text, chunk=primary_chunk
+                        )
+                    yield primary_chunk
+            finally:
+                await _aclose_stream_iterator(provider_stream)
             if not saw_converted_chunk:
                 return
             terminal_chunk = _finalize_response_format_chunk(
@@ -1153,34 +1165,38 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         payload = self._build_payload(messages, **kwargs)
         first_chunk = True
 
-        async for chunk_d in self._client.astream(payload):
-            chunk = chunk_d if isinstance(chunk_d, dict) else chunk_d.model_dump()
-            if len(chunk["choices"]) == 0:
-                continue
+        legacy_provider_stream = self._client.astream(payload)
+        try:
+            async for chunk_d in legacy_provider_stream:
+                chunk = chunk_d if isinstance(chunk_d, dict) else chunk_d.model_dump()
+                if len(chunk["choices"]) == 0:
+                    continue
 
-            chunk_m, generation_info, content = self._build_stream_chunk(
-                chunk, first_chunk
-            )
-            first_chunk = False
-            saw_converted_chunk = True
-            streamed_text.append(chunk_m.text)
-            streamed_tool_call = streamed_tool_call or _has_tool_call(chunk_m)
-            generation_chunk = ChatGenerationChunk(
-                message=chunk_m,
-                generation_info=generation_info,
-            )
-            if _is_terminal_stream_chunk(generation_chunk):
-                terminal_chunk = _accept_terminal_chunk(
-                    terminal_chunk, generation_chunk, route="Legacy"
+                chunk_m, generation_info, content = self._build_stream_chunk(
+                    chunk, first_chunk
                 )
-                continue
-            if terminal_chunk is not None:
-                raise ValueError(
-                    "Legacy stream emitted content after its terminal chunk"
+                first_chunk = False
+                saw_converted_chunk = True
+                streamed_text.append(chunk_m.text)
+                streamed_tool_call = streamed_tool_call or _has_tool_call(chunk_m)
+                generation_chunk = ChatGenerationChunk(
+                    message=chunk_m,
+                    generation_info=generation_info,
                 )
-            if run_manager:
-                await run_manager.on_llm_new_token(content, chunk=generation_chunk)
-            yield generation_chunk
+                if _is_terminal_stream_chunk(generation_chunk):
+                    terminal_chunk = _accept_terminal_chunk(
+                        terminal_chunk, generation_chunk, route="Legacy"
+                    )
+                    continue
+                if terminal_chunk is not None:
+                    raise ValueError(
+                        "Legacy stream emitted content after its terminal chunk"
+                    )
+                if run_manager:
+                    await run_manager.on_llm_new_token(content, chunk=generation_chunk)
+                yield generation_chunk
+        finally:
+            await _aclose_stream_iterator(legacy_provider_stream)
         if not saw_converted_chunk:
             return
         if kwargs.get("response_format") is None:
@@ -1490,6 +1506,20 @@ def _is_terminal_stream_chunk(chunk: ChatGenerationChunk) -> bool:
     return bool(
         chunk.generation_info and chunk.generation_info.get("finish_reason") is not None
     )
+
+
+def _close_stream_iterator(iterator: Iterator[Any]) -> None:
+    """Close a synchronous SDK stream when the iterator supports it."""
+    close = getattr(iterator, "close", None)
+    if callable(close):
+        close()
+
+
+async def _aclose_stream_iterator(iterator: AsyncIterator[Any]) -> None:
+    """Close an asynchronous SDK stream when the iterator supports it."""
+    aclose = getattr(iterator, "aclose", None)
+    if callable(aclose):
+        await aclose()
 
 
 def _is_authoritative_primary_terminal(chunk: ChatGenerationChunk) -> bool:
