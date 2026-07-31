@@ -654,9 +654,10 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 strict=normalized_response_format.strict,
             )
 
-        functions = kwargs.pop("functions", [])
-        for tool in kwargs.pop("tools", []):
-            if tool.get("type", None) == "function" and isinstance(functions, List):
+        functions = copy.deepcopy(kwargs.pop("functions", []))
+        tools = copy.deepcopy(kwargs.pop("tools", []))
+        for tool in tools:
+            if tool.get("type", None) == "function" and isinstance(functions, list):
                 functions.append(tool["function"])
 
         function_call = kwargs.pop("function_call", None)

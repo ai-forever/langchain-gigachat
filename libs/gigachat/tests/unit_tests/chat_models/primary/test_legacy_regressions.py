@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from collections.abc import AsyncIterator, Iterator
 from typing import Any
 from unittest.mock import MagicMock
@@ -119,6 +120,76 @@ def test_legacy_client_tool_binding_is_preserved(sdk_client: MagicMock) -> None:
     assert payload.functions[0].name == "lookup"
     assert isinstance(payload.function_call, gm.ChatFunctionCall)
     assert payload.function_call.name == "lookup"
+
+
+def _legacy_function(name: Any) -> dict[str, Any]:
+    return {
+        "name": name,
+        "description": f"Look up {name}.",
+        "parameters": {
+            "type": "object",
+            "properties": {"key": {"type": "string"}},
+            "required": ["key"],
+        },
+    }
+
+
+def test_legacy_raw_function_and_tool_lists_are_pure_across_invocations(
+    sdk_client: MagicMock,
+) -> None:
+    sdk_client.chat.return_value = _legacy_response()
+    functions = [_legacy_function("first")]
+    tools = [{"type": "function", "function": _legacy_function("second")}]
+    original_functions = copy.deepcopy(functions)
+    original_tools = copy.deepcopy(tools)
+    bound = GigaChat(model=MODEL).bind(functions=functions, tools=tools)
+
+    bound.invoke("Hello")
+    bound.invoke("Again")
+
+    assert functions == original_functions
+    assert tools == original_tools
+    for call in sdk_client.chat.call_args_list:
+        payload = call.args[0]
+        assert [function.name for function in payload.functions] == [
+            "first",
+            "second",
+        ]
+
+
+def test_legacy_public_function_binding_stays_pure_when_tools_are_added(
+    sdk_client: MagicMock,
+) -> None:
+    sdk_client.chat.return_value = _legacy_response()
+    functions = [_legacy_function("first")]
+    tools = [{"type": "function", "function": _legacy_function("second")}]
+    bound = GigaChat(model=MODEL).bind_functions(functions).bind(tools=tools)
+
+    bound.invoke("Hello")
+    bound.invoke("Again")
+
+    for call in sdk_client.chat.call_args_list:
+        payload = call.args[0]
+        assert [function.name for function in payload.functions] == [
+            "first",
+            "second",
+        ]
+
+
+def test_legacy_validation_failure_does_not_mutate_function_inputs(
+    sdk_client: MagicMock,
+) -> None:
+    functions = [_legacy_function(123)]
+    tools = [{"type": "function", "function": _legacy_function("second")}]
+    original_functions = copy.deepcopy(functions)
+    original_tools = copy.deepcopy(tools)
+
+    with pytest.raises(ValueError):
+        GigaChat(model=MODEL).bind(functions=functions, tools=tools).invoke("Hello")
+
+    assert functions == original_functions
+    assert tools == original_tools
+    sdk_client.chat.assert_not_called()
 
 
 def test_legacy_storage_is_forwarded(sdk_client: MagicMock) -> None:
