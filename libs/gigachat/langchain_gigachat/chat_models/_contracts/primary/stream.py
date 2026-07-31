@@ -146,12 +146,42 @@ def _take_text_block_index(
     index = _take_block_index(state, explicit)
     state.active_text_block_index = index
     state.active_text_block_role = role
+    if role != "reasoning":
+        state.active_reasoning_message_id = None
+    return index
+
+
+def _take_reasoning_block_index(
+    state: StreamState,
+    *,
+    explicit: Any = None,
+    message_id: str | None = None,
+) -> int | str:
+    if (
+        explicit is None
+        and state.active_text_block_role == "reasoning"
+        and state.active_text_block_index is not None
+        and (
+            message_id is None
+            or state.active_reasoning_message_id is None
+            or message_id == state.active_reasoning_message_id
+        )
+    ):
+        if message_id is not None:
+            state.active_reasoning_message_id = message_id
+        return state.active_text_block_index
+
+    index = _take_block_index(state, explicit)
+    state.active_text_block_index = index
+    state.active_text_block_role = "reasoning"
+    state.active_reasoning_message_id = message_id
     return index
 
 
 def _close_text_block(state: StreamState) -> None:
     state.active_text_block_index = None
     state.active_text_block_role = None
+    state.active_reasoning_message_id = None
 
 
 def _request_id(x_headers: Mapping[str, Any]) -> str | None:
@@ -178,6 +208,7 @@ def _reasoning_block(
     *,
     state: StreamState,
     explicit_index: Any = None,
+    message_id: str | None = None,
 ) -> dict[str, Any]:
     if isinstance(reasoning, Mapping) or hasattr(reasoning, "model_dump"):
         reasoning_data = _as_dict(reasoning)
@@ -196,7 +227,11 @@ def _reasoning_block(
         str(text),
         role="reasoning",
         provider_data=extras,
-        index=_take_block_index(state, explicit_index),
+        index=_take_reasoning_block_index(
+            state,
+            explicit=explicit_index,
+            message_id=message_id,
+        ),
     )
 
 
@@ -531,6 +566,7 @@ def _convert_content_part(
     message_inline_data: Any,
     event_name: str | None,
     incoming_tools_state_id: str | None,
+    message_id: str | None,
     state: StreamState,
 ) -> tuple[list[dict[str, Any]], list[ToolCallChunk]]:
     part = _as_dict(part_value)
@@ -600,12 +636,12 @@ def _convert_content_part(
 
     reasoning = part.get("reasoning", part.get("reasoning_content"))
     if reasoning is not None:
-        _close_text_block(state)
         content.append(
             _reasoning_block(
                 reasoning,
                 state=state,
                 explicit_index=part.get("index"),
+                message_id=message_id,
             )
         )
 
@@ -668,6 +704,12 @@ def _convert_messages(
     for message, parts in zip(messages, message_parts):
         role = str(message.get("role") or "assistant")
         message_inline_data = message.get("inline_data")
+        message_id_value = message.get("message_id")
+        message_id = (
+            str(message_id_value)
+            if message_id_value is not None
+            else state.provider_message_id
+        )
         message_tool_state = message.get("tools_state_id")
         tool_state_id = (
             str(message_tool_state)
@@ -701,6 +743,7 @@ def _convert_messages(
                 message_inline_data=message_inline_data,
                 event_name=event_name,
                 incoming_tools_state_id=tool_state_id,
+                message_id=message_id,
                 state=state,
             )
             content.extend(part_content)
@@ -728,8 +771,13 @@ def _convert_messages(
 
         reasoning = message.get("reasoning", message.get("reasoning_content"))
         if reasoning is not None:
-            _close_text_block(state)
-            content.append(_reasoning_block(reasoning, state=state))
+            content.append(
+                _reasoning_block(
+                    reasoning,
+                    state=state,
+                    message_id=message_id,
+                )
+            )
 
         if not message.get("content") and message_inline_data is not None:
             _close_text_block(state)
