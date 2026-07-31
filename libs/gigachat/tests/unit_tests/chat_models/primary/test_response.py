@@ -818,6 +818,326 @@ def test_mirrored_server_tool_execution_uses_part_level_once() -> None:
     ]
 
 
+def test_distinct_part_and_message_server_tools_are_both_preserved() -> None:
+    message = _message(
+        _response(
+            messages=[
+                {
+                    "role": "reasoning",
+                    "content": [
+                        {
+                            "tool_execution": {
+                                "call_id": "search-1",
+                                "name": "web_search",
+                                "status": "success",
+                            }
+                        }
+                    ],
+                },
+                {
+                    "role": "reasoning",
+                    "tool_execution": {
+                        "call_id": "image-1",
+                        "name": "image_generate",
+                        "status": "success",
+                    },
+                },
+            ]
+        )
+    )
+
+    assert [
+        block["tool_call_id"]
+        for block in message.content_blocks
+        if block["type"] == "server_tool_result"
+    ] == ["search-1", "image-1"]
+
+
+def test_distinct_message_level_server_tools_are_both_preserved() -> None:
+    message = _message(
+        _response(
+            messages=[
+                {
+                    "role": "reasoning",
+                    "tool_execution": {
+                        "call_id": "search-1",
+                        "name": "web_search",
+                        "status": "success",
+                    },
+                },
+                {
+                    "role": "reasoning",
+                    "tool_execution": {
+                        "call_id": "image-1",
+                        "name": "image_generate",
+                        "status": "success",
+                    },
+                },
+            ]
+        )
+    )
+
+    assert [
+        block["tool_call_id"]
+        for block in message.content_blocks
+        if block["type"] == "server_tool_result"
+    ] == ["search-1", "image-1"]
+
+
+def test_distinct_nested_and_response_server_tools_are_both_preserved() -> None:
+    message = _message(
+        _response(
+            messages=[
+                {
+                    "role": "reasoning",
+                    "content": [
+                        {
+                            "tool_execution": {
+                                "call_id": "search-1",
+                                "name": "web_search",
+                                "status": "success",
+                            }
+                        }
+                    ],
+                }
+            ],
+            tool_execution={
+                "call_id": "image-1",
+                "name": "image_generate",
+                "status": "success",
+            },
+        )
+    )
+
+    assert [
+        block["tool_call_id"]
+        for block in message.content_blocks
+        if block["type"] == "server_tool_result"
+    ] == ["search-1", "image-1"]
+
+
+def test_same_payload_with_distinct_explicit_ids_is_not_deduplicated() -> None:
+    common = {"name": "web_search", "status": "success"}
+    message = _message(
+        _response(
+            messages=[
+                {
+                    "role": "reasoning",
+                    "tool_execution": {"call_id": "search-1", **common},
+                    "content": [
+                        {
+                            "tool_execution": {
+                                "call_id": "search-2",
+                                **common,
+                            }
+                        }
+                    ],
+                }
+            ]
+        )
+    )
+
+    assert [
+        block["tool_call_id"]
+        for block in message.content_blocks
+        if block["type"] == "server_tool_result"
+    ] == ["search-2", "search-1"]
+
+
+def test_unidentified_mirror_of_distinct_explicit_ids_fails_closed() -> None:
+    common = {"name": "web_search", "status": "success"}
+    response = _response(
+        messages=[
+            {
+                "role": "reasoning",
+                "tool_execution": {"call_id": "search-1", **common},
+                "content": [{"tool_execution": {"call_id": "search-2", **common}}],
+            }
+        ],
+        tool_execution=common,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="unidentified server tool mirror matches multiple distinct",
+    ):
+        create_chat_result(response)
+
+
+def test_same_server_tool_id_with_conflicting_payload_fails_closed() -> None:
+    response = _response(
+        messages=[
+            {
+                "role": "reasoning",
+                "tool_execution": {
+                    "call_id": "shared-1",
+                    "name": "image_generate",
+                    "status": "success",
+                },
+                "content": [
+                    {
+                        "tool_execution": {
+                            "call_id": "shared-1",
+                            "name": "web_search",
+                            "status": "success",
+                        }
+                    }
+                ],
+            }
+        ]
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="same provider identity.*conflicting payloads",
+    ):
+        create_chat_result(response)
+
+
+def test_shared_container_state_for_distinct_server_tools_fails_closed() -> None:
+    response = _response(
+        messages=[
+            {
+                "role": "reasoning",
+                "tools_state_id": "shared-state",
+                "content": [
+                    {
+                        "tool_execution": {
+                            "name": "web_search",
+                            "status": "success",
+                        }
+                    },
+                    {
+                        "tool_execution": {
+                            "name": "image_generate",
+                            "status": "success",
+                        }
+                    },
+                ],
+            }
+        ]
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="tools_state_id 'shared-state'.*multiple distinct server tools",
+    ):
+        create_chat_result(response)
+
+
+def test_multiple_server_owned_states_are_supported_non_stream() -> None:
+    message = _message(
+        _response(
+            messages=[
+                {
+                    "role": "reasoning",
+                    "tools_state_id": "search-state",
+                    "tool_execution": {
+                        "name": "web_search",
+                        "status": "success",
+                    },
+                },
+                {
+                    "role": "reasoning",
+                    "tools_state_id": "image-state",
+                    "tool_execution": {
+                        "name": "image_generate",
+                        "status": "success",
+                    },
+                },
+            ]
+        )
+    )
+
+    assert [
+        block["tool_call_id"]
+        for block in message.content_blocks
+        if block["type"] == "server_tool_result"
+    ] == ["search-state", "image-state"]
+    assert message.additional_kwargs["tools_state_ids"] == [
+        "search-state",
+        "image-state",
+    ]
+    assert "tools_state_id" not in message.additional_kwargs
+
+
+def test_explicit_server_id_keeps_container_state_available_to_client_call() -> None:
+    message = _message(
+        _response(
+            messages=[
+                {
+                    "role": "assistant",
+                    "tools_state_id": "client-state",
+                    "function_call": {
+                        "name": "lookup_weather",
+                        "arguments": {"city": "Moscow"},
+                    },
+                    "tool_execution": {
+                        "call_id": "server-call",
+                        "name": "web_search",
+                        "status": "success",
+                    },
+                }
+            ]
+        )
+    )
+
+    assert message.tool_calls[0]["id"] == "client-state"
+    server_result = next(
+        block
+        for block in message.content_blocks
+        if block["type"] == "server_tool_result"
+    )
+    assert server_result["tool_call_id"] == "server-call"
+
+
+def test_shared_state_for_client_and_idless_server_tool_fails_closed() -> None:
+    response = _response(
+        messages=[
+            {
+                "role": "assistant",
+                "tools_state_id": "ambiguous-state",
+                "function_call": {
+                    "name": "lookup_weather",
+                    "arguments": {"city": "Moscow"},
+                },
+                "tool_execution": {
+                    "name": "web_search",
+                    "status": "success",
+                },
+            }
+        ]
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="tools_state_id ownership is ambiguous",
+    ):
+        create_chat_result(response)
+
+
+def test_client_call_with_multiple_unowned_states_fails_closed() -> None:
+    response = _response(
+        tools_state_id="response-state",
+        messages=[
+            {
+                "role": "assistant",
+                "tools_state_id": "message-state",
+                "function_call": {
+                    "name": "lookup_weather",
+                    "arguments": {"city": "Moscow"},
+                },
+            }
+        ],
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="client function call has multiple possible tools_state_id values",
+    ):
+        create_chat_result(response)
+
+
 def test_message_server_tool_execution_owns_inline_data() -> None:
     message = _message(
         _response(
@@ -976,23 +1296,33 @@ def test_multiple_provider_message_ids_fail_before_returning_message() -> None:
         create_chat_result(response)
 
 
-def test_multiple_tools_state_ids_fail_before_returning_message() -> None:
-    response = _response(
-        tools_state_id="response-state",
-        messages=[
-            {
-                "role": "assistant",
-                "tools_state_id": "nested-state",
-                "content": [{"text": "Hello"}],
-            }
-        ],
+def test_multiple_unassigned_tools_state_ids_are_retained_without_singular_state() -> (
+    None
+):
+    message = _message(
+        _response(
+            tools_state_id="response-state",
+            messages=[
+                {
+                    "role": "assistant",
+                    "tools_state_id": "nested-state",
+                    "content": [{"text": "Hello"}],
+                }
+            ],
+        )
     )
 
-    with pytest.raises(
-        ValueError,
-        match="multiple tools_state_id values.*replay semantics are unsupported",
-    ):
-        create_chat_result(response)
+    assert message.content == "Hello"
+    assert message.additional_kwargs["tools_state_ids"] == [
+        "response-state",
+        "nested-state",
+    ]
+    assert "tools_state_id" not in message.additional_kwargs
+    assert message.response_metadata["tools_state_ids"] == [
+        "response-state",
+        "nested-state",
+    ]
+    assert "tools_state_id" not in message.response_metadata
 
 
 def test_repeated_identical_provider_ids_are_deduplicated() -> None:

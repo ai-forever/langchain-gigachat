@@ -13,12 +13,16 @@ from langchain_core.outputs import ChatGeneration, ChatResult
 from pydantic import BaseModel
 
 from langchain_gigachat.chat_models._contracts.primary.content import (
+    ToolExecutionCandidate,
+    ToolExecutionSource,
     convert_function_call,
     convert_provider_file,
     convert_text_content,
     convert_tool_execution,
     create_usage_metadata,
+    normalized_tool_execution,
     reasoning_content,
+    resolve_tool_execution_candidates,
     server_tool_execution_id,
     unknown_provider_fields,
 )
@@ -93,6 +97,7 @@ def _part_blocks(
     *,
     role: str,
     server_tool_id: str | None,
+    emit_tool_execution: bool,
     message_inline_data: gm.ChatInlineData | None,
 ) -> list[dict[str, Any]]:
     blocks: list[dict[str, Any]] = []
@@ -124,7 +129,7 @@ def _part_blocks(
             }
         )
 
-    has_tool_execution = part.tool_execution is not None
+    has_tool_execution = emit_tool_execution and part.tool_execution is not None
     if has_tool_execution:
         if server_tool_id is None:
             raise RuntimeError("Primary server tool identity resolution failed")
@@ -200,9 +205,99 @@ def _text_content(messages: Iterable[gm.ChatMessage]) -> str:
 def _client_tool_state_id(
     message: gm.ChatMessage,
     response: gm.ChatCompletionResponse,
+    *,
+    server_owned_state_ids: set[str],
 ) -> str | None:
     """Return only provider-issued state that can replay a client tool call."""
-    return message.tools_state_id or getattr(response, "tools_state_id", None)
+    observed_state_ids = list(
+        dict.fromkeys(
+            state_id
+            for state_id in (
+                message.tools_state_id,
+                getattr(response, "tools_state_id", None),
+            )
+            if state_id is not None
+        )
+    )
+    client_state_ids = [
+        state_id
+        for state_id in observed_state_ids
+        if state_id not in server_owned_state_ids
+    ]
+    if len(client_state_ids) > 1:
+        raise ValueError(
+            "Primary GigaChat client function call has multiple possible "
+            f"tools_state_id values: {client_state_ids!r}."
+        )
+    if client_state_ids:
+        return client_state_ids[0]
+    if observed_state_ids:
+        raise ValueError(
+            "Primary GigaChat tools_state_id ownership is ambiguous: every "
+            "observed state is already owned by a server tool execution."
+        )
+    return None
+
+
+def _tool_execution_candidates(
+    response: gm.ChatCompletionResponse,
+) -> list[ToolExecutionCandidate]:
+    candidates: list[ToolExecutionCandidate] = []
+    response_state_id = getattr(response, "tools_state_id", None)
+    order = 0
+
+    def append_candidate(
+        execution: Any,
+        *,
+        source: ToolExecutionSource,
+        message_index: int | None,
+        part_index: int | None,
+        container_state_id: str | None,
+    ) -> None:
+        nonlocal order
+        candidates.append(
+            ToolExecutionCandidate(
+                source=source,
+                order=order,
+                message_index=message_index,
+                part_index=part_index,
+                execution=execution,
+                normalized_execution=normalized_tool_execution(execution),
+                execution_id=server_tool_execution_id(execution),
+                container_state_id=container_state_id,
+            )
+        )
+        order += 1
+
+    for message_index, message in enumerate(response.messages):
+        container_state_id = message.tools_state_id or response_state_id
+        for part_index, part in enumerate(message.content or []):
+            if part.tool_execution is not None:
+                append_candidate(
+                    part.tool_execution,
+                    source="part",
+                    message_index=message_index,
+                    part_index=part_index,
+                    container_state_id=container_state_id,
+                )
+        if message.tool_execution is not None:
+            append_candidate(
+                message.tool_execution,
+                source="message",
+                message_index=message_index,
+                part_index=None,
+                container_state_id=container_state_id,
+            )
+
+    if response.tool_execution is not None:
+        append_candidate(
+            response.tool_execution,
+            source="response",
+            message_index=None,
+            part_index=None,
+            container_state_id=response_state_id,
+        )
+    return candidates
 
 
 def _content_blocks(
@@ -218,26 +313,17 @@ def _content_blocks(
     tool_calls: list[ToolCall] = []
     invalid_tool_calls: list[InvalidToolCall] = []
     function_call_seen = False
-    next_server_tool_sequence = 0
-
-    def resolve_server_tool_id(
-        execution: Any,
-        *,
-        message: gm.ChatMessage | None = None,
-    ) -> str:
-        nonlocal next_server_tool_sequence
-        message_tools_state_id = message.tools_state_id if message is not None else None
-        resolved = server_tool_execution_id(
-            execution,
-            message_tools_state_id,
-            getattr(response, "tools_state_id", None),
-        )
-        if resolved is not None:
-            return resolved
-
-        local_id = f"lc_primary-server-tool-{next_server_tool_sequence}"
-        next_server_tool_sequence += 1
-        return local_id
+    resolved_executions = resolve_tool_execution_candidates(
+        _tool_execution_candidates(response)
+    )
+    resolved_by_coordinates = {
+        resolved.candidate.coordinates: resolved for resolved in resolved_executions
+    }
+    server_owned_state_ids = {
+        resolved.provider_state_id
+        for resolved in resolved_executions
+        if resolved.provider_state_id is not None
+    }
 
     def append_function_call(
         function_call: gm.PrimaryChatFunctionCall,
@@ -276,17 +362,7 @@ def _content_blocks(
         if invalid_call is not None:
             invalid_tool_calls.append(invalid_call)
 
-    has_part_tool_execution = any(
-        part.tool_execution is not None
-        for message in response.messages
-        for part in message.content or []
-    )
-    has_message_tool_execution = not has_part_tool_execution and any(
-        message.tool_execution is not None for message in response.messages
-    )
-
-    for message in response.messages:
-        client_tool_state_id = _client_tool_state_id(message, response)
+    for message_index, message in enumerate(response.messages):
         part_function_calls = [
             part.function_call
             for part in message.content or []
@@ -319,38 +395,40 @@ def _content_blocks(
         if selected_function_call is not None:
             append_function_call(
                 selected_function_call,
-                tool_call_id=client_tool_state_id,
+                tool_call_id=_client_tool_state_id(
+                    message,
+                    response,
+                    server_owned_state_ids=server_owned_state_ids,
+                ),
             )
 
-        for part in message.content or []:
-            server_tool_id = (
-                resolve_server_tool_id(
-                    part.tool_execution,
-                    message=message,
-                )
-                if part.tool_execution is not None
-                else None
+        for part_index, part in enumerate(message.content or []):
+            resolved_execution = resolved_by_coordinates.get(
+                ("part", message_index, part_index)
             )
             blocks.extend(
                 _part_blocks(
                     part,
                     role=message.role,
-                    server_tool_id=server_tool_id,
+                    server_tool_id=(
+                        resolved_execution.tool_call_id
+                        if resolved_execution is not None
+                        else None
+                    ),
+                    emit_tool_execution=resolved_execution is not None,
                     message_inline_data=message.inline_data,
                 )
             )
 
-        emitted_message_tool_execution = (
-            has_message_tool_execution and message.tool_execution is not None
+        resolved_message_execution = resolved_by_coordinates.get(
+            ("message", message_index, None)
         )
-        if emitted_message_tool_execution:
-            server_tool_id = resolve_server_tool_id(
-                message.tool_execution,
-                message=message,
-            )
+        emitted_message_tool_execution = resolved_message_execution is not None
+        if resolved_message_execution is not None:
+            assert message.tool_execution is not None
             tool_blocks = convert_tool_execution(
                 message.tool_execution,
-                tool_call_id=server_tool_id,
+                tool_call_id=resolved_message_execution.tool_call_id,
             )
             _attach_tool_context(
                 tool_blocks,
@@ -380,18 +458,13 @@ def _content_blocks(
         if message_unknown:
             blocks.append({"type": "non_standard", "value": message_unknown})
 
-    if (
-        response.tool_execution is not None
-        and not has_part_tool_execution
-        and not has_message_tool_execution
-    ):
-        server_tool_id = resolve_server_tool_id(
-            response.tool_execution,
-        )
+    resolved_response_execution = resolved_by_coordinates.get(("response", None, None))
+    if resolved_response_execution is not None:
+        assert response.tool_execution is not None
         blocks.extend(
             convert_tool_execution(
                 response.tool_execution,
-                tool_call_id=server_tool_id,
+                tool_call_id=resolved_response_execution.tool_call_id,
             )
         )
 
@@ -419,11 +492,6 @@ def _validate_response_identity(response: gm.ChatCompletionResponse) -> None:
         raise ValueError(
             "Primary GigaChat completion contains multiple provider message_id "
             "values; their replay semantics are unsupported."
-        )
-    if len(_tools_state_ids(response)) > 1:
-        raise ValueError(
-            "Primary GigaChat completion contains multiple tools_state_id values; "
-            "their replay semantics are unsupported."
         )
 
 
