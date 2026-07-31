@@ -209,6 +209,14 @@ def _message_tool_id(
     )
 
 
+def _client_tool_state_id(
+    message: gm.ChatMessage,
+    response: gm.ChatCompletionResponse,
+) -> str | None:
+    """Return only provider-issued state that can replay a client tool call."""
+    return message.tools_state_id or getattr(response, "tools_state_id", None)
+
+
 def _content_blocks(
     response: gm.ChatCompletionResponse,
 ) -> tuple[
@@ -226,12 +234,19 @@ def _content_blocks(
     def append_function_call(
         function_call: gm.PrimaryChatFunctionCall,
         *,
-        tool_call_id: str,
+        tool_call_id: str | None,
     ) -> None:
         raw_function_call = function_call.model_dump(
             exclude_none=True,
             by_alias=True,
         )
+        if tool_call_id is None:
+            raise ValueError(
+                "Primary GigaChat client function call is missing tools_state_id "
+                "and cannot be replayed. Provider message_id values are not "
+                "continuation state. Raw function call: "
+                f"{raw_function_call!r}"
+            )
         converted = convert_function_call(
             function_call,
             tool_call_id=tool_call_id,
@@ -268,12 +283,13 @@ def _content_blocks(
             response,
             fallback=f"client_tool_{message_index}",
         )
+        client_tool_state_id = _client_tool_state_id(message, response)
 
         for part in message.content or []:
             if part.function_call is not None:
                 append_function_call(
                     part.function_call,
-                    tool_call_id=tool_call_id,
+                    tool_call_id=client_tool_state_id,
                 )
             blocks.extend(
                 _part_blocks(
@@ -287,7 +303,7 @@ def _content_blocks(
         if message.function_call is not None:
             append_function_call(
                 message.function_call,
-                tool_call_id=tool_call_id,
+                tool_call_id=client_tool_state_id,
             )
 
         emitted_message_tool_execution = (

@@ -220,6 +220,7 @@ def test_message_level_function_call_is_supported() -> None:
                 {
                     "role": "assistant",
                     "message_id": "provider-message-1",
+                    "tools_state_id": "tools-state-1",
                     "function_call": {
                         "name": "lookup",
                         "arguments": '{"key": "value"}',
@@ -229,14 +230,74 @@ def test_message_level_function_call_is_supported() -> None:
         )
     )
 
-    assert message.tool_calls[0]["id"] == "provider-message-1"
+    assert message.tool_calls[0]["id"] == "tools-state-1"
     assert message.tool_calls[0]["args"] == {"key": "value"}
+
+
+@pytest.mark.parametrize(
+    "function_call_location",
+    ["message", "part"],
+)
+def test_function_call_without_provider_state_fails_closed(
+    function_call_location: str,
+) -> None:
+    function_call = {
+        "name": "lookup",
+        "arguments": {"key": "value"},
+    }
+    message: dict[str, object] = {
+        "role": "assistant",
+        "message_id": "provider-message-1",
+    }
+    if function_call_location == "message":
+        message["function_call"] = function_call
+    else:
+        message["content"] = [{"function_call": function_call}]
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            "client function call is missing tools_state_id.*"
+            "message_id values are not continuation state.*"
+            "'name': 'lookup'"
+        ),
+    ):
+        create_chat_result(_response(messages=[message]))
+
+
+@pytest.mark.parametrize("state_field", ["tools_state_id", "tool_state_id"])
+def test_function_call_uses_response_level_tools_state_id(state_field: str) -> None:
+    message = _message(
+        _response(
+            **{state_field: "response-tools-state"},
+            messages=[
+                {
+                    "role": "assistant",
+                    "message_id": "provider-message-1",
+                    "function_call": {
+                        "name": "lookup",
+                        "arguments": {"key": "value"},
+                    },
+                }
+            ],
+        )
+    )
+
+    assert message.tool_calls == [
+        {
+            "type": "tool_call",
+            "name": "lookup",
+            "args": {"key": "value"},
+            "id": "response-tools-state",
+        }
+    ]
 
 
 def test_invalid_function_arguments_become_invalid_tool_call() -> None:
     message = _message(
         _response(
             message_id="provider-message-1",
+            tools_state_id="tools-state-1",
             messages=[
                 {
                     "role": "assistant",
@@ -263,7 +324,7 @@ def test_invalid_function_arguments_become_invalid_tool_call() -> None:
             "type": "invalid_tool_call",
             "name": "broken",
             "args": "not-json",
-            "id": "provider-message-1",
+            "id": "tools-state-1",
             "error": (
                 "Function 'broken' arguments contain invalid JSON: "
                 "Expecting value: line 1 column 1 (char 0)"
@@ -275,6 +336,7 @@ def test_invalid_function_arguments_become_invalid_tool_call() -> None:
 
 def test_valid_and_invalid_function_calls_fail_during_response_conversion() -> None:
     response = _response(
+        tools_state_id="tools-state-1",
         messages=[
             {
                 "role": "assistant",
@@ -302,6 +364,7 @@ def test_valid_and_invalid_function_calls_fail_during_response_conversion() -> N
 
 def test_multiple_valid_function_calls_fail_during_response_conversion() -> None:
     response = _response(
+        tools_state_id="tools-state-1",
         messages=[
             {
                 "role": "assistant",
@@ -359,6 +422,7 @@ def test_mirrored_function_call_is_emitted_once() -> None:
 
 def test_response_conversion_does_not_mutate_provider_model() -> None:
     response = _response(
+        tools_state_id="tools-state-1",
         messages=[
             {
                 "role": "assistant",
