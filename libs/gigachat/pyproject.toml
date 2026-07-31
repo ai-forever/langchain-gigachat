@@ -8,7 +8,7 @@ license = "MIT"
 requires-python = ">=3.10,<4"
 dependencies = [
     "langchain-core>=1,<2",
-    "gigachat>=0.2.1,<0.3",
+    "gigachat==0.2.3a1",
 ]
 
 [project.urls]

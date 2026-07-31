@@ -262,14 +262,26 @@ are also available explicitly:
 llm.with_structured_output(Answer, method="json_schema")
 ```
 
+To request native JSON without enforcing a schema, pass `None` with
+`method="json_mode"`:
+
+```python
+json_llm = llm.with_structured_output(None, method="json_mode")
+result = json_llm.invoke("Return a JSON object with a short answer.")
+```
+
+This sends `response_format={"type": "json_schema"}` to
+`v1/chat/completions` without `schema` or `strict`. Passing a schema with
+`method="json_mode"` keeps the deprecated legacy behavior; use
+`method="json_schema"` for schema-constrained output.
+
 > **Note:** `method="json_schema"` requires `gigachat>=0.2.1` and a model that
 > supports the `response_format` API field. Support is currently in beta on
 > GigaChat side and may not be available for every model — fall back to the
 > default `method="function_calling"` if the API rejects the request.
 
-The legacy `method="json_mode"` is still accepted for backward compatibility,
-but it emits a `DeprecationWarning` — prefer `method="json_schema"` for new
-code.
+The legacy schema-based `method="json_mode"` behavior is still accepted for
+backward compatibility, but it emits a `DeprecationWarning`.
 
 ## Attachments
 

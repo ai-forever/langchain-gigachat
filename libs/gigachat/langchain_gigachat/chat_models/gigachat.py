@@ -793,7 +793,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
     @override
     def with_structured_output(
         self,
-        schema: Dict[str, Any] | type,
+        schema: Dict[str, Any] | type | None,
         *,
         include_raw: bool = False,
         **kwargs: Any,
@@ -802,7 +802,8 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
 
         Args:
             schema: Output schema. Can be a dict-like tool/schema description
-                or a Pydantic class.
+                or a Pydantic class. Pass ``None`` with ``method="json_mode"``
+                to request native JSON output without a schema.
             include_raw: If ``False``, return only parsed structured output.
                 If ``True``, return a dict with ``raw``, ``parsed``, and
                 ``parsing_error`` keys.
@@ -811,8 +812,9 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 - ``method``: ``"function_calling"`` (default),
                   ``"json_schema"`` (native API-level JSON Schema
                   constraint; requires a model that supports
-                  ``response_format``), ``"json_mode"`` (deprecated,
-                  still accepted for backward compatibility), or
+                  ``response_format``), ``"json_mode"`` (schema-less native
+                  JSON when ``schema=None``; legacy schema-based behavior is
+                  deprecated), or
                   ``"format_instructions"`` (legacy).
                 - ``strict``: best-effort strict schema adherence. Only
                   valid with ``method="json_schema"``. Defaults to ``True``.
@@ -841,9 +843,12 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 "'json_mode' or 'format_instructions'. "
                 f"Received: {method}"
             )
-        if method == "json_mode":
+        native_json_mode = method == "json_mode" and schema is None
+        if method == "json_mode" and schema is not None:
             warnings.warn(
-                "method='json_mode' is deprecated; use method='json_schema'.",
+                "Legacy method='json_mode' behavior is deprecated; use "
+                "method='json_schema', or pass schema=None for native "
+                "schema-less JSON.",
                 DeprecationWarning,
                 stacklevel=2,
             )
@@ -852,8 +857,11 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             raise ValueError("`strict` is only supported with method='json_schema'.")
         if kwargs:
             raise ValueError(f"Received unsupported arguments {kwargs}")
+        if schema is None and method != "json_mode":
+            raise TypeError(f"method={method!r} requires a schema.")
         output_parser: OutputParserLike
         if method == "function_calling":
+            assert schema is not None
             func = convert_to_gigachat_tool(schema)["function"]
             key_name = func.get(
                 "name", func.get("title")
@@ -870,6 +878,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             llm = self.bind_tools([schema], tool_choice=key_name)
         else:
             if method == "json_schema":
+                assert schema is not None
                 if _is_pydantic_class(schema):
                     response_format_schema = schema.model_json_schema()
                 elif isinstance(schema, dict):
@@ -884,6 +893,8 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                     strict=strict if strict is not None else True,
                 )
                 llm = self.bind(response_format=response_format)
+            elif native_json_mode:
+                llm = self.bind(response_format={"type": "json_schema"})
             else:
                 llm = self
             if _is_pydantic_class(schema):
@@ -891,6 +902,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             else:
                 output_parser = JsonOutputParser()
             if method == "format_instructions":
+                assert schema is not None
                 format_instructions = _format_instructions_for_schema(schema)
 
                 def _inject_fi(
