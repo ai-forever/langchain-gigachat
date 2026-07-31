@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
-from typing import Any
+from copy import deepcopy
+from typing import Any, Literal
 from uuid import uuid4
 
 import gigachat.models as gm
@@ -91,6 +92,12 @@ _SECOND_CLIENT_TOOL_CALL = (
     "Primary streaming received a second client tool call after the first "
     "call's arguments were complete"
 )
+_AMBIGUOUS_TOOL_STATE_OWNER = (
+    "Primary tools_state_id could belong to both a client function call and a "
+    "server tool lifecycle; explicit independent identities are required."
+)
+
+_ToolStateOwner = Literal["client", "server", "unassigned"]
 
 
 def _as_dict(value: Any) -> dict[str, Any]:
@@ -254,7 +261,7 @@ def _tool_call_chunk(
     if is_first_fragment:
         if not incoming_name:
             raise ValueError("First primary client tool fragment must include a name")
-        call_id = explicit_id or incoming_tools_state_id or state.tools_state_id
+        call_id = explicit_id or incoming_tools_state_id or state.client_tools_state_id
         if explicit_index is not None and not isinstance(explicit_index, int):
             raise TypeError("Primary client tool fragment index must be an integer")
         index: int = (
@@ -278,7 +285,7 @@ def _tool_call_chunk(
             stored_call_id
             or explicit_id
             or incoming_tools_state_id
-            or state.tools_state_id
+            or state.client_tools_state_id
         )
         if stored_call_id is None and call_id is not None:
             state.client_tool_id = call_id
@@ -341,24 +348,24 @@ def _client_tool_identity_update(
 ) -> tuple[list[ToolCallChunk], dict[str, Any]]:
     if (
         not state.client_tool_started
-        or state.tools_state_id is None
+        or state.client_tools_state_id is None
         or state.client_tool_index is None
     ):
         return [], {}
 
     if state.client_tool_id is None:
-        state.client_tool_id = state.tools_state_id
+        state.client_tool_id = state.client_tools_state_id
         return [
             tool_call_chunk(
                 name=None,
                 args="",
-                id=state.tools_state_id,
+                id=state.client_tools_state_id,
                 index=state.client_tool_index,
             )
         ], {}
 
     if (
-        state.client_tool_id == state.tools_state_id
+        state.client_tool_id == state.client_tools_state_id
         or state.client_tool_state_mapping_emitted
     ):
         return [], {}
@@ -366,9 +373,93 @@ def _client_tool_identity_update(
     state.client_tool_state_mapping_emitted = True
     return [], {
         "provider_tool_state_by_call_id": {
-            state.client_tool_id: state.tools_state_id,
+            state.client_tool_id: state.client_tools_state_id,
         }
     }
+
+
+def _normalized_server_tool_payload(
+    execution: Mapping[str, Any],
+) -> dict[str, Any]:
+    payload = {
+        key: deepcopy(value)
+        for key, value in execution.items()
+        if key not in {"call_id", "tool_call_id", "id", "index"}
+    }
+    status = str(payload.get("status") or "").lower()
+    if status in {"complete", "completed", "done", "success"}:
+        payload["status"] = "success"
+    elif status in {"error", "failed", "failure"}:
+        payload["status"] = "failed"
+    return payload
+
+
+def _is_terminal_server_execution(
+    execution: Mapping[str, Any],
+    *,
+    event_name: str | None,
+) -> bool:
+    status = str(execution.get("status") or "").lower()
+    return event_name in {
+        "response.tool.completed",
+        "response.tool.failed",
+    } or status in {
+        "complete",
+        "completed",
+        "done",
+        "error",
+        "failed",
+        "failure",
+        "success",
+    }
+
+
+def _server_tool_repeat_call_id(
+    execution: Mapping[str, Any],
+    *,
+    event_name: str | None,
+    incoming_tools_state_id: str | None,
+    state: StreamState,
+) -> str | None:
+    if not _is_terminal_server_execution(execution, event_name=event_name):
+        return None
+
+    provider_id_value = (
+        execution.get("call_id")
+        or execution.get("tool_call_id")
+        or execution.get("id")
+        or incoming_tools_state_id
+    )
+    provider_id = str(provider_id_value) if provider_id_value is not None else None
+    call_id = (
+        state.server_tool_call_ids_by_provider.get(provider_id)
+        if provider_id is not None
+        else None
+    )
+    payload = _normalized_server_tool_payload(execution)
+
+    if call_id is not None and call_id in state.server_tool_terminal_payloads:
+        previous = state.server_tool_terminal_payloads[call_id]
+        if previous != payload:
+            raise ValueError(
+                f"Conflicting repeated terminal payload for primary server tool "
+                f"{call_id!r}."
+            )
+        return call_id
+
+    if event_name != "response.message.done":
+        return None
+    matches = [
+        known_call_id
+        for known_call_id, known_payload in state.server_tool_terminal_payloads.items()
+        if known_payload == payload
+    ]
+    if len(matches) > 1:
+        raise ValueError(
+            "Primary response.message.done repeated a server tool execution that "
+            "matches multiple completed lifecycles; correlation is ambiguous."
+        )
+    return matches[0] if matches else None
 
 
 def _server_tool_call_id(
@@ -426,12 +517,16 @@ def _server_tool_identity_update(
     state: StreamState,
     *,
     incoming_tools_state_id: str | None,
-    has_tool_execution: bool,
+    executions: Sequence[Mapping[str, Any]],
+    event_name: str | None,
 ) -> dict[str, Any]:
     """Associate provider state that arrives after an idless server-tool result."""
-    if incoming_tools_state_id is None or has_tool_execution:
+    if incoming_tools_state_id is None:
         return {}
     if incoming_tools_state_id in state.server_tool_call_ids_by_provider:
+        return {}
+    if state.active_server_tool_call_id is not None:
+        # The current lifecycle claims the state while its execution is converted.
         return {}
 
     unresolved = [
@@ -441,6 +536,26 @@ def _server_tool_identity_update(
     ]
     if not unresolved:
         return {}
+
+    terminal_payloads = [
+        _normalized_server_tool_payload(execution)
+        for execution in executions
+        if _is_terminal_server_execution(execution, event_name=event_name)
+    ]
+    if terminal_payloads:
+        matches = [
+            call_id
+            for call_id in unresolved
+            if state.server_tool_terminal_payloads.get(call_id) in terminal_payloads
+        ]
+        if len(matches) > 1:
+            raise ValueError(
+                "Primary repeated server tool execution matches multiple unresolved "
+                "tool lifecycles; correlation is ambiguous."
+            )
+        if not matches:
+            return {}
+        unresolved = matches
     if len(unresolved) > 1:
         raise ValueError(
             "Primary server tool state arrived after multiple unresolved "
@@ -464,7 +579,7 @@ def _tool_execution_block(
     event_name: str | None,
     incoming_tools_state_id: str | None,
     state: StreamState,
-) -> dict[str, Any]:
+) -> dict[str, Any] | None:
     execution = _as_dict(execution_value)
 
     status = str(execution.get("status") or "").lower()
@@ -473,18 +588,24 @@ def _tool_execution_block(
         "failed",
         "failure",
     }
-    terminal = event_name in {
-        "response.tool.completed",
-        "response.tool.failed",
-    } or status in {
-        "complete",
-        "completed",
-        "done",
-        "error",
-        "failed",
-        "failure",
-        "success",
-    }
+    terminal = _is_terminal_server_execution(execution, event_name=event_name)
+    repeated_call_id = _server_tool_repeat_call_id(
+        execution,
+        event_name=event_name,
+        incoming_tools_state_id=incoming_tools_state_id,
+        state=state,
+    )
+    if repeated_call_id is not None:
+        if incoming_tools_state_id is not None:
+            mapped_call_id = state.server_tool_call_ids_by_provider.get(
+                incoming_tools_state_id
+            )
+            if mapped_call_id is not None and mapped_call_id != repeated_call_id:
+                raise ValueError(
+                    "Primary repeated server tool execution conflicts with its "
+                    "provider tools_state_id mapping."
+                )
+        return None
     call_id, provider_id = _server_tool_call_id(
         execution,
         incoming_tools_state_id=incoming_tools_state_id,
@@ -546,6 +667,14 @@ def _tool_execution_block(
             call_id: provider_id,
         }
     if terminal:
+        payload = _normalized_server_tool_payload(execution)
+        previous_payload = state.server_tool_terminal_payloads.get(call_id)
+        if previous_payload is not None and previous_payload != payload:
+            raise ValueError(
+                f"Conflicting repeated terminal payload for primary server tool "
+                f"{call_id!r}."
+            )
+        state.server_tool_terminal_payloads[call_id] = payload
         state.pending_server_tool_result_id = None if failed else call_id
         return block
 
@@ -593,7 +722,8 @@ def _convert_content_part(
     role: str,
     message_inline_data: Any,
     event_name: str | None,
-    incoming_tools_state_id: str | None,
+    incoming_client_tools_state_id: str | None,
+    incoming_server_tools_state_id: str | None,
     message_id: str | None,
     state: StreamState,
 ) -> tuple[list[dict[str, Any]], list[ToolCallChunk]]:
@@ -630,7 +760,7 @@ def _convert_content_part(
         tool_calls.append(
             _tool_call_chunk(
                 part["function_call"],
-                incoming_tools_state_id=incoming_tools_state_id,
+                incoming_tools_state_id=incoming_client_tools_state_id,
                 state=state,
             )
         )
@@ -640,16 +770,17 @@ def _convert_content_part(
         tool_execution_block = _tool_execution_block(
             part["tool_execution"],
             event_name=event_name,
-            incoming_tools_state_id=incoming_tools_state_id,
+            incoming_tools_state_id=incoming_server_tools_state_id,
             state=state,
         )
-        block_extras = tool_execution_block.setdefault("extras", {})
-        if inline_data_value is not None:
-            block_extras["inline_data"] = _as_dict(inline_data_value)
-            state.pending_server_tool_result_id = None
-        if extra:
-            block_extras["provider_data"] = extra
-        content.append(tool_execution_block)
+        if tool_execution_block is not None:
+            block_extras = tool_execution_block.setdefault("extras", {})
+            if inline_data_value is not None:
+                block_extras["inline_data"] = _as_dict(inline_data_value)
+                state.pending_server_tool_result_id = None
+            if extra:
+                block_extras["provider_data"] = extra
+            content.append(tool_execution_block)
 
     if part.get("function_result") is not None:
         _close_text_block(state)
@@ -696,6 +827,7 @@ def _convert_messages(
     *,
     event_name: str | None,
     incoming_tools_state_id: str | None,
+    tools_state_owner: _ToolStateOwner | None,
     state: StreamState,
 ) -> tuple[
     list[str | dict[str, Any]],
@@ -770,7 +902,12 @@ def _convert_messages(
                 role=role,
                 message_inline_data=message_inline_data,
                 event_name=event_name,
-                incoming_tools_state_id=tool_state_id,
+                incoming_client_tools_state_id=(
+                    tool_state_id if tools_state_owner == "client" else None
+                ),
+                incoming_server_tools_state_id=(
+                    tool_state_id if tools_state_owner == "server" else None
+                ),
                 message_id=message_id,
                 state=state,
             )
@@ -782,20 +919,24 @@ def _convert_messages(
             tool_calls.append(
                 _tool_call_chunk(
                     message_function_call,
-                    incoming_tools_state_id=tool_state_id,
+                    incoming_tools_state_id=(
+                        tool_state_id if tools_state_owner == "client" else None
+                    ),
                     state=state,
                 )
             )
         if has_message_tool_execution and message.get("tool_execution") is not None:
             _close_text_block(state)
-            content.append(
-                _tool_execution_block(
-                    message["tool_execution"],
-                    event_name=event_name,
-                    incoming_tools_state_id=tool_state_id,
-                    state=state,
-                )
+            block = _tool_execution_block(
+                message["tool_execution"],
+                event_name=event_name,
+                incoming_tools_state_id=(
+                    tool_state_id if tools_state_owner == "server" else None
+                ),
+                state=state,
             )
+            if block is not None:
+                content.append(block)
 
         reasoning = message.get("reasoning", message.get("reasoning_content"))
         if reasoning is not None:
@@ -844,6 +985,157 @@ def _convert_messages(
     )
 
 
+def _event_has_client_function_call(
+    messages: Sequence[Mapping[str, Any]],
+) -> bool:
+    return any(
+        message.get("function_call") is not None
+        or any(
+            part.get("function_call") is not None
+            for part in _as_dict_list(message.get("content"), field="messages.content")
+        )
+        for message in messages
+    )
+
+
+def _event_tool_executions(
+    messages: Sequence[Mapping[str, Any]],
+    top_level_tool_execution: Any,
+) -> list[dict[str, Any]]:
+    executions: list[dict[str, Any]] = []
+    for message in messages:
+        for part in _as_dict_list(message.get("content"), field="messages.content"):
+            if part.get("tool_execution") is not None:
+                executions.append(_as_dict(part["tool_execution"]))
+        if message.get("tool_execution") is not None:
+            executions.append(_as_dict(message["tool_execution"]))
+    if top_level_tool_execution is not None:
+        executions.append(_as_dict(top_level_tool_execution))
+    return executions
+
+
+def _tool_state_owner(
+    state: StreamState,
+    *,
+    incoming_tools_state_id: str | None,
+    contains_client_function_call: bool,
+    contains_server_tool_execution: bool,
+) -> _ToolStateOwner | None:
+    if incoming_tools_state_id is None:
+        return None
+
+    known_client_owner = incoming_tools_state_id == state.client_tools_state_id
+    known_server_owner = (
+        incoming_tools_state_id in state.server_tool_call_ids_by_provider
+    )
+    unresolved_client_owner = (
+        state.client_tool_started and state.client_tools_state_id is None
+    )
+    unresolved_server_owner = bool(
+        state.active_server_tool_call_id
+        or any(
+            call_id not in state.server_tool_provider_ids
+            for call_id in state.unresolved_server_tool_call_ids
+        )
+    )
+
+    client_plausible = (
+        known_client_owner or contains_client_function_call or unresolved_client_owner
+    )
+    server_plausible = (
+        known_server_owner or contains_server_tool_execution or unresolved_server_owner
+    )
+    if client_plausible and server_plausible:
+        raise ValueError(_AMBIGUOUS_TOOL_STATE_OWNER)
+    if client_plausible:
+        return "client"
+    if server_plausible:
+        return "server"
+    return "unassigned"
+
+
+def _refresh_replay_tools_state_id(state: StreamState) -> None:
+    has_client_state = state.client_tools_state_id is not None
+    has_server_state = state.latest_server_tools_state_id is not None
+    has_unassigned_state = bool(state.unassigned_tools_state_ids)
+    owner_count = sum((has_client_state, has_server_state, has_unassigned_state))
+    if owner_count != 1:
+        state.tools_state_id = None
+    elif has_client_state:
+        state.tools_state_id = state.client_tools_state_id
+    elif has_server_state:
+        state.tools_state_id = state.latest_server_tools_state_id
+    elif len(state.unassigned_tools_state_ids) == 1:
+        state.tools_state_id = state.unassigned_tools_state_ids[0]
+    else:
+        state.tools_state_id = None
+
+
+def _claim_unassigned_client_state(
+    state: StreamState,
+    *,
+    contains_client_function_call: bool,
+    incoming_tools_state_id: str | None,
+) -> None:
+    if (
+        not contains_client_function_call
+        or incoming_tools_state_id is not None
+        or state.client_tools_state_id is not None
+        or state.latest_server_tools_state_id is not None
+        or state.active_server_tool_call_id is not None
+        or state.unresolved_server_tool_call_ids
+        or len(state.unassigned_tools_state_ids) != 1
+    ):
+        return
+    state.client_tools_state_id = state.unassigned_tools_state_ids.pop()
+    _refresh_replay_tools_state_id(state)
+
+
+def _observe_tools_state_id(
+    state: StreamState,
+    *,
+    value: str | None,
+    owner: _ToolStateOwner | None,
+) -> dict[str, Any]:
+    if value is None:
+        return {}
+    if owner is None:
+        raise RuntimeError("Primary tool-state ownership was not classified")
+
+    if owner == "client":
+        if state.client_tools_state_id not in {None, value}:
+            raise ValueError(
+                "Primary client function call contains multiple tools_state_id "
+                "values; replay semantics are unsupported."
+            )
+        state.client_tools_state_id = value
+        if value in state.unassigned_tools_state_ids:
+            state.unassigned_tools_state_ids.remove(value)
+    elif owner == "server":
+        state.latest_server_tools_state_id = value
+        if value in state.unassigned_tools_state_ids:
+            state.unassigned_tools_state_ids.remove(value)
+    elif value not in state.unassigned_tools_state_ids:
+        if state.unassigned_tools_state_ids:
+            raise ValueError(
+                "Primary GigaChat completion contains multiple tools_state_id values; "
+                "their replay semantics are unsupported."
+            )
+        state.unassigned_tools_state_ids.append(value)
+
+    is_new_observation = value not in state.provider_tools_state_ids
+    if is_new_observation:
+        state.provider_tools_state_ids.append(value)
+    _refresh_replay_tools_state_id(state)
+
+    if "tools_state_id" not in state.emitted_metadata_fields:
+        state.emitted_metadata_fields.add("tools_state_id")
+        return {"tools_state_id": value}
+    if is_new_observation:
+        return {"tools_state_id_events": [value]}
+    return {}
+
+
 def _observe_scalar_metadata(
     state: StreamState,
     *,
@@ -887,7 +1179,7 @@ def _update_stream_metadata(
     model: Any,
     created_at: Any,
     x_headers: Mapping[str, Any],
-    allow_server_tool_state_transition: bool,
+    tools_state_owner: _ToolStateOwner | None,
 ) -> dict[str, Any]:
     metadata: dict[str, Any] = {}
     metadata.update(
@@ -898,24 +1190,13 @@ def _update_stream_metadata(
             value=provider_message_id,
         )
     )
-    if provider_tools_state_id is not None:
-        current_tools_state_id = state.tools_state_id
-        if current_tools_state_id is None:
-            state.tools_state_id = provider_tools_state_id
-            state.provider_tools_state_ids.append(provider_tools_state_id)
-            state.emitted_metadata_fields.add("tools_state_id")
-            metadata["tools_state_id"] = provider_tools_state_id
-        elif current_tools_state_id == provider_tools_state_id:
-            if provider_tools_state_id not in state.provider_tools_state_ids:
-                state.provider_tools_state_ids.append(provider_tools_state_id)
-        elif not allow_server_tool_state_transition:
-            raise ValueError(
-                "Primary GigaChat completion contains multiple tools_state_id values; "
-                "their replay semantics are unsupported."
-            )
-        elif provider_tools_state_id not in state.provider_tools_state_ids:
-            state.provider_tools_state_ids.append(provider_tools_state_id)
-            metadata["tools_state_id_events"] = [provider_tools_state_id]
+    metadata.update(
+        _observe_tools_state_id(
+            state,
+            value=provider_tools_state_id,
+            owner=tools_state_owner,
+        )
+    )
     metadata.update(
         _observe_scalar_metadata(
             state,
@@ -1100,21 +1381,32 @@ def convert_stream_event(
         ),
     )
     x_headers = _optional_dict(event_data.get("x_headers"))
-    has_declared_nested_tool_execution = any(
-        message.get("tool_execution") is not None
-        or any(
-            part.get("tool_execution") is not None
-            for part in _as_dict_list(message.get("content"), field="messages.content")
-        )
-        for message in normalized_messages
+    tool_executions = _event_tool_executions(
+        normalized_messages,
+        top_level_tool_execution,
     )
-    has_server_tool_execution = (
-        top_level_tool_execution is not None or has_declared_nested_tool_execution
-    )
-    server_identity_kwargs = _server_tool_identity_update(
+    has_server_tool_execution = bool(tool_executions)
+    has_client_function_call = _event_has_client_function_call(normalized_messages)
+    tools_state_owner = _tool_state_owner(
         state,
         incoming_tools_state_id=provider_tools_state_id,
-        has_tool_execution=has_server_tool_execution,
+        contains_client_function_call=has_client_function_call,
+        contains_server_tool_execution=has_server_tool_execution,
+    )
+    _claim_unassigned_client_state(
+        state,
+        contains_client_function_call=has_client_function_call,
+        incoming_tools_state_id=provider_tools_state_id,
+    )
+    server_identity_kwargs = (
+        _server_tool_identity_update(
+            state,
+            incoming_tools_state_id=provider_tools_state_id,
+            executions=tool_executions,
+            event_name=event_name,
+        )
+        if tools_state_owner == "server"
+        else {}
     )
     observed_metadata = _update_stream_metadata(
         state,
@@ -1124,9 +1416,7 @@ def convert_stream_event(
         model=event_data.get("model"),
         created_at=event_data.get("created_at"),
         x_headers=x_headers,
-        allow_server_tool_state_transition=(
-            has_server_tool_execution or bool(server_identity_kwargs)
-        ),
+        tools_state_owner=tools_state_owner,
     )
 
     request_id = _request_id(state.x_headers)
@@ -1143,6 +1433,7 @@ def convert_stream_event(
         normalized_messages,
         event_name=event_name,
         incoming_tools_state_id=provider_tools_state_id,
+        tools_state_owner=tools_state_owner,
         state=state,
     )
 
@@ -1151,15 +1442,18 @@ def convert_stream_event(
         block = _tool_execution_block(
             top_level_tool_execution,
             event_name=event_name,
-            incoming_tools_state_id=provider_tools_state_id,
+            incoming_tools_state_id=(
+                provider_tools_state_id if tools_state_owner == "server" else None
+            ),
             state=state,
         )
-        content.append(block)
+        if block is not None:
+            content.append(block)
 
     if (
         event_name == "response.message.done"
         and state.client_tool_started
-        and state.tools_state_id is None
+        and state.client_tools_state_id is None
     ):
         raise ValueError(
             "Primary client tool call completed without tools_state_id; "
@@ -1202,6 +1496,11 @@ def convert_stream_event(
         **identity_kwargs,
         **server_identity_kwargs,
     }
+    if event_name == "response.message.done":
+        if state.tools_state_id is not None:
+            additional_kwargs["tools_state_id"] = state.tools_state_id
+        if state.provider_tools_state_ids:
+            additional_kwargs["tools_state_ids"] = list(state.provider_tools_state_ids)
     reasoning = reasoning_content(content)
     if reasoning is not None:
         additional_kwargs["reasoning_content"] = reasoning

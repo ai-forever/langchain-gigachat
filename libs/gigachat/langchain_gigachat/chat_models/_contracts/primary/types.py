@@ -55,6 +55,9 @@ class StreamState:
     message_id: Optional[str] = None
     provider_message_id: Optional[str] = None
     tools_state_id: Optional[str] = None
+    client_tools_state_id: Optional[str] = None
+    latest_server_tools_state_id: Optional[str] = None
+    unassigned_tools_state_ids: list[str] = field(default_factory=list)
     provider_tools_state_ids: list[str] = field(default_factory=list)
     thread_id: Optional[str] = None
     model: Optional[str] = None
@@ -81,4 +84,7 @@ class StreamState:
     server_tool_call_ids_by_provider: dict[str, str] = field(default_factory=dict)
     server_tool_provider_ids: dict[str, str] = field(default_factory=dict)
     unresolved_server_tool_call_ids: list[str] = field(default_factory=list)
+    server_tool_terminal_payloads: dict[str, dict[str, Any]] = field(
+        default_factory=dict
+    )
     pending_server_tool_result_id: Optional[str] = None
