@@ -52,6 +52,11 @@ _JSON_SCHEMA_TYPES = frozenset(
 _MISSING = object()
 
 
+def _validate_non_empty_identifier(value: Any, *, field_name: str) -> None:
+    if value is not None and (not isinstance(value, str) or not value):
+        raise ValueError(f"{field_name} must be a non-empty string.")
+
+
 def _is_json_schema_type(value: Any) -> bool:
     if isinstance(value, str):
         return value in _JSON_SCHEMA_TYPES
@@ -141,16 +146,39 @@ def normalize_response_format(
             )
         candidate["strict"] = strict
 
-    if candidate.get("strict") is not None and format_type != "json_schema":
-        raise ValueError("strict is supported only with a JSON Schema response_format.")
-    if format_type == "json_schema" and "schema" not in candidate:
-        raise ValueError(
-            "response_format type 'json_schema' requires a 'schema' field."
-        )
-    if format_type == "regex" and not isinstance(candidate.get("regex"), str):
-        raise ValueError(
-            "response_format type 'regex' requires a string 'regex' field."
-        )
+    if format_type == "text":
+        unsupported = set(candidate).intersection({"regex", "schema", "strict"})
+        if unsupported:
+            rendered = ", ".join(sorted(unsupported))
+            raise ValueError(
+                f"response_format type 'text' cannot include field(s): {rendered}."
+            )
+    elif format_type == "regex":
+        unsupported = set(candidate).intersection({"schema", "strict"})
+        if unsupported:
+            rendered = ", ".join(sorted(unsupported))
+            raise ValueError(
+                f"response_format type 'regex' cannot include field(s): {rendered}."
+            )
+        regex = candidate.get("regex")
+        if not isinstance(regex, str) or not regex:
+            raise ValueError(
+                "response_format type 'regex' requires a non-empty string "
+                "'regex' field."
+            )
+    else:
+        if "regex" in candidate:
+            raise ValueError(
+                "response_format type 'json_schema' cannot include field: regex."
+            )
+        if "schema" not in candidate or candidate["schema"] is None:
+            raise ValueError(
+                "response_format type 'json_schema' requires a 'schema' field."
+            )
+        if "strict" in candidate and not isinstance(candidate["strict"], bool):
+            raise ValueError(
+                "response_format type 'json_schema' field 'strict' must be a boolean."
+            )
 
     try:
         return gm.ChatResponseFormat.model_validate(candidate)
@@ -249,6 +277,15 @@ def _normalize_primary_storage(
 
     is_stateful = storage.pop("is_stateful", _MISSING)
     assistant_id = storage.pop("assistant_id", None)
+    _validate_non_empty_identifier(
+        assistant_id,
+        field_name="storage assistant_id",
+    )
+    if "thread_id" in storage:
+        _validate_non_empty_identifier(
+            storage["thread_id"],
+            field_name="storage thread_id",
+        )
 
     if is_stateful is not _MISSING:
         if not isinstance(is_stateful, bool):
@@ -303,6 +340,18 @@ def build_payload(
     payload_values = {
         key: value for key, value in kwargs.items() if key not in consumed_keys
     }
+    for identifier in (
+        "assistant_id",
+        "message_id",
+        "thread_id",
+        "tool_call_id",
+        "tools_state_id",
+    ):
+        if identifier in payload_values:
+            _validate_non_empty_identifier(
+                payload_values[identifier],
+                field_name=identifier,
+            )
     payload_values["messages"] = convert_messages(
         messages,
         cached_uploads=cached_uploads,

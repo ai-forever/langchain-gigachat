@@ -170,6 +170,26 @@ def test_build_payload_supports_primary_top_level_and_future_fields() -> None:
     }
 
 
+@pytest.mark.parametrize(
+    "field_name",
+    [
+        "assistant_id",
+        "message_id",
+        "thread_id",
+        "tool_call_id",
+        "tools_state_id",
+    ],
+)
+def test_build_payload_rejects_empty_request_identifiers(field_name: str) -> None:
+    with pytest.raises(ValueError, match=f"{field_name} must be a non-empty string"):
+        primary.build_payload(
+            [],
+            defaults=_defaults(),
+            invocation_kwargs={field_name: ""},
+            cached_uploads={},
+        )
+
+
 def test_build_payload_explicit_disable_filter_wins() -> None:
     payload = primary.build_payload(
         [],

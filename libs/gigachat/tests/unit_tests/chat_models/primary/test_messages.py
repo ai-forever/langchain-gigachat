@@ -198,6 +198,20 @@ def test_convert_messages_uses_response_metadata_aliases_as_fallback() -> None:
     assert converted.tools_state_id == "response-state"
 
 
+@pytest.mark.parametrize("field_name", ["message_id", "tools_state_id"])
+def test_convert_messages_rejects_empty_provider_metadata(field_name: str) -> None:
+    message = AIMessage(
+        content="answer",
+        additional_kwargs={field_name: ""},
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=f"Primary {field_name} metadata must be a non-empty string",
+    ):
+        primary.convert_messages([message], cached_uploads={})
+
+
 def test_convert_messages_rejects_parallel_client_tool_calls() -> None:
     message = AIMessage(
         content="",
@@ -208,6 +222,26 @@ def test_convert_messages_rejects_parallel_client_tool_calls() -> None:
     )
 
     with pytest.raises(ValueError, match="multiple client function calls"):
+        primary.convert_messages([message], cached_uploads={})
+
+
+def test_convert_messages_rejects_empty_ai_tool_call_id() -> None:
+    message = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "name": "weather",
+                "args": {},
+                "id": "",
+                "type": "tool_call",
+            }
+        ],
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="Primary AIMessage tool call ID must be a non-empty string",
+    ):
         primary.convert_messages([message], cached_uploads={})
 
 

@@ -407,7 +407,9 @@ def _convert_ai_message(
         tool_call_id = tool_call.get("id")
         if tool_call_id is not None:
             if not isinstance(tool_call_id, str) or not tool_call_id:
-                raise ValueError("Primary AIMessage tool call ID must be a string.")
+                raise ValueError(
+                    "Primary AIMessage tool call ID must be a non-empty string."
+                )
             provider_state_id = _provider_tool_state_mapping(message).get(
                 tool_call_id,
                 tool_call_id,

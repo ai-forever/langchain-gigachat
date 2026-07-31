@@ -176,6 +176,15 @@ def test_matching_top_level_and_storage_assistant_ids_are_accepted() -> None:
     assert payload.storage == gm.ChatStorage(limit=4)
 
 
+@pytest.mark.parametrize("field_name", ["assistant_id", "thread_id"])
+def test_storage_rejects_empty_identifiers(field_name: str) -> None:
+    with pytest.raises(
+        ValueError,
+        match=f"storage {field_name} must be a non-empty string",
+    ):
+        _build(storage={field_name: ""})
+
+
 def test_storage_mapping_is_not_mutated_during_normalization() -> None:
     storage = {
         "assistant_id": "assistant",

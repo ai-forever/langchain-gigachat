@@ -182,6 +182,63 @@ def test_unknown_explicit_response_format_type_raises() -> None:
 def test_regex_response_format_requires_regex() -> None:
     with pytest.raises(
         ValueError,
-        match="response_format type 'regex' requires a string 'regex' field",
+        match="response_format type 'regex' requires a non-empty string 'regex' field",
     ):
         primary.normalize_response_format({"type": "regex"})
+
+
+@pytest.mark.parametrize(
+    ("response_format", "match"),
+    [
+        (
+            {"type": "text", "schema": {"type": "object"}},
+            r"type 'text' cannot include field\(s\): schema",
+        ),
+        (
+            {"type": "text", "regex": "value"},
+            r"type 'text' cannot include field\(s\): regex",
+        ),
+        (
+            {"type": "text", "strict": False},
+            r"type 'text' cannot include field\(s\): strict",
+        ),
+        (
+            {"type": "regex", "regex": ""},
+            "requires a non-empty string 'regex' field",
+        ),
+        (
+            {"type": "regex", "regex": "value", "schema": {"type": "string"}},
+            r"type 'regex' cannot include field\(s\): schema",
+        ),
+        (
+            {"type": "regex", "regex": "value", "strict": False},
+            r"type 'regex' cannot include field\(s\): strict",
+        ),
+        (
+            {
+                "type": "json_schema",
+                "schema": {"type": "object"},
+                "regex": "value",
+            },
+            "type 'json_schema' cannot include field: regex",
+        ),
+        (
+            {"type": "json_schema", "schema": None},
+            "type 'json_schema' requires a 'schema' field",
+        ),
+        (
+            {
+                "type": "json_schema",
+                "schema": {"type": "object"},
+                "strict": "yes",
+            },
+            "field 'strict' must be a boolean",
+        ),
+    ],
+)
+def test_response_format_rejects_conflicting_cross_fields(
+    response_format: dict[str, Any],
+    match: str,
+) -> None:
+    with pytest.raises(ValueError, match=match):
+        primary.normalize_response_format(response_format)
