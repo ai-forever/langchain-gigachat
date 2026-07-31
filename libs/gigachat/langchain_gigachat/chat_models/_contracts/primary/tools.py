@@ -290,6 +290,8 @@ def build_tool_binding(
         )
 
     tool_config = explicit_config if explicit_config is not None else derived_config
+    if tool_config is not None and not normalized_tools:
+        raise ValueError("tool_config requires at least one available tool.")
     return ToolBinding(
         tools=None if omit_tools or not normalized_tools else normalized_tools,
         tool_config=tool_config,

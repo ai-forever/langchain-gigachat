@@ -185,6 +185,29 @@ def test_explicit_tool_config_must_reference_available_tool() -> None:
 
 
 @pytest.mark.parametrize(
+    ("function_call", "explicit_tool_config"),
+    [
+        ("auto", None),
+        (None, {"mode": "auto"}),
+    ],
+)
+def test_tool_config_requires_an_available_tool(
+    function_call: Any,
+    explicit_tool_config: Any,
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match="tool_config requires at least one available tool",
+    ):
+        primary.build_tool_binding(
+            functions=[],
+            tools=[],
+            function_call=function_call,
+            explicit_tool_config=explicit_tool_config,
+        )
+
+
+@pytest.mark.parametrize(
     ("tool_config", "match"),
     [
         ({"mode": "auto", "function_name": "weather"}, "mode='auto'.*cannot"),
