@@ -999,9 +999,12 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                     )
                     continue
                 if terminal_chunk is not None:
-                    raise ValueError(
-                        "Primary stream emitted content after its terminal chunk"
+                    terminal_chunk = _merge_terminal_continuation(
+                        terminal_chunk,
+                        primary_chunk,
+                        route="Primary",
                     )
+                    continue
                 if run_manager:
                     run_manager.on_llm_new_token(
                         primary_chunk.text, chunk=primary_chunk
@@ -1117,9 +1120,12 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                     )
                     continue
                 if terminal_chunk is not None:
-                    raise ValueError(
-                        "Primary stream emitted content after its terminal chunk"
+                    terminal_chunk = _merge_terminal_continuation(
+                        terminal_chunk,
+                        primary_chunk,
+                        route="Primary",
                     )
+                    continue
                 if run_manager:
                     await run_manager.on_llm_new_token(
                         primary_chunk.text, chunk=primary_chunk
@@ -1484,6 +1490,43 @@ def _accept_terminal_chunk(
     if current is None or current == incoming:
         return incoming if current is None else current
     raise ValueError(f"{route} stream emitted conflicting terminal chunks")
+
+
+def _merge_terminal_continuation(
+    terminal: ChatGenerationChunk,
+    continuation: ChatGenerationChunk,
+    *,
+    route: str,
+) -> ChatGenerationChunk:
+    """Merge metadata emitted after an authoritative terminal into that terminal."""
+    if continuation.text or _has_tool_call(continuation.message):
+        raise ValueError(f"{route} stream emitted content after its terminal chunk")
+
+    merged = terminal + continuation
+    generation_info = dict(merged.generation_info or {})
+    terminal_generation_info = terminal.generation_info or {}
+    if "finish_reason" in terminal_generation_info:
+        generation_info["finish_reason"] = terminal_generation_info["finish_reason"]
+
+    message = merged.message
+    if isinstance(message, AIMessageChunk):
+        response_metadata = dict(message.response_metadata)
+        terminal_response_metadata = terminal.message.response_metadata
+        if "finish_reason" in terminal_response_metadata:
+            response_metadata["finish_reason"] = terminal_response_metadata[
+                "finish_reason"
+            ]
+        message = message.model_copy(
+            update={
+                "chunk_position": "last",
+                "response_metadata": response_metadata,
+            }
+        )
+
+    return ChatGenerationChunk(
+        message=message,
+        generation_info=generation_info or None,
+    )
 
 
 def _finalize_response_format_chunk(

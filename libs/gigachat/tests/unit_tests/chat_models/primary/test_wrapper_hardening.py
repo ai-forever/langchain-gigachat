@@ -48,6 +48,34 @@ def _tool_failed_then_done() -> Iterator[gm.PrimaryChatCompletionChunk]:
     )
 
 
+def _done_then_metadata() -> Iterator[dict[str, Any]]:
+    yield {
+        "event": "response.message.done",
+        "model": MODEL,
+        "created_at": CREATED_AT,
+        "message_id": MESSAGE_ID,
+        "finish_reason": "stop",
+        "usage": {
+            "input_tokens": 2,
+            "output_tokens": 1,
+            "total_tokens": 3,
+        },
+    }
+    yield {
+        "event": "response.metadata",
+        "x_headers": {"x-request-id": "request-late"},
+        "future_field": {"trace": "trace-late"},
+    }
+    yield {
+        "event": "response.message.done",
+        "model": MODEL,
+        "created_at": CREATED_AT,
+        "message_id": MESSAGE_ID,
+        "finish_reason": "stop",
+        "thread_id": "thread-late",
+    }
+
+
 async def _async_items(items: Iterator[Any]) -> AsyncIterator[Any]:
     for item in items:
         yield item
@@ -103,6 +131,99 @@ def test_tool_terminal_does_not_replace_authoritative_message_done(
     ]
     assert chunks[1].generation_info == {"finish_reason": "stop"}
     assert _message(chunks[1]).chunk_position == "last"
+
+
+def test_primary_internal_stream_merges_post_terminal_metadata(
+    sdk_client: MagicMock,
+) -> None:
+    sdk_client.chat.stream.side_effect = lambda payload: _done_then_metadata()
+    llm = GigaChat(model=MODEL, use_api_v2=True)
+
+    chunks = list(llm._stream([HumanMessage("Hello")]))
+
+    assert len(chunks) == 1
+    terminal = chunks[0]
+    assert terminal.generation_info == {"finish_reason": "stop"}
+    assert _message(terminal).chunk_position == "last"
+    assert _message(terminal).usage_metadata == {
+        "input_tokens": 2,
+        "output_tokens": 1,
+        "total_tokens": 3,
+    }
+    assert _message(terminal).response_metadata["x_headers"] == {
+        "x-request-id": "request-late"
+    }
+    assert _message(terminal).response_metadata["thread_id"] == "thread-late"
+    assert _message(terminal).response_metadata["provider_field_events"] == [
+        {"future_field": {"trace": "trace-late"}}
+    ]
+
+
+async def test_primary_internal_astream_merges_post_terminal_metadata(
+    sdk_client: MagicMock,
+) -> None:
+    sdk_client.achat.stream.return_value = _async_items(_done_then_metadata())
+    llm = GigaChat(model=MODEL, use_api_v2=True)
+
+    chunks = [
+        chunk async for chunk in llm._astream([HumanMessage(content="Hello")])
+    ]
+
+    assert len(chunks) == 1
+    assert chunks[0].generation_info == {"finish_reason": "stop"}
+    assert _message(chunks[0]).chunk_position == "last"
+    assert _message(chunks[0]).response_metadata["thread_id"] == "thread-late"
+
+
+def test_primary_public_stream_and_streaming_invoke_merge_post_terminal_metadata(
+    sdk_client: MagicMock,
+) -> None:
+    sdk_client.chat.stream.side_effect = lambda payload: _done_then_metadata()
+    llm = GigaChat(model=MODEL, use_api_v2=True)
+
+    chunks = list(llm.stream("Hello"))
+    result = llm.invoke("Hello", stream=True)
+
+    assert len(chunks) == 1
+    assert chunks[0].chunk_position == "last"
+    assert chunks[0].response_metadata["thread_id"] == "thread-late"
+    assert result.response_metadata["thread_id"] == "thread-late"
+    assert result.response_metadata["finish_reason"] == "stop"
+
+
+async def test_primary_public_astream_and_streaming_ainvoke_merge_metadata(
+    sdk_client: MagicMock,
+) -> None:
+    sdk_client.achat.stream.side_effect = lambda payload: _async_items(
+        _done_then_metadata()
+    )
+    llm = GigaChat(model=MODEL, use_api_v2=True)
+
+    chunks = [chunk async for chunk in llm.astream("Hello")]
+    result = await llm.ainvoke("Hello", stream=True)
+
+    assert len(chunks) == 1
+    assert chunks[0].chunk_position == "last"
+    assert chunks[0].response_metadata["thread_id"] == "thread-late"
+    assert result.response_metadata["thread_id"] == "thread-late"
+    assert result.response_metadata["finish_reason"] == "stop"
+
+
+def test_primary_content_after_terminal_still_fails(
+    sdk_client: MagicMock,
+) -> None:
+    def events() -> Iterator[dict[str, Any]]:
+        yield from _done_then_metadata()
+        yield {
+            "event": "response.message.delta",
+            "messages": [{"content": [{"text": "too late"}]}],
+        }
+
+    sdk_client.chat.stream.side_effect = lambda payload: events()
+    llm = GigaChat(model=MODEL, use_api_v2=True)
+
+    with pytest.raises(ValueError, match="content arrived after"):
+        list(llm._stream([HumanMessage("Hello")]))
 
 
 def _primary_json_response(
