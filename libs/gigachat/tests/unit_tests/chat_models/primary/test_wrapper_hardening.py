@@ -128,9 +128,9 @@ def test_zero_event_legacy_structured_internal_stream_yields_nothing(
     sdk_client.stream.return_value = iter(())
     llm = GigaChat(model=MODEL)
 
-    assert list(
-        llm._stream([HumanMessage("Hello")], response_format=OUTPUT_SCHEMA)
-    ) == []
+    assert (
+        list(llm._stream([HumanMessage("Hello")], response_format=OUTPUT_SCHEMA)) == []
+    )
 
 
 async def test_zero_event_legacy_structured_internal_astream_yields_nothing(
@@ -224,9 +224,7 @@ async def test_primary_internal_astream_merges_post_terminal_metadata(
     sdk_client.achat.stream.return_value = _async_items(_done_then_metadata())
     llm = GigaChat(model=MODEL, use_api_v2=True)
 
-    chunks = [
-        chunk async for chunk in llm._astream([HumanMessage(content="Hello")])
-    ]
+    chunks = [chunk async for chunk in llm._astream([HumanMessage(content="Hello")])]
 
     assert len(chunks) == 1
     assert chunks[0].generation_info == {"finish_reason": "stop"}
