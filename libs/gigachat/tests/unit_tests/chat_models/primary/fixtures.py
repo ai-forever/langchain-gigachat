@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Optional
 
 import gigachat.models as gm
-from gigachat.models.chat_completions import ChatFunctionResult, ChatSource
+from gigachat.models.chat_completions import ChatSource
 
 MODEL = "GigaChat-3-Ultra"
 CREATED_AT = 1_754_000_000
@@ -105,59 +105,6 @@ def build_plain_text_response() -> gm.ChatCompletionResponse:
     )
 
 
-def build_multimodal_response() -> gm.ChatCompletionResponse:
-    """Return ordered text, file, image, and source content parts."""
-    return gm.ChatCompletionResponse(
-        model=MODEL,
-        created_at=CREATED_AT,
-        messages=[
-            gm.ChatMessage(
-                role="assistant",
-                message_id=MESSAGE_ID,
-                content=[
-                    gm.ChatContentPart(text="Generated assets"),
-                    gm.ChatContentPart(
-                        files=[
-                            gm.ChatContentFile(
-                                id="file-image-001",
-                                mime="image/png",
-                                target="preview",
-                            ),
-                            gm.ChatContentFile(
-                                id="file-audio-001",
-                                mime="audio/mpeg",
-                                target="download",
-                            ),
-                        ]
-                    ),
-                    gm.ChatContentPart(
-                        inline_data=gm.ChatInlineData(
-                            images=[
-                                {
-                                    "id": "file-image-001",
-                                    "mime": "image/png",
-                                }
-                            ],
-                            sources={
-                                "source-001": ChatSource(
-                                    url="https://example.test/source",
-                                    title="Primary source",
-                                )
-                            },
-                        )
-                    ),
-                ],
-            )
-        ],
-        message_id=MESSAGE_ID,
-        thread_id=THREAD_ID,
-        finish_reason="stop",
-        usage=_usage(),
-        additional_data=[{"provider_extension": {"preserve": True}}],
-        x_headers=_x_headers(),
-    )
-
-
 def build_function_call_response() -> gm.ChatCompletionResponse:
     """Return a client function call with stable continuation state."""
     return gm.ChatCompletionResponse(
@@ -180,38 +127,6 @@ def build_function_call_response() -> gm.ChatCompletionResponse:
         finish_reason="tool_calls",
         x_headers=_x_headers(),
     )
-
-
-def build_tool_roundtrip_history() -> list[gm.ChatMessage]:
-    """Return user, function-call, and tool-result messages for one turn."""
-    return [
-        gm.ChatMessage(
-            role="user",
-            content=[gm.ChatContentPart(text="What is the weather in Moscow?")],
-        ),
-        gm.ChatMessage(
-            role="assistant",
-            message_id=MESSAGE_ID,
-            tools_state_id=TOOLS_STATE_ID,
-            content=[],
-            function_call=gm.PrimaryChatFunctionCall(
-                name="lookup_weather",
-                arguments={"city": "Moscow"},
-            ),
-        ),
-        gm.ChatMessage(
-            role="tool",
-            tools_state_id=TOOLS_STATE_ID,
-            content=[
-                gm.ChatContentPart(
-                    function_result=ChatFunctionResult(
-                        name="lookup_weather",
-                        result={"temperature": 18, "condition": "clear"},
-                    )
-                )
-            ],
-        ),
-    ]
 
 
 def build_message_delta_event() -> gm.PrimaryChatCompletionChunk:

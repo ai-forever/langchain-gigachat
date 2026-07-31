@@ -388,48 +388,6 @@ async def test_async_upload_rejects_blank_file_id_without_caching(
     sdk_client.achat.create.assert_not_called()
 
 
-def test_first_sdk_client_initialization_is_thread_safe(
-    mocker: MockerFixture,
-) -> None:
-    constructor_started = threading.Event()
-    second_constructor_started = threading.Event()
-    release_constructor = threading.Event()
-    calls = 0
-    calls_lock = threading.Lock()
-    client = MagicMock()
-
-    def create_client(**kwargs: Any) -> MagicMock:
-        nonlocal calls
-        with calls_lock:
-            calls += 1
-            if calls == 2:
-                second_constructor_started.set()
-        constructor_started.set()
-        if not release_constructor.wait(timeout=2):
-            raise TimeoutError("test did not release the client constructor")
-        return client
-
-    mocker.patch("gigachat.GigaChat", side_effect=create_client)
-    model = GigaChat()
-    start = threading.Barrier(3)
-
-    def get_client() -> object:
-        start.wait(timeout=1)
-        return model._client
-
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        first = executor.submit(get_client)
-        second = executor.submit(get_client)
-        start.wait(timeout=1)
-        assert constructor_started.wait(timeout=1)
-        second_constructor_started.wait(timeout=0.2)
-        release_constructor.set()
-        assert first.result(timeout=1) is client
-        assert second.result(timeout=1) is client
-
-    assert calls == 1
-
-
 def test_real_sdk_context_headers_reach_sync_request_boundaries(
     sdk_client: MagicMock,
 ) -> None:

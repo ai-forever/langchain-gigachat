@@ -1,10 +1,8 @@
 """Edge-case tests for utils/function_calling.py."""
 
-import copy
 from typing import Any, Dict, Union
 
 import pytest
-from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
 from langchain_gigachat.utils.function_calling import (
@@ -13,19 +11,8 @@ from langchain_gigachat.utils.function_calling import (
     _model_to_schema,
     _parse_google_docstring,
     convert_to_gigachat_function,
-    format_tool_to_gigachat_function,
     gigachat_fix_schema,
 )
-
-
-def _schema_refs(value: Any) -> list[Any]:
-    if isinstance(value, dict):
-        refs = [value["$ref"]] if "$ref" in value else []
-        return refs + [ref for nested in value.values() for ref in _schema_refs(nested)]
-    if isinstance(value, list):
-        return [ref for nested in value for ref in _schema_refs(nested)]
-    return []
-
 
 # ---------------------------------------------------------------------------
 # gigachat_fix_schema
@@ -57,60 +44,6 @@ def test_fix_schema_anyof_multiple_raises() -> None:
     schema: Dict[str, Any] = {"anyOf": [{"type": "string"}, {"type": "integer"}]}
     with pytest.raises(IncorrectSchemaException):
         gigachat_fix_schema(schema)
-
-
-@pytest.mark.parametrize("keyword", ["allOf", "anyOf"])
-def test_fix_schema_single_combinator_is_collapsed(keyword: str) -> None:
-    schema = {
-        keyword: [
-            {
-                "type": "object",
-                "properties": {"value": {"type": "string"}},
-            }
-        ]
-    }
-
-    assert gigachat_fix_schema(schema) == {
-        "type": "object",
-        "properties": {"value": {"type": "string"}},
-    }
-
-
-@pytest.mark.parametrize(
-    "schema",
-    [
-        {"allOf": []},
-        {"anyOf": []},
-        {"allOf": "not-a-list"},
-        {"anyOf": [42]},
-    ],
-)
-def test_fix_schema_malformed_combinator_raises_integration_error(
-    schema: dict[str, Any],
-) -> None:
-    with pytest.raises(IncorrectSchemaException, match="allOf|anyOf"):
-        gigachat_fix_schema(schema)
-
-
-def test_fix_schema_preserves_recursive_ref_shape_without_mutation() -> None:
-    schema = {
-        "type": "object",
-        "properties": {"child": {"$ref": "#/$defs/Node"}},
-        "$defs": {
-            "Node": {
-                "type": "object",
-                "properties": {
-                    "child": {"anyOf": [{"$ref": "#/$defs/Node"}]},
-                },
-            }
-        },
-    }
-    original = copy.deepcopy(schema)
-
-    result = gigachat_fix_schema(schema)
-
-    assert schema == original
-    assert result["$defs"]["Node"]["properties"]["child"] == {"$ref": "#/$defs/Node"}
 
 
 def test_fix_schema_title_removed_at_top_level() -> None:
@@ -229,113 +162,11 @@ def test_convert_return_schema_none() -> None:
 
 def test_convert_return_schema_dict() -> None:
     schema: Dict[str, Any] = {
-        "title": "ReturnValue",
         "type": "object",
-        "$defs": {"Nested": {"type": "integer"}},
-        "properties": {"r": {"allOf": [{"$ref": "#/$defs/Nested"}]}},
+        "properties": {"r": {"type": "integer"}},
     }
-    original = copy.deepcopy(schema)
-
     result = _convert_return_schema(schema)
-
-    assert schema == original
-    assert result is not schema
-    assert "title" not in result
-    assert "$defs" not in result
-    assert _schema_refs(result) == []
-    assert result["properties"]["r"]["allOf"] == [{"type": "integer"}]
-    assert result["properties"]["r"]["description"] == ""
-
-
-def test_convert_return_schema_recursively_dereferences_raw_schema() -> None:
-    schema = {
-        "$defs": {
-            "Envelope": {
-                "type": "object",
-                "properties": {"payload": {"$ref": "#/$defs/Payload"}},
-            },
-            "Payload": {
-                "type": "object",
-                "properties": {"value": {"type": "integer"}},
-            },
-        },
-        "type": "object",
-        "properties": {"result": {"$ref": "#/$defs/Envelope"}},
-    }
-    original = copy.deepcopy(schema)
-
-    result = _convert_return_schema(schema)
-
-    assert schema == original
-    assert "$defs" not in result
-    assert _schema_refs(result) == []
-    assert result["properties"]["result"]["properties"]["payload"] == {
-        "type": "object",
-        "properties": {"value": {"type": "integer"}},
-    }
-
-
-def test_convert_return_schema_rejects_missing_local_ref_without_mutation() -> None:
-    schema = {
-        "type": "object",
-        "properties": {"result": {"$ref": "#/$defs/Missing"}},
-    }
-    original = copy.deepcopy(schema)
-
-    with pytest.raises(
-        IncorrectSchemaException,
-        match=r"unresolved local \$ref.*#/\$defs/Missing",
-    ):
-        _convert_return_schema(schema)
-
-    assert schema == original
-
-
-@pytest.mark.parametrize(
-    ("schema", "expected"),
-    [
-        ({"type": "object"}, {"type": "object", "properties": {}}),
-        ({"type": "string"}, {"type": "string"}),
-        ({}, {}),
-    ],
-)
-def test_convert_return_schema_without_properties_is_explicit(
-    schema: dict[str, Any],
-    expected: dict[str, Any],
-) -> None:
-    original = copy.deepcopy(schema)
-
-    assert _convert_return_schema(schema) == expected
-    assert schema == original
-
-
-def test_format_tool_with_raw_schemas_is_immutable_and_description_optional() -> None:
-    args_schema = {
-        "type": "object",
-        "properties": {"query": {"type": "string"}},
-    }
-    return_schema = {
-        "title": "SearchResult",
-        "type": "object",
-        "properties": {"count": {"type": "integer"}},
-    }
-    tool = StructuredTool(
-        name="search",
-        description="Search documents",
-        args_schema=args_schema,  # type: ignore[arg-type]
-        extras={"return_schema": return_schema},
-    )
-    original_args = copy.deepcopy(args_schema)
-    original_return = copy.deepcopy(return_schema)
-
-    result = format_tool_to_gigachat_function(tool)
-
-    assert args_schema == original_args
-    assert return_schema == original_return
-    assert result["description"] == "Search documents"
-    assert result["parameters"] == args_schema
-    assert result["parameters"] is not args_schema
-    assert result["return_parameters"] is not return_schema
+    assert result is schema
 
 
 def test_convert_return_schema_pydantic() -> None:

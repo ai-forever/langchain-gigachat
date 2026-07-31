@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from typing import Any
+
+import gigachat.models as gm
+import pytest
+from pydantic import ValidationError
 from pydantic.v1 import BaseModel as BaseModelV1
 
 from langchain_gigachat.chat_models._contracts.primary.payload import (
@@ -54,3 +59,25 @@ def test_private_google_docstring_parser_contract_remains_available() -> None:
 
     assert description == "Look up a value."
     assert arguments == {"key": "Lookup key."}
+
+
+def test_unknown_sdk_event_preserves_extension_fields(
+    unknown_event: dict[str, Any],
+) -> None:
+    parsed = gm.PrimaryChatCompletionChunk.model_validate(unknown_event)
+    dumped = parsed.model_dump(exclude_none=True)
+
+    assert parsed.event == "response.provider_extension.delta"
+    assert dumped["provider_metadata"] == {"preserve": True}
+    assert dumped["messages"][0]["content"][0]["provider_extension"] == {
+        "kind": "future-content",
+        "value": 42,
+    }
+
+
+def test_malformed_known_sdk_event_is_rejected(
+    malformed_event: dict[str, Any],
+) -> None:
+    with pytest.raises(ValidationError):
+        gm.PrimaryChatCompletionChunk.model_validate(malformed_event)
+    assert malformed_event["provider_error"]["code"] == "malformed_fixture"

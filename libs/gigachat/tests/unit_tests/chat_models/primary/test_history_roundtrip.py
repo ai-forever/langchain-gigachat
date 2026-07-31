@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import copy
 from typing import Any
+from unittest.mock import MagicMock
 
 import gigachat.models as gm
 from langchain_core.language_models.chat_models import generate_from_stream
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.outputs import ChatGenerationChunk
 
 from langchain_gigachat.chat_models._contracts import primary
+from langchain_gigachat.chat_models.gigachat import GigaChat
 
 
 def _response(
@@ -66,6 +68,37 @@ def test_reasoning_and_answer_output_replays_only_assistant_text() -> None:
         "content": [{"text": "Final answer"}],
         "role": "assistant",
     }
+
+
+def test_public_output_can_be_reused_as_multi_turn_history(
+    sdk_client: MagicMock,
+) -> None:
+    first_response = _response(
+        [
+            {"role": "reasoning", "content": [{"text": "Think privately"}]},
+            {"role": "assistant", "content": [{"text": "First answer"}]},
+        ],
+        message_id="first-message",
+    )
+    sdk_client.chat.create.side_effect = [
+        first_response,
+        _response(
+            [{"role": "assistant", "content": [{"text": "Continued answer"}]}],
+            message_id="continued-message",
+        ),
+    ]
+    model = GigaChat(use_api_v2=True)
+
+    first = model.invoke("Start")
+    continued = model.invoke([HumanMessage("Start"), first, HumanMessage("Continue")])
+
+    assert continued.text == "Continued answer"
+    payload = sdk_client.chat.create.call_args_list[1].args[0]
+    replayed = next(
+        message for message in payload.messages if message.role == "assistant"
+    )
+    assert replayed.message_id == "first-message"
+    assert replayed.content == [gm.ChatContentPart(text="First answer")]
 
 
 def test_citation_annotations_do_not_block_text_history_replay() -> None:

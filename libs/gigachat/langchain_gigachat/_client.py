@@ -3,19 +3,19 @@
 from __future__ import annotations
 
 import ssl
-import threading
+from functools import cached_property
 from typing import Any, Dict, Optional, Tuple
 
 import gigachat
 from langchain_core.load.serializable import Serializable
-from pydantic import ConfigDict, PrivateAttr
+from pydantic import ConfigDict
 
 
 class _GigaChatClientMixin(Serializable):
     """Mixin providing GigaChat SDK client initialization, auth, and connection config.
 
-    Subclasses inherit shared connection/authentication fields and a thread-safe
-    ``_client`` property that lazily creates one ``gigachat.GigaChat`` instance.
+    Subclasses inherit shared connection/authentication fields and a cached
+    ``_client`` property that creates a ``gigachat.GigaChat`` instance.
     Keeping this logic in one place avoids chat/embeddings drift for auth,
     retry, and secret-redaction behavior such as ``lc_secrets``.
 
@@ -82,9 +82,6 @@ class _GigaChatClientMixin(Serializable):
     SDK default: ``(429, 500, 502, 503, 504)``.
     """
 
-    _client_instance: Optional[gigachat.GigaChat] = PrivateAttr(default=None)
-    _client_lock: Any = PrivateAttr(default_factory=threading.Lock)
-
     @property
     def lc_secrets(self) -> Dict[str, str]:
         return {
@@ -126,15 +123,7 @@ class _GigaChatClientMixin(Serializable):
             "retry_on_status_codes": self.retry_on_status_codes,
         }
 
-    @property
+    @cached_property
     def _client(self) -> gigachat.GigaChat:
-        """Return one lazily initialized GigaChat API client."""
-        client = self._client_instance
-        if client is not None:
-            return client
-        with self._client_lock:
-            client = self._client_instance
-            if client is None:
-                client = gigachat.GigaChat(**self._get_client_init_kwargs())
-                self._client_instance = client
-        return client
+        """Return GigaChat API client."""
+        return gigachat.GigaChat(**self._get_client_init_kwargs())

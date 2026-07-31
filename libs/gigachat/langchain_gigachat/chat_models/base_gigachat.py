@@ -58,18 +58,10 @@ class _BaseGigaChat(_GigaChatClientMixin):
             "profanity_check": self.profanity_check,
             "streaming": self.streaming,
             "max_tokens": self.max_tokens,
-            "flags": self.flags,
             "top_p": self.top_p,
             "repetition_penalty": self.repetition_penalty,
-            "update_interval": self.update_interval,
             "reasoning_effort": self.reasoning_effort,
             "function_ranker": self.function_ranker,
-            "use_api_for_tokens": self.use_api_for_tokens,
-            "auto_upload_attachments": getattr(self, "auto_upload_attachments", False),
-            "allow_any_tool_choice_fallback": getattr(
-                self, "allow_any_tool_choice_fallback", False
-            ),
-            "profile": getattr(self, "profile", None),
         }
 
     def tokens_count(

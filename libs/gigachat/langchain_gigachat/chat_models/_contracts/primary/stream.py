@@ -433,9 +433,7 @@ def _server_tool_repeat_call_id(
     if execution_id is not None:
         call_id = state.server_tool_call_ids_by_execution_id.get(execution_id)
     elif incoming_tools_state_id is not None:
-        call_id = state.server_tool_call_ids_by_state_id.get(
-            incoming_tools_state_id
-        )
+        call_id = state.server_tool_call_ids_by_state_id.get(incoming_tools_state_id)
     else:
         call_id = None
     payload = _normalized_server_tool_payload(execution)
@@ -1431,8 +1429,7 @@ def convert_stream_event(
         for resolved in resolved_tool_executions
     }
     tool_executions = [
-        _resolved_execution_value(resolved)
-        for resolved in resolved_tool_executions
+        _resolved_execution_value(resolved) for resolved in resolved_tool_executions
     ]
     has_server_tool_execution = bool(tool_executions)
     has_client_function_call = _event_has_client_function_call(normalized_messages)
@@ -1442,8 +1439,7 @@ def convert_stream_event(
         contains_client_function_call=has_client_function_call,
         contains_server_tool_execution=has_server_tool_execution,
         server_execution_requires_state=any(
-            resolved.execution_id is None
-            for resolved in resolved_tool_executions
+            resolved.execution_id is None for resolved in resolved_tool_executions
         ),
     )
     _claim_unassigned_client_state(
@@ -1491,9 +1487,7 @@ def convert_stream_event(
         state=state,
     )
 
-    resolved_response_execution = resolved_by_coordinates.get(
-        ("response", None, None)
-    )
+    resolved_response_execution = resolved_by_coordinates.get(("response", None, None))
     if resolved_response_execution is not None:
         _close_text_block(state)
         block = _tool_execution_block(

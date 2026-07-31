@@ -259,9 +259,7 @@ def test_explicit_execution_id_correlates_with_state_only_mirror(
             ]
         )
 
-    assert [block["tool_call_id"] for block in _server_results(message)] == [
-        "search-1"
-    ]
+    assert [block["tool_call_id"] for block in _server_results(message)] == ["search-1"]
     assert message.additional_kwargs["provider_server_tool_state_by_call_id"] == {
         "search-1": "provider-state-1"
     }

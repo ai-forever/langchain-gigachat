@@ -72,12 +72,8 @@ def test_late_tools_state_reconciles_provisional_server_tool_identity() -> None:
     assert result_block["extras"]["provider_server_tool_state_by_call_id"] == {
         call_id: "provider-tool-state-1"
     }
-    assert state.server_tool_call_ids_by_state_id == {
-        "provider-tool-state-1": call_id
-    }
-    assert state.server_tool_state_ids_by_call_id == {
-        call_id: "provider-tool-state-1"
-    }
+    assert state.server_tool_call_ids_by_state_id == {"provider-tool-state-1": call_id}
+    assert state.server_tool_state_ids_by_call_id == {call_id: "provider-tool-state-1"}
     assert state.active_server_tool_call_id is None
 
 
@@ -259,9 +255,9 @@ def test_execution_and_state_ids_use_independent_namespaces() -> None:
         shared_provider_value,
         "lc_primary-server-tool-0",
     ]
-    assert done.message.additional_kwargs[
-        "provider_server_tool_state_by_call_id"
-    ] == {"lc_primary-server-tool-0": shared_provider_value}
+    assert done.message.additional_kwargs["provider_server_tool_state_by_call_id"] == {
+        "lc_primary-server-tool-0": shared_provider_value
+    }
 
 
 def test_official_sdk_terminal_server_tool_without_identity_uses_local_id() -> None:

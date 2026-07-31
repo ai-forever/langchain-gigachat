@@ -278,9 +278,7 @@ def resolve_tool_execution_candidates(
                 tool_call_id=tool_call_id,
                 execution_id=execution_id,
                 provider_state_id=provider_state_id,
-                mirrored_sources=tuple(
-                    candidate.coordinates for candidate in group
-                ),
+                mirrored_sources=tuple(candidate.coordinates for candidate in group),
             )
         )
     return resolved

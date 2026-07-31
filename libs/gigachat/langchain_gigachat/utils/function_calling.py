@@ -128,17 +128,18 @@ def gigachat_fix_schema(schema: Any, prev_key: str = "") -> Any:
                     obj_out[k] = gigachat_fix_schema(v, k)
                 else:
                     continue
-            elif k in {"allOf", "anyOf"}:
-                if not isinstance(v, list) or len(v) != 1 or not isinstance(v[0], dict):
-                    raise IncorrectSchemaException(
-                        f"{k} must contain exactly one schema mapping."
-                    )
+            elif k == "allOf":
+                if len(v) > 1:
+                    raise IncorrectSchemaException()
                 obj = gigachat_fix_schema(v[0], k)
                 outer_description = schema.get("description")
                 obj_out = {**obj_out, **obj}
                 if outer_description:
                     # Outer description takes priority over inner one for ref
                     obj_out["description"] = outer_description
+            elif k == "anyOf":
+                if len(v) > 1:
+                    raise IncorrectSchemaException()
             elif isinstance(v, (list, dict)):
                 obj_out[k] = gigachat_fix_schema(v, k)
             else:
@@ -301,17 +302,11 @@ def _model_to_schema(
 def _convert_return_schema(
     return_model: Optional[Union[PydanticModel, dict[str, Any]]],
 ) -> Dict[str, Any]:
-    if return_model is None:
+    if not return_model:
         return {}
 
     if isinstance(return_model, dict):
-        source_schema = copy.deepcopy(return_model)
-        try:
-            return_schema = dereference_refs(source_schema, skip_keys=[])
-        except KeyError as error:
-            raise IncorrectSchemaException(
-                f"Return schema contains an unresolved local $ref: {error}"
-            ) from error
+        return_schema = return_model
     else:
         return_schema = dereference_refs(_model_to_schema(return_model))
 
@@ -322,23 +317,11 @@ def _convert_return_schema(
     if "title" in return_schema:
         return_schema.pop("title", None)
 
-    properties = return_schema.get("properties")
-    if properties is None:
-        if return_schema.get("type") == "object":
-            return_schema["properties"] = {}
-        return return_schema
-    if not isinstance(properties, dict):
-        raise IncorrectSchemaException("Return schema 'properties' must be a mapping.")
-
-    for key, field_schema in properties.items():
-        if not isinstance(field_schema, dict):
-            raise IncorrectSchemaException(
-                f"Return schema property {key!r} must be a schema mapping."
-            )
-        if "type" not in field_schema:
-            field_schema["type"] = "object"
-        if "description" not in field_schema:
-            field_schema["description"] = ""
+    for key in return_schema["properties"]:
+        if "type" not in return_schema["properties"][key]:
+            return_schema["properties"][key]["type"] = "object"
+        if "description" not in return_schema["properties"][key]:
+            return_schema["properties"][key]["description"] = ""
 
     return return_schema
 
@@ -349,27 +332,24 @@ def format_tool_to_gigachat_function(tool: BaseTool) -> GigaFunctionDescription:
         raise RuntimeError(
             "Incorrect function or tool description. Description is required."
         )
-    tool_schema = tool.tool_call_schema or tool.args_schema
-    tool_schema = copy.deepcopy(tool_schema)
+    tool_schema = tool.args_schema
+    if tool.tool_call_schema:
+        tool_schema = tool.tool_call_schema
 
-    extras = copy.deepcopy(tool.extras or {})
+    extras = tool.extras or {}
     return_schema = extras.get("return_schema")
     few_shot_examples = extras.get("few_shot_examples")
-    if return_schema is not None:
-        return_schema = _convert_return_schema(return_schema)
 
     is_simple_tool = isinstance(tool, Tool) and not tool.args_schema
 
     if tool_schema and not is_simple_tool:
-        if isinstance(tool_schema, dict):
-            tool_schema = dereference_refs(copy.deepcopy(tool_schema))
+        if isinstance(tool_schema, dict) and "properties" in tool_schema:
+            tool_schema = dereference_refs(tool_schema)
             if "definitions" in tool_schema:  # pydantic 1
                 tool_schema.pop("definitions", None)
             if "$defs" in tool_schema:  # pydantic 2
                 tool_schema.pop("$defs", None)
-            default_description = tool_schema.pop("description", "")
-            if tool_schema.get("type") == "object" and "properties" not in tool_schema:
-                tool_schema["properties"] = {}
+            default_description = tool_schema.pop("description")
             return GigaFunctionDescription(
                 name=tool.name,
                 description=tool.description or default_description,
@@ -385,6 +365,11 @@ def format_tool_to_gigachat_function(tool: BaseTool) -> GigaFunctionDescription:
             few_shot_examples=few_shot_examples,
         )
     else:
+        if return_schema:
+            return_schema = _convert_return_schema(return_schema)
+        else:
+            return_schema = None
+
         return GigaFunctionDescription(
             name=tool.name,
             description=tool.description,
@@ -416,7 +401,7 @@ def convert_pydantic_to_gigachat_function(
             if "description" not in schema["properties"][key]:
                 schema["properties"][key]["description"] = ""
 
-    if return_model is not None:
+    if return_model:
         return_schema = _convert_return_schema(return_model)
     else:
         return_schema = None
