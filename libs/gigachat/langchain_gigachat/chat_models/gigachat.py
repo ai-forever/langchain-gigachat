@@ -204,7 +204,7 @@ def _convert_dict_to_message(message: gm.Messages) -> BaseMessage:
 
 
 def get_text_and_images_from_content(
-    content: list[Union[str, dict]], cached_images: Dict[str, str]
+    content: list[Union[str, dict]], cached_images: Mapping[str, str]
 ) -> Tuple[str, List[str]]:
     """Extract text and attachment IDs from LangChain content blocks.
 
@@ -259,7 +259,7 @@ def get_text_and_images_from_content(
 
 
 def _convert_message_to_dict(
-    message: BaseMessage, cached_images: Optional[Dict[str, str]] = None
+    message: BaseMessage, cached_images: Optional[Mapping[str, str]] = None
 ) -> gm.Messages:
     kwargs = {}
     if cached_images is None:
@@ -493,6 +493,19 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         with self._upload_cache_lock:
             return dict(self._cached_uploads)
 
+    def _uploads_for_request(
+        self,
+        request_uploads: Mapping[str, str],
+    ) -> Dict[str, str]:
+        """Merge shared cached IDs with request-owned IDs.
+
+        The shared cache is bounded and may evict an attachment between upload
+        completion and payload construction. Request-owned IDs therefore win.
+        """
+        uploads = self._cached_uploads_snapshot()
+        uploads.update(request_uploads)
+        return uploads
+
     def _claim_upload(
         self,
         hashed: str,
@@ -535,6 +548,16 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         if current is pending and not pending.done():
             pending.set_exception(error)
 
+    @staticmethod
+    def _uploaded_file_id(file: Any) -> str:
+        file_id = getattr(file, "id_", None)
+        if not isinstance(file_id, str) or not file_id.strip():
+            raise ValueError(
+                "GigaChat attachment upload returned an empty file ID; "
+                "the attachment cannot be added to the request."
+            )
+        return file_id
+
     def _should_upload_block(
         self, block_type: str, url: str
     ) -> Tuple[bool, Optional[re.Match[str]]]:
@@ -553,7 +576,11 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             return False, None
         return True, matches
 
-    async def _aupload_attachments(self, messages: List[BaseMessage]) -> None:
+    async def _aupload_attachments(
+        self,
+        messages: List[BaseMessage],
+    ) -> Dict[str, str]:
+        request_uploads: Dict[str, str] = {}
         for message in messages:
             if not isinstance(message.content, list):
                 continue
@@ -580,18 +607,25 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 hashed = hashlib.sha256(url.encode()).hexdigest()
                 cached, pending, owns_upload = self._claim_upload(hashed)
                 if cached is not None:
+                    request_uploads[hashed] = cached
                     continue
                 if not owns_upload:
-                    await asyncio.shield(asyncio.wrap_future(pending))
+                    request_uploads[hashed] = await asyncio.shield(
+                        asyncio.wrap_future(pending)
+                    )
                     continue
                 try:
                     file = await self.aupload_file((f"{uuid4()}{ext}", data))
+                    file_id = self._uploaded_file_id(file)
                 except BaseException as error:
                     self._fail_upload(hashed, pending, error)
                     raise
-                self._complete_upload(hashed, pending, file.id_)
+                self._complete_upload(hashed, pending, file_id)
+                request_uploads[hashed] = file_id
+        return request_uploads
 
-    def _upload_attachments(self, messages: List[BaseMessage]) -> None:
+    def _upload_attachments(self, messages: List[BaseMessage]) -> Dict[str, str]:
+        request_uploads: Dict[str, str] = {}
         for message in messages:
             if not isinstance(message.content, list):
                 continue
@@ -618,19 +652,34 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 hashed = hashlib.sha256(url.encode()).hexdigest()
                 cached, pending, owns_upload = self._claim_upload(hashed)
                 if cached is not None:
+                    request_uploads[hashed] = cached
                     continue
                 if not owns_upload:
-                    pending.result()
+                    request_uploads[hashed] = pending.result()
                     continue
                 try:
                     file = self.upload_file((f"{uuid4()}{ext}", data))
+                    file_id = self._uploaded_file_id(file)
                 except BaseException as error:
                     self._fail_upload(hashed, pending, error)
                     raise
-                self._complete_upload(hashed, pending, file.id_)
+                self._complete_upload(hashed, pending, file_id)
+                request_uploads[hashed] = file_id
+        return request_uploads
 
     def _build_payload(self, messages: List[BaseMessage], **kwargs: Any) -> gm.Chat:
-        cached_uploads = self._cached_uploads_snapshot()
+        return self._build_legacy_payload(
+            messages,
+            self._cached_uploads_snapshot(),
+            **kwargs,
+        )
+
+    def _build_legacy_payload(
+        self,
+        messages: List[BaseMessage],
+        cached_uploads: Mapping[str, str],
+        **kwargs: Any,
+    ) -> gm.Chat:
         messages_dicts = [_convert_message_to_dict(m, cached_uploads) for m in messages]
         kwargs.pop("messages", None)
         kwargs.pop("use_api_v2", None)
@@ -910,14 +959,19 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             return generate_from_stream(stream_iter)
 
         route = self._validate_request_before_upload(messages, kwargs)
-        self._upload_attachments(messages)
+        request_uploads = self._upload_attachments(messages)
+        uploads = self._uploads_for_request(request_uploads)
         if route == "primary":
-            primary_payload = self._build_primary_payload(messages, kwargs)
+            primary_payload = self._build_primary_payload(
+                messages,
+                kwargs,
+                cached_uploads=uploads,
+            )
             primary_response = self._client.chat.create(primary_payload)
             result = primary.create_chat_result(primary_response)
         else:
             self._validate_legacy_kwargs(kwargs)
-            payload = self._build_payload(messages, **kwargs)
+            payload = self._build_legacy_payload(messages, uploads, **kwargs)
             response = self._client.chat(payload)
             result = self._create_chat_result(response)
         return _attach_parsed_response_format(
@@ -944,14 +998,19 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             return await agenerate_from_stream(stream_iter)
 
         route = self._validate_request_before_upload(messages, kwargs)
-        await self._aupload_attachments(messages)
+        request_uploads = await self._aupload_attachments(messages)
+        uploads = self._uploads_for_request(request_uploads)
         if route == "primary":
-            primary_payload = self._build_primary_payload(messages, kwargs)
+            primary_payload = self._build_primary_payload(
+                messages,
+                kwargs,
+                cached_uploads=uploads,
+            )
             primary_response = await self._client.achat.create(primary_payload)
             result = primary.create_chat_result(primary_response)
         else:
             self._validate_legacy_kwargs(kwargs)
-            payload = self._build_payload(messages, **kwargs)
+            payload = self._build_legacy_payload(messages, uploads, **kwargs)
             response = await self._client.achat(payload)
             result = self._create_chat_result(response)
         return _attach_parsed_response_format(
@@ -970,13 +1029,18 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         # Kept in the signature for LangChain compatibility, but wrapper-side
         # local stop handling was removed in 0.5.x. See MIGRATION.md.
         route = self._validate_request_before_upload(messages, kwargs)
-        self._upload_attachments(messages)
+        request_uploads = self._upload_attachments(messages)
+        uploads = self._uploads_for_request(request_uploads)
         streamed_text: list[str] = []
         streamed_tool_call = False
         terminal_chunk: Optional[ChatGenerationChunk] = None
         saw_converted_chunk = False
         if route == "primary":
-            primary_payload = self._build_primary_payload(messages, kwargs)
+            primary_payload = self._build_primary_payload(
+                messages,
+                kwargs,
+                cached_uploads=uploads,
+            )
             state = primary.StreamState()
             provider_stream = self._client.chat.stream(primary_payload)
             try:
@@ -1031,7 +1095,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             yield terminal_chunk
             return
         self._validate_legacy_kwargs(kwargs)
-        payload = self._build_payload(messages, **kwargs)
+        payload = self._build_legacy_payload(messages, uploads, **kwargs)
         first_chunk = True
 
         legacy_provider_stream = self._client.stream(payload)
@@ -1101,13 +1165,18 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         # Kept in the signature for LangChain compatibility, but wrapper-side
         # local stop handling was removed in 0.5.x. See MIGRATION.md.
         route = self._validate_request_before_upload(messages, kwargs)
-        await self._aupload_attachments(messages)
+        request_uploads = await self._aupload_attachments(messages)
+        uploads = self._uploads_for_request(request_uploads)
         streamed_text: list[str] = []
         streamed_tool_call = False
         terminal_chunk: Optional[ChatGenerationChunk] = None
         saw_converted_chunk = False
         if route == "primary":
-            primary_payload = self._build_primary_payload(messages, kwargs)
+            primary_payload = self._build_primary_payload(
+                messages,
+                kwargs,
+                cached_uploads=uploads,
+            )
             state = primary.StreamState()
             provider_stream = self._client.achat.stream(primary_payload)
             try:
@@ -1162,7 +1231,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             yield terminal_chunk
             return
         self._validate_legacy_kwargs(kwargs)
-        payload = self._build_payload(messages, **kwargs)
+        payload = self._build_legacy_payload(messages, uploads, **kwargs)
         first_chunk = True
 
         legacy_provider_stream = self._client.astream(payload)

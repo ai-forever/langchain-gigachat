@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import hashlib
 import threading
 from collections.abc import AsyncIterator, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import gigachat.models as gm
 import httpx
@@ -34,6 +35,7 @@ from langchain_gigachat.chat_models.gigachat import (
 from .fixtures import CREATED_AT, MESSAGE_ID, MODEL
 
 _DATA_URL = "data:image/png;base64,aGVsbG8="
+_DATA_URL_HASH = hashlib.sha256(_DATA_URL.encode()).hexdigest()
 
 
 def _attachment_message() -> HumanMessage:
@@ -152,10 +154,12 @@ def test_sync_uploads_deduplicate_in_flight_content_across_threads(
         )
         second_upload_started.wait(timeout=0.2)
         release_upload.set()
-        first.result(timeout=1)
-        second.result(timeout=1)
+        first_uploads = first.result(timeout=1)
+        second_uploads = second.result(timeout=1)
 
     assert calls == 1
+    assert first_uploads == {_DATA_URL_HASH: "uploaded-file"}
+    assert second_uploads == {_DATA_URL_HASH: "uploaded-file"}
 
 
 async def test_async_uploads_deduplicate_in_flight_content_across_tasks(
@@ -186,9 +190,47 @@ async def test_async_uploads_deduplicate_in_flight_content_across_tasks(
     await asyncio.sleep(0)
     assert calls == 1
     release_upload.set()
-    await asyncio.gather(first, second)
+    first_uploads, second_uploads = await asyncio.gather(first, second)
 
     assert calls == 1
+    assert first_uploads == {_DATA_URL_HASH: "uploaded-file"}
+    assert second_uploads == {_DATA_URL_HASH: "uploaded-file"}
+
+
+async def test_mixed_sync_and_async_uploads_share_one_in_flight_result(
+    mocker: MockerFixture,
+) -> None:
+    model = GigaChat(auto_upload_attachments=True)
+    upload_started = threading.Event()
+    release_upload = threading.Event()
+
+    def upload_file(*args: Any, **kwargs: Any) -> SimpleNamespace:
+        upload_started.set()
+        if not release_upload.wait(timeout=2):
+            raise TimeoutError("test did not release the blocking upload")
+        return SimpleNamespace(id_="uploaded-file")
+
+    async_upload = mocker.patch.object(GigaChat, "aupload_file", new=AsyncMock())
+    mocker.patch.object(GigaChat, "upload_file", side_effect=upload_file)
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        sync_upload = executor.submit(
+            model._upload_attachments,
+            [copy.deepcopy(_attachment_message())],
+        )
+        assert upload_started.wait(timeout=1)
+        async_upload_task = asyncio.create_task(
+            model._aupload_attachments([copy.deepcopy(_attachment_message())])
+        )
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        release_upload.set()
+        async_uploads = await async_upload_task
+        sync_uploads = sync_upload.result(timeout=1)
+
+    assert sync_uploads == {_DATA_URL_HASH: "uploaded-file"}
+    assert async_uploads == sync_uploads
+    async_upload.assert_not_called()
 
 
 def test_failed_upload_cleans_in_flight_state_and_allows_retry(
@@ -224,6 +266,126 @@ def test_upload_cache_is_deterministically_bounded() -> None:
     assert len(model._cached_uploads) == DEFAULT_IMAGE_CACHE_MAX_SIZE
     assert "hash-0" not in model._cached_uploads
     assert model._cached_uploads["hash-1000"] == "file-1000"
+
+
+@pytest.mark.parametrize("operation", ["invoke", "stream"])
+def test_sync_request_retains_its_uploaded_id_after_shared_cache_eviction(
+    mocker: MockerFixture,
+    sdk_client: MagicMock,
+    operation: str,
+) -> None:
+    sdk_client.upload_file.return_value = SimpleNamespace(id_="request-file")
+    sdk_client.chat.create.return_value = _primary_response()
+    sdk_client.chat.stream.return_value = _primary_stream()
+    model = GigaChat(
+        model=MODEL,
+        use_api_v2=True,
+        auto_upload_attachments=True,
+    )
+    original_upload = GigaChat._upload_attachments
+
+    def upload_then_evict(
+        current_model: GigaChat,
+        messages: list[Any],
+    ) -> dict[str, str]:
+        request_uploads = original_upload(current_model, messages)
+        current_model._set_cached_upload("competing-hash", "competing-file")
+        assert _DATA_URL_HASH not in current_model._cached_uploads
+        return request_uploads
+
+    mocker.patch(
+        "langchain_gigachat.chat_models.gigachat.DEFAULT_IMAGE_CACHE_MAX_SIZE",
+        1,
+    )
+    mocker.patch.object(GigaChat, "_upload_attachments", new=upload_then_evict)
+
+    if operation == "invoke":
+        model.invoke([_attachment_message()])
+        payload = sdk_client.chat.create.call_args.args[0]
+    else:
+        list(model.stream([_attachment_message()]))
+        payload = sdk_client.chat.stream.call_args.args[0]
+
+    assert payload.messages[0].content[0].files[0].id_ == "request-file"
+
+
+@pytest.mark.parametrize("operation", ["ainvoke", "astream"])
+async def test_async_request_retains_its_uploaded_id_after_shared_cache_eviction(
+    mocker: MockerFixture,
+    sdk_client: MagicMock,
+    operation: str,
+) -> None:
+    sdk_client.aupload_file = AsyncMock(
+        return_value=SimpleNamespace(id_="request-file")
+    )
+    sdk_client.achat.create.return_value = _primary_response()
+    sdk_client.achat.stream.return_value = _async_primary_stream()
+    model = GigaChat(
+        model=MODEL,
+        use_api_v2=True,
+        auto_upload_attachments=True,
+    )
+    original_upload = GigaChat._aupload_attachments
+
+    async def upload_then_evict(
+        current_model: GigaChat,
+        messages: list[Any],
+    ) -> dict[str, str]:
+        request_uploads = await original_upload(current_model, messages)
+        current_model._set_cached_upload("competing-hash", "competing-file")
+        assert _DATA_URL_HASH not in current_model._cached_uploads
+        return request_uploads
+
+    mocker.patch(
+        "langchain_gigachat.chat_models.gigachat.DEFAULT_IMAGE_CACHE_MAX_SIZE",
+        1,
+    )
+    mocker.patch.object(GigaChat, "_aupload_attachments", new=upload_then_evict)
+
+    if operation == "ainvoke":
+        await model.ainvoke([_attachment_message()])
+        payload = sdk_client.achat.create.call_args.args[0]
+    else:
+        [chunk async for chunk in model.astream([_attachment_message()])]
+        payload = sdk_client.achat.stream.call_args.args[0]
+
+    assert payload.messages[0].content[0].files[0].id_ == "request-file"
+
+
+def test_sync_upload_rejects_empty_file_id_without_caching(
+    sdk_client: MagicMock,
+) -> None:
+    sdk_client.upload_file.return_value = SimpleNamespace(id_="")
+    model = GigaChat(
+        model=MODEL,
+        use_api_v2=True,
+        auto_upload_attachments=True,
+    )
+
+    with pytest.raises(ValueError, match="empty file ID"):
+        model.invoke([_attachment_message()])
+
+    assert model._cached_uploads == {}
+    assert model._uploads_in_flight == {}
+    sdk_client.chat.create.assert_not_called()
+
+
+async def test_async_upload_rejects_blank_file_id_without_caching(
+    sdk_client: MagicMock,
+) -> None:
+    sdk_client.aupload_file = AsyncMock(return_value=SimpleNamespace(id_=" "))
+    model = GigaChat(
+        model=MODEL,
+        use_api_v2=True,
+        auto_upload_attachments=True,
+    )
+
+    with pytest.raises(ValueError, match="empty file ID"):
+        await model.ainvoke([_attachment_message()])
+
+    assert model._cached_uploads == {}
+    assert model._uploads_in_flight == {}
+    sdk_client.achat.create.assert_not_called()
 
 
 def test_first_sdk_client_initialization_is_thread_safe(
