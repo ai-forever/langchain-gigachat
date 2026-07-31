@@ -1058,6 +1058,8 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             if run_manager:
                 run_manager.on_llm_new_token(content, chunk=generation_chunk)
             yield generation_chunk
+        if not saw_converted_chunk:
+            return
         if kwargs.get("response_format") is None:
             if terminal_chunk is not None:
                 if run_manager:
@@ -1179,6 +1181,8 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             if run_manager:
                 await run_manager.on_llm_new_token(content, chunk=generation_chunk)
             yield generation_chunk
+        if not saw_converted_chunk:
+            return
         if kwargs.get("response_format") is None:
             if terminal_chunk is not None:
                 if run_manager:

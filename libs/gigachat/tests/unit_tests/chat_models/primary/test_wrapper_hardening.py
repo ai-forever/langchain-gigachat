@@ -23,6 +23,19 @@ class OutputSchema(BaseModel):
     value: int
 
 
+OUTPUT_SCHEMA = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "output",
+        "schema": {
+            "type": "object",
+            "properties": {"value": {"type": "integer"}},
+            "required": ["value"],
+        },
+    },
+}
+
+
 def _message(chunk: ChatGenerationChunk) -> AIMessageChunk:
     assert isinstance(chunk.message, AIMessageChunk)
     return cast(AIMessageChunk, chunk.message)
@@ -107,6 +120,52 @@ def test_zero_event_primary_streaming_invoke_uses_langchain_empty_stream_error(
 
     with pytest.raises(ValueError, match="No generations found in stream"):
         llm.invoke("Hello")
+
+
+def test_zero_event_legacy_structured_internal_stream_yields_nothing(
+    sdk_client: MagicMock,
+) -> None:
+    sdk_client.stream.return_value = iter(())
+    llm = GigaChat(model=MODEL)
+
+    assert list(
+        llm._stream([HumanMessage("Hello")], response_format=OUTPUT_SCHEMA)
+    ) == []
+
+
+async def test_zero_event_legacy_structured_internal_astream_yields_nothing(
+    sdk_client: MagicMock,
+) -> None:
+    sdk_client.astream.return_value = _async_items(iter(()))
+    llm = GigaChat(model=MODEL)
+
+    assert [
+        chunk
+        async for chunk in llm._astream(
+            [HumanMessage("Hello")],
+            response_format=OUTPUT_SCHEMA,
+        )
+    ] == []
+
+
+def test_zero_event_legacy_structured_streaming_invoke_uses_empty_stream_error(
+    sdk_client: MagicMock,
+) -> None:
+    sdk_client.stream.return_value = iter(())
+    llm = GigaChat(model=MODEL, streaming=True)
+
+    with pytest.raises(ValueError, match="No generations found in stream"):
+        llm.invoke("Hello", response_format=OUTPUT_SCHEMA)
+
+
+async def test_zero_event_legacy_structured_streaming_ainvoke_uses_empty_error(
+    sdk_client: MagicMock,
+) -> None:
+    sdk_client.astream.return_value = _async_items(iter(()))
+    llm = GigaChat(model=MODEL, streaming=True)
+
+    with pytest.raises(ValueError, match="No generations found in stream"):
+        await llm.ainvoke("Hello", response_format=OUTPUT_SCHEMA)
 
 
 def test_tool_terminal_does_not_replace_authoritative_message_done(
