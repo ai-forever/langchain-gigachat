@@ -30,6 +30,7 @@ _MODEL_OPTION_KEYS = frozenset(
     {
         *_MODEL_OPTION_DEFAULTS,
         "model_options",
+        "reasoning",
         "reasoning_effort",
         "response_format",
     }
@@ -215,11 +216,18 @@ def _model_options(
             options[field_name] = copy.deepcopy(value)
 
     if options.get("reasoning") is None:
-        effort = invocation_kwargs.get("reasoning_effort")
-        if effort is None:
-            effort = defaults.reasoning_effort
-        if effort is not None:
-            options["reasoning"] = {"effort": effort}
+        reasoning = invocation_kwargs.get("reasoning")
+        if reasoning is not None:
+            options["reasoning"] = _copy_mapping_or_model(
+                reasoning,
+                field_name="reasoning",
+            )
+        else:
+            effort = invocation_kwargs.get("reasoning_effort")
+            if effort is None:
+                effort = defaults.reasoning_effort
+            if effort is not None:
+                options["reasoning"] = {"effort": effort}
 
     response_format = options.get("response_format")
     if response_format is None:
