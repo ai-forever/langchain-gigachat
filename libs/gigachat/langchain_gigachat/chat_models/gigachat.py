@@ -1413,16 +1413,19 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                     "'auto' or a concrete tool name."
                 )
         formatted_tools = [normalize_tool_for_binding(tool) for tool in tools]
-        if tool_choice is not None and tool_choice:
+        if tool_choice is not None and tool_choice is not False:
             if isinstance(tool_choice, str):
+                if not tool_choice:
+                    raise ValueError("tool_choice must not be an empty string")
                 if tool_choice not in ("auto", "none"):
                     tool_choice = {"name": tool_choice}
-            elif isinstance(tool_choice, bool) and tool_choice:
+            elif isinstance(tool_choice, bool):
                 if not formatted_tools:
                     raise ValueError("tool_choice can not be bool if tools are empty")
                 tool_choice = {"name": _get_tool_name(formatted_tools[0])}
             elif isinstance(tool_choice, dict):
-                pass
+                if not tool_choice:
+                    raise ValueError("tool_choice must not be an empty mapping")
             else:
                 raise ValueError(
                     f"Unrecognized tool_choice type. Expected str, bool or dict. "

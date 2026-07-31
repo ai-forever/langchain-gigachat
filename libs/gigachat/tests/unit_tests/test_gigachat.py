@@ -906,6 +906,30 @@ def test_bind_tools_specific_tool_choice_works() -> None:
     assert bound.kwargs["function_call"] == {"name": "PersonTool"}  # type: ignore[attr-defined]
 
 
+@pytest.mark.parametrize("tool_choice", [None, False])
+def test_bind_tools_unspecified_falsey_tool_choices_are_omitted(
+    tool_choice: Any,
+) -> None:
+    bound = GigaChat().bind_tools([PersonTool], tool_choice=tool_choice)
+
+    assert "function_call" not in bound.kwargs  # type: ignore[attr-defined]
+
+
+@pytest.mark.parametrize(
+    ("tool_choice", "message"),
+    [
+        ("", "empty string"),
+        ({}, "empty mapping"),
+    ],
+)
+def test_bind_tools_rejects_invalid_falsey_tool_choices(
+    tool_choice: Any,
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        GigaChat().bind_tools([PersonTool], tool_choice=tool_choice)
+
+
 # ---------------------------------------------------------------------------
 # Connection settings (2.18)
 # ---------------------------------------------------------------------------
