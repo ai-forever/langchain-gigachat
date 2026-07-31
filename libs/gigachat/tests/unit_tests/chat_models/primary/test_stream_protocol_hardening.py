@@ -319,6 +319,45 @@ def test_repeated_done_reason_is_diagnostic_after_authoritative_done() -> None:
     ]
 
 
+def test_late_first_non_null_done_reason_becomes_authoritative() -> None:
+    state = primary.StreamState()
+    done_without_reason = _convert(
+        {"event": "response.message.done", "message_id": "provider-message-1"},
+        state,
+    )
+    late_reason = _convert(
+        {"event": "response.message.done", "finish_reason": "stop"},
+        state,
+    )
+
+    aggregate = done_without_reason + late_reason
+    result = generate_from_stream(iter([done_without_reason, late_reason]))
+
+    assert _message(done_without_reason).chunk_position == "last"
+    assert _message(late_reason).chunk_position is None
+    assert late_reason.generation_info == {"finish_reason": "stop"}
+    assert aggregate.generation_info == {"finish_reason": "stop"}
+    assert aggregate.message.response_metadata["finish_reason"] == "stop"
+    assert "finish_reason_events" not in aggregate.message.response_metadata
+    assert result.generations[0].generation_info == {"finish_reason": "stop"}
+
+
+def test_done_only_stream_uses_provider_message_id_without_provisional_id() -> None:
+    state = primary.StreamState()
+
+    done = _convert(
+        {
+            "event": "response.message.done",
+            "message_id": "provider-message-1",
+            "finish_reason": "stop",
+        },
+        state,
+    )
+
+    assert done.message.id == "provider-message-1"
+    assert state.message_id == "provider-message-1"
+
+
 def test_generate_from_stream_keeps_authoritative_finish_reason() -> None:
     state = primary.StreamState()
     chunks = [

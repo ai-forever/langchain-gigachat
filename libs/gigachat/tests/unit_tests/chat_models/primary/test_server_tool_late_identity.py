@@ -12,6 +12,8 @@ from langchain_core.outputs import ChatGenerationChunk
 
 from langchain_gigachat.chat_models._contracts import primary
 
+from .fixtures import build_official_sdk_server_tool_stream
+
 
 def _convert(
     event: dict[str, Any],
@@ -213,12 +215,160 @@ def test_two_sequential_server_tools_keep_distinct_identities() -> None:
     assert blocks[3]["tool_call_id"] == "provider-tool-2"
 
 
-def test_terminal_server_tool_without_provider_identity_fails_closed() -> None:
+def test_official_sdk_terminal_server_tool_without_identity_uses_local_id() -> None:
     state = primary.StreamState()
-    _convert(_started_event(), state)
+    events = build_official_sdk_server_tool_stream()
+    snapshots = [event.model_dump(mode="json") for event in events]
+    chunks = [_convert(event, state) for event in events]
+
+    aggregate = reduce(add, chunks)
+    blocks = _blocks(aggregate)
+    result = next(block for block in blocks if block["type"] == "server_tool_result")
+    call_id = result["tool_call_id"]
+
+    assert call_id == "lc_primary-server-tool-0"
+    assert result["extras"]["provider_tool_execution"] == {
+        "name": "image_generate",
+        "status": "success",
+        "censored": True,
+    }
+    assert aggregate.message.additional_kwargs[
+        "provider_server_tool_state_by_call_id"
+    ] == {call_id: "tools-state-1"}
+    assert aggregate.message.response_metadata["tools_state_id"] == "tools-state-1"
+    assert aggregate.message.response_metadata["finish_reason"] == "error"
+    assert aggregate.generation_info == {"finish_reason": "error"}
+    assert aggregate.message.usage_metadata == {
+        "input_tokens": 1,
+        "output_tokens": 2,
+        "total_tokens": 3,
+        "input_token_details": {"cache_read": 0},
+    }
+    assert sum(chunk.message.chunk_position == "last" for chunk in chunks) == 1
+    assert [event.model_dump(mode="json") for event in events] == snapshots
+
+
+def test_repeated_server_tool_update_merges_all_extras() -> None:
+    state = primary.StreamState()
+    started = _convert(
+        {
+            "event": "response.tool.started",
+            "tool_execution": {
+                "name": "image_generate",
+                "status": "running",
+                "censored": False,
+            },
+        },
+        state,
+    )
+    update = _convert(
+        {
+            "event": "response.tool.in_progress",
+            "tools_state_id": "provider-state-1",
+            "tool_execution": {
+                "name": "image_generate",
+                "status": "in_progress",
+                "seconds_left": 2,
+            },
+        },
+        state,
+    )
+
+    assert _blocks(started)[0]["extras"]["provider_tool_execution"]["censored"] is False
+    assert _blocks(update)[0]["extras"] == {
+        "provider_tool_execution": {
+            "name": "image_generate",
+            "status": "in_progress",
+            "seconds_left": 2,
+        },
+        "provider_server_tool_state_by_call_id": {
+            "lc_primary-server-tool-0": "provider-state-1"
+        },
+        "provider_tool_execution_updates": [
+            {
+                "name": "image_generate",
+                "status": "in_progress",
+                "seconds_left": 2,
+            }
+        ],
+    }
+
+
+def test_sequential_server_tools_do_not_reuse_stale_global_state() -> None:
+    state = primary.StreamState()
+    chunks = [
+        _convert(
+            {
+                "event": "response.tool.started",
+                "tools_state_id": "provider-state-1",
+                "tool_execution": {"name": "web_search", "status": "running"},
+            },
+            state,
+        ),
+        _convert(
+            {
+                "event": "response.tool.completed",
+                "tool_execution": {"name": "web_search", "status": "success"},
+            },
+            state,
+        ),
+        _convert(
+            {
+                "event": "response.tool.started",
+                "tool_execution": {
+                    "name": "image_generate",
+                    "status": "running",
+                },
+            },
+            state,
+        ),
+        _convert(
+            {
+                "event": "response.tool.completed",
+                "tools_state_id": "provider-state-2",
+                "tool_execution": {
+                    "name": "image_generate",
+                    "status": "success",
+                },
+            },
+            state,
+        ),
+    ]
+
+    blocks = _blocks(reduce(add, chunks))
+    first_call_id = blocks[0]["id"]
+    second_call_id = blocks[2]["id"]
+
+    assert first_call_id == "provider-state-1"
+    assert blocks[1]["tool_call_id"] == first_call_id
+    assert second_call_id == "lc_primary-server-tool-0"
+    assert blocks[3]["tool_call_id"] == second_call_id
+    assert second_call_id != first_call_id
+    assert blocks[3]["extras"]["provider_server_tool_state_by_call_id"] == {
+        second_call_id: "provider-state-2"
+    }
+    assert state.provider_tools_state_ids == ["provider-state-1", "provider-state-2"]
+
+
+def test_late_state_with_two_unresolved_server_tools_fails_ambiguously() -> None:
+    state = primary.StreamState()
+    for name in ("web_search", "image_generate"):
+        _convert(
+            {
+                "event": "response.tool.completed",
+                "tool_execution": {"name": name, "status": "success"},
+            },
+            state,
+        )
 
     with pytest.raises(
         ValueError,
-        match="completed without provider identity",
+        match="multiple unresolved tool lifecycles; correlation is ambiguous",
     ):
-        _convert(_completed_event(), state)
+        _convert(
+            {
+                "event": "response.message.done",
+                "tools_state_id": "provider-state-ambiguous",
+            },
+            state,
+        )

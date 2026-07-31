@@ -8,9 +8,39 @@ from operator import add
 from typing import Any, cast
 from unittest.mock import MagicMock
 
+from langchain_core.language_models.chat_models import generate_from_stream
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
 
 from langchain_gigachat.chat_models.gigachat import GigaChat
+
+from .fixtures import build_official_sdk_server_tool_stream
+
+
+def _official_sdk_server_tool_events() -> Iterator[Any]:
+    return iter(build_official_sdk_server_tool_stream())
+
+
+def _assert_official_sdk_server_tool_message(
+    message: AIMessage | AIMessageChunk,
+) -> None:
+    assert isinstance(message.content, list)
+    blocks = cast(list[dict[str, Any]], message.content)
+    result = next(block for block in blocks if block["type"] == "server_tool_result")
+    call_id = result["tool_call_id"]
+
+    assert call_id == "lc_primary-server-tool-0"
+    assert result["extras"]["provider_tool_execution"]["censored"] is True
+    assert message.additional_kwargs["provider_server_tool_state_by_call_id"] == {
+        call_id: "tools-state-1"
+    }
+    assert message.response_metadata["tools_state_id"] == "tools-state-1"
+    assert message.response_metadata["finish_reason"] == "error"
+    assert message.usage_metadata == {
+        "input_tokens": 1,
+        "output_tokens": 2,
+        "total_tokens": 3,
+        "input_token_details": {"cache_read": 0},
+    }
 
 
 def _finish_reason_events() -> Iterator[dict[str, Any]]:
@@ -18,6 +48,17 @@ def _finish_reason_events() -> Iterator[dict[str, Any]]:
         "event": "response.tool.failed",
         "finish_reason": "tool_error",
         "error": {"message": "tool failed"},
+    }
+    yield {
+        "event": "response.message.done",
+        "finish_reason": "stop",
+    }
+
+
+def _late_finish_reason_events() -> Iterator[dict[str, Any]]:
+    yield {
+        "event": "response.message.done",
+        "message_id": "provider-message-1",
     }
     yield {
         "event": "response.message.done",
@@ -160,6 +201,38 @@ async def test_finish_reason_authority_across_async_public_workflows(
     assert invoked.response_metadata["finish_reason"] == "stop"
 
 
+def test_late_finish_reason_is_promoted_in_sync_buffered_terminal(
+    sdk_client: MagicMock,
+) -> None:
+    _configure_sync_stream(sdk_client, _late_finish_reason_events)
+    llm = GigaChat(model="GigaChat-3-Ultra", use_api_v2=True, streaming=True)
+
+    chunks = list(llm._stream([HumanMessage("Hello")]))
+    invoked = llm.invoke("Hello")
+
+    assert len(chunks) == 1
+    assert chunks[0].generation_info == {"finish_reason": "stop"}
+    assert chunks[0].message.response_metadata["finish_reason"] == "stop"
+    assert chunks[0].message.id == "provider-message-1"
+    assert invoked.response_metadata["finish_reason"] == "stop"
+
+
+async def test_late_finish_reason_is_promoted_in_async_buffered_terminal(
+    sdk_client: MagicMock,
+) -> None:
+    _configure_async_stream(sdk_client, _late_finish_reason_events)
+    llm = GigaChat(model="GigaChat-3-Ultra", use_api_v2=True, streaming=True)
+
+    chunks = [chunk async for chunk in llm._astream([HumanMessage("Hello")])]
+    invoked = await llm.ainvoke("Hello")
+
+    assert len(chunks) == 1
+    assert chunks[0].generation_info == {"finish_reason": "stop"}
+    assert chunks[0].message.response_metadata["finish_reason"] == "stop"
+    assert chunks[0].message.id == "provider-message-1"
+    assert invoked.response_metadata["finish_reason"] == "stop"
+
+
 def test_public_stream_deduplicates_mirrored_function_fragments(
     sdk_client: MagicMock,
 ) -> None:
@@ -258,3 +331,58 @@ def test_streaming_invoke_preserves_mirrored_function_call(
 
     assert isinstance(result, AIMessage)
     assert result.tool_calls[0]["args"] == {"city": "Moscow"}
+
+
+def test_official_sdk_server_tool_stream_across_sync_public_workflows(
+    sdk_client: MagicMock,
+) -> None:
+    _configure_sync_stream(sdk_client, _official_sdk_server_tool_events)
+    llm = GigaChat(
+        model="GigaChat-3-Ultra",
+        use_api_v2=True,
+        streaming=True,
+    )
+
+    internal = list(llm._stream([HumanMessage("Hello")]))
+    internal_aggregate = reduce(add, internal)
+    generated = generate_from_stream(iter(internal)).generations[0]
+    public_chunks = list(llm.stream("Hello"))
+    public_aggregate = reduce(add, public_chunks)
+    invoked = llm.invoke("Hello")
+
+    assert sum(chunk.message.chunk_position == "last" for chunk in internal) == 1
+    assert sum(chunk.chunk_position == "last" for chunk in public_chunks) == 1
+    assert internal_aggregate.generation_info == {"finish_reason": "error"}
+    assert generated.generation_info == {"finish_reason": "error"}
+    for message in (
+        internal_aggregate.message,
+        generated.message,
+        public_aggregate,
+        invoked,
+    ):
+        assert isinstance(message, (AIMessage, AIMessageChunk))
+        _assert_official_sdk_server_tool_message(message)
+
+
+async def test_official_sdk_server_tool_stream_across_async_public_workflows(
+    sdk_client: MagicMock,
+) -> None:
+    _configure_async_stream(sdk_client, _official_sdk_server_tool_events)
+    llm = GigaChat(
+        model="GigaChat-3-Ultra",
+        use_api_v2=True,
+        streaming=True,
+    )
+
+    internal = [chunk async for chunk in llm._astream([HumanMessage("Hello")])]
+    internal_aggregate = reduce(add, internal)
+    public_chunks = [chunk async for chunk in llm.astream("Hello")]
+    public_aggregate = reduce(add, public_chunks)
+    invoked = await llm.ainvoke("Hello")
+
+    assert sum(chunk.message.chunk_position == "last" for chunk in internal) == 1
+    assert sum(chunk.chunk_position == "last" for chunk in public_chunks) == 1
+    assert internal_aggregate.generation_info == {"finish_reason": "error"}
+    for message in (internal_aggregate.message, public_aggregate, invoked):
+        assert isinstance(message, (AIMessage, AIMessageChunk))
+        _assert_official_sdk_server_tool_message(message)

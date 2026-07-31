@@ -16,6 +16,56 @@ MESSAGE_ID = "message-primary-001"
 TOOLS_STATE_ID = "tools-state-primary-001"
 
 
+def build_official_sdk_server_tool_stream() -> list[gm.PrimaryChatCompletionChunk]:
+    """Return the exact named-event payloads pinned SDK v0.2.3a1 tests parse."""
+    payloads = [
+        {
+            "event": "response.message.delta",
+            "model": "GigaChat",
+            "created_at": "167890456789",
+            "messages": [{"role": "assistant", "content": "primary chunk"}],
+        },
+        {
+            "event": "response.tool.completed",
+            "model": "GigaChat",
+            "created_at": "167890456790",
+            "messages": [
+                {
+                    "role": "reasoning",
+                    "content": [
+                        {
+                            "tool_execution": {
+                                "name": "image_generate",
+                                "status": "success",
+                                "censored": True,
+                            }
+                        }
+                    ],
+                }
+            ],
+        },
+        {
+            "event": "response.message.done",
+            "model": "GigaChat",
+            "created_at": "167890456791",
+            "finish_reason": "error",
+            "tools_state_id": "tools-state-1",
+            "usage": {
+                "input_tokens": 1,
+                "input_tokens_details": {
+                    "prompt_tokens": 1,
+                    "cached_tokens": 0,
+                },
+                "output_tokens": 2,
+                "total_tokens": 3,
+            },
+        },
+    ]
+    return [
+        gm.PrimaryChatCompletionChunk.model_validate(payload) for payload in payloads
+    ]
+
+
 def _x_headers() -> dict[str, Optional[str]]:
     return {
         "x-request-id": REQUEST_ID,

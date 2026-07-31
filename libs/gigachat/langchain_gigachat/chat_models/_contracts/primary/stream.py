@@ -383,7 +383,6 @@ def _server_tool_call_id(
         or execution.get("tool_call_id")
         or execution.get("id")
         or incoming_tools_state_id
-        or state.tools_state_id
     )
     provider_id = str(provider_id_value) if provider_id_value is not None else None
     active_call_id = state.active_server_tool_call_id
@@ -405,22 +404,14 @@ def _server_tool_call_id(
             state.server_tool_provider_ids[call_id] = provider_id
     elif active_call_id is not None:
         call_id = active_call_id
-    elif terminal:
-        raise ValueError(
-            "Primary server tool completed without provider identity; "
-            "the result cannot be reconciled."
-        )
     else:
         call_id = f"lc_primary-server-tool-{state.next_server_tool_sequence}"
         state.next_server_tool_sequence += 1
 
     if terminal:
-        if call_id.startswith("lc_") and call_id not in state.server_tool_provider_ids:
-            raise ValueError(
-                "Primary server tool completed without provider identity; "
-                "the result cannot be reconciled."
-            )
         state.active_server_tool_call_id = None
+        if call_id not in state.server_tool_provider_ids:
+            state.unresolved_server_tool_call_ids.append(call_id)
     elif active_call_id is None:
         state.active_server_tool_call_id = call_id
     elif active_call_id != call_id:
@@ -429,6 +420,42 @@ def _server_tool_call_id(
         )
 
     return call_id, provider_id
+
+
+def _server_tool_identity_update(
+    state: StreamState,
+    *,
+    incoming_tools_state_id: str | None,
+    has_tool_execution: bool,
+) -> dict[str, Any]:
+    """Associate provider state that arrives after an idless server-tool result."""
+    if incoming_tools_state_id is None or has_tool_execution:
+        return {}
+    if incoming_tools_state_id in state.server_tool_call_ids_by_provider:
+        return {}
+
+    unresolved = [
+        call_id
+        for call_id in state.unresolved_server_tool_call_ids
+        if call_id not in state.server_tool_provider_ids
+    ]
+    if not unresolved:
+        return {}
+    if len(unresolved) > 1:
+        raise ValueError(
+            "Primary server tool state arrived after multiple unresolved "
+            "tool lifecycles; correlation is ambiguous."
+        )
+
+    call_id = unresolved[0]
+    state.server_tool_call_ids_by_provider[incoming_tools_state_id] = call_id
+    state.server_tool_provider_ids[call_id] = incoming_tools_state_id
+    state.unresolved_server_tool_call_ids.remove(call_id)
+    return {
+        "provider_server_tool_state_by_call_id": {
+            call_id: incoming_tools_state_id,
+        }
+    }
 
 
 def _tool_execution_block(
@@ -526,7 +553,8 @@ def _tool_execution_block(
         block["name"] = incoming_name or ""
     else:
         block["name"] = incoming_name if known_name is None and incoming_name else ""
-        block["extras"] = {"provider_tool_execution_updates": [execution]}
+        block_extras = block.setdefault("extras", {})
+        block_extras["provider_tool_execution_updates"] = [execution]
     if execution.get("arguments", execution.get("args")) is None:
         block["args"] = ""
     return block
@@ -859,6 +887,7 @@ def _update_stream_metadata(
     model: Any,
     created_at: Any,
     x_headers: Mapping[str, Any],
+    allow_server_tool_state_transition: bool,
 ) -> dict[str, Any]:
     metadata: dict[str, Any] = {}
     metadata.update(
@@ -869,14 +898,24 @@ def _update_stream_metadata(
             value=provider_message_id,
         )
     )
-    metadata.update(
-        _observe_scalar_metadata(
-            state,
-            state_field="tools_state_id",
-            metadata_field="tools_state_id",
-            value=provider_tools_state_id,
-        )
-    )
+    if provider_tools_state_id is not None:
+        current_tools_state_id = state.tools_state_id
+        if current_tools_state_id is None:
+            state.tools_state_id = provider_tools_state_id
+            state.provider_tools_state_ids.append(provider_tools_state_id)
+            state.emitted_metadata_fields.add("tools_state_id")
+            metadata["tools_state_id"] = provider_tools_state_id
+        elif current_tools_state_id == provider_tools_state_id:
+            if provider_tools_state_id not in state.provider_tools_state_ids:
+                state.provider_tools_state_ids.append(provider_tools_state_id)
+        elif not allow_server_tool_state_transition:
+            raise ValueError(
+                "Primary GigaChat completion contains multiple tools_state_id values; "
+                "their replay semantics are unsupported."
+            )
+        elif provider_tools_state_id not in state.provider_tools_state_ids:
+            state.provider_tools_state_ids.append(provider_tools_state_id)
+            metadata["tools_state_id_events"] = [provider_tools_state_id]
     metadata.update(
         _observe_scalar_metadata(
             state,
@@ -922,7 +961,7 @@ def _response_metadata(
     *,
     event_name: str | None,
     observed_metadata: Mapping[str, Any],
-    completion_authoritative: bool,
+    finish_reason_authoritative: bool,
 ) -> dict[str, Any]:
     metadata: dict[str, Any] = {"output_version": "v1"}
     if event_name is not None:
@@ -931,7 +970,7 @@ def _response_metadata(
 
     finish_reason = event.get("finish_reason")
     if finish_reason is not None:
-        if completion_authoritative:
+        if finish_reason_authoritative:
             metadata["finish_reason"] = finish_reason
         else:
             metadata["finish_reason_events"] = [
@@ -1015,6 +1054,7 @@ def convert_stream_event(
     completion_authoritative = (
         event_name == "response.message.done" and completion_event is None
     )
+    finish_reason_authoritative = completion_authoritative
     if completion_event is not None:
         if event_name == "response.message.done":
             if event_data == completion_event:
@@ -1031,6 +1071,9 @@ def convert_stream_event(
                 or top_level_tool_execution is not None
             ):
                 raise ValueError("Conflicting primary completion terminal events")
+            if previous_finish is None and incoming_finish is not None:
+                finish_reason_authoritative = True
+                completion_event["finish_reason"] = incoming_finish
         elif normalized_messages or top_level_tool_execution is not None:
             raise ValueError(
                 "Primary stream content arrived after response.message.done"
@@ -1057,6 +1100,22 @@ def convert_stream_event(
         ),
     )
     x_headers = _optional_dict(event_data.get("x_headers"))
+    has_declared_nested_tool_execution = any(
+        message.get("tool_execution") is not None
+        or any(
+            part.get("tool_execution") is not None
+            for part in _as_dict_list(message.get("content"), field="messages.content")
+        )
+        for message in normalized_messages
+    )
+    has_server_tool_execution = (
+        top_level_tool_execution is not None or has_declared_nested_tool_execution
+    )
+    server_identity_kwargs = _server_tool_identity_update(
+        state,
+        incoming_tools_state_id=provider_tools_state_id,
+        has_tool_execution=has_server_tool_execution,
+    )
     observed_metadata = _update_stream_metadata(
         state,
         provider_message_id=provider_message_id,
@@ -1065,17 +1124,20 @@ def convert_stream_event(
         model=event_data.get("model"),
         created_at=event_data.get("created_at"),
         x_headers=x_headers,
+        allow_server_tool_state_transition=(
+            has_server_tool_execution or bool(server_identity_kwargs)
+        ),
     )
 
     request_id = _request_id(state.x_headers)
     if request_id is not None:
         state.message_id = request_id
-    elif state.message_id is None:
-        state.message_id = f"lc_primary-stream-{uuid4()}"
     elif (
         event_name == "response.message.done" and state.provider_message_id is not None
     ):
         state.message_id = state.provider_message_id
+    elif state.message_id is None:
+        state.message_id = f"lc_primary-stream-{uuid4()}"
 
     content, tool_calls, has_nested_tool_execution = _convert_messages(
         normalized_messages,
@@ -1118,12 +1180,12 @@ def convert_stream_event(
         event_data,
         event_name=event_name,
         observed_metadata=observed_metadata,
-        completion_authoritative=completion_authoritative,
+        finish_reason_authoritative=finish_reason_authoritative,
     )
 
     usage_metadata = _usage_update(state, event_data.get("usage"))
     generation_info = None
-    if completion_authoritative and event_data.get("finish_reason") is not None:
+    if finish_reason_authoritative and event_data.get("finish_reason") is not None:
         generation_info = {"finish_reason": event_data["finish_reason"]}
 
     has_payload = bool(
@@ -1136,7 +1198,10 @@ def convert_stream_event(
         state.completion_event = dict(event_data)
 
     state.first_chunk = False
-    additional_kwargs: dict[str, Any] = identity_kwargs
+    additional_kwargs: dict[str, Any] = {
+        **identity_kwargs,
+        **server_identity_kwargs,
+    }
     reasoning = reasoning_content(content)
     if reasoning is not None:
         additional_kwargs["reasoning_content"] = reasoning
