@@ -374,6 +374,76 @@ def test_create_agent_explicit_provider_strategy_does_not_require_profile(
     assert result["structured_response"] == OutputSchema(value=7)
 
 
+def test_create_agent_combines_tools_with_native_structured_output(
+    sdk_client: MagicMock,
+) -> None:
+    agents = pytest.importorskip("langchain.agents")
+    sdk_client.chat.create.return_value = _primary_json_response(finish_reason="stop")
+    model = GigaChat(
+        model=MODEL,
+        use_api_v2=True,
+        profile={
+            "structured_output": True,
+            "tool_calling": True,
+        },
+    )
+
+    def lookup_weather(city: str) -> str:
+        """Look up the weather for a city."""
+        return f"Weather for {city}"
+
+    agent = agents.create_agent(
+        model,
+        tools=[lookup_weather],
+        response_format=OutputSchema,
+    )
+    result = agent.invoke({"messages": [{"role": "user", "content": "Return seven"}]})
+
+    assert result["structured_response"] == OutputSchema(value=7)
+    payload = sdk_client.chat.create.call_args.args[0]
+    assert payload.tools
+    assert payload.tools[0].functions
+    assert [
+        specification.name
+        for specification in payload.tools[0].functions.specifications
+    ] == ["lookup_weather"]
+    assert payload.model_options
+    assert payload.model_options.response_format
+    assert payload.model_options.response_format.type == "json_schema"
+
+
+def test_create_agent_invalid_provider_response_fails_with_raw_message(
+    sdk_client: MagicMock,
+) -> None:
+    agents = pytest.importorskip("langchain.agents")
+    structured_output = pytest.importorskip("langchain.agents.structured_output")
+    sdk_client.chat.create.return_value = gm.ChatCompletionResponse(
+        model=MODEL,
+        created_at=CREATED_AT,
+        messages=[
+            gm.ChatMessage(
+                role="assistant",
+                message_id=MESSAGE_ID,
+                content=[gm.ChatContentPart(text='{"value": "not-an-integer"}')],
+            )
+        ],
+        message_id=MESSAGE_ID,
+        finish_reason="stop",
+    )
+    model = GigaChat(
+        model=MODEL,
+        use_api_v2=True,
+        profile={"structured_output": True},
+    )
+    agent = agents.create_agent(model, response_format=OutputSchema)
+
+    with pytest.raises(structured_output.StructuredOutputValidationError) as exc_info:
+        agent.invoke({"messages": [{"role": "user", "content": "Return seven"}]})
+
+    assert exc_info.value.ai_message.content == '{"value": "not-an-integer"}'
+    assert exc_info.value.ai_message.response_metadata["finish_reason"] == "stop"
+
+
 def _base64_image_message() -> HumanMessage:
     return HumanMessage(
         content=[
