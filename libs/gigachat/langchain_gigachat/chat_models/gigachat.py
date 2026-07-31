@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import binascii
 import copy
 import hashlib
 import json
@@ -258,6 +259,33 @@ def get_text_and_images_from_content(
     return " ".join(text_parts), attachments
 
 
+def _merge_legacy_additional_attachments(
+    attachments: List[str],
+    additional_attachments: Any,
+) -> List[str]:
+    """Validate and merge caller-supplied legacy attachment IDs."""
+    if not isinstance(additional_attachments, Sequence) or isinstance(
+        additional_attachments, (str, bytes, bytearray)
+    ):
+        raise ValueError(
+            "message.additional_kwargs['attachments'] must be a sequence of "
+            "non-empty strings, not str or bytes."
+        )
+
+    merged = list(attachments)
+    seen = set(merged)
+    for attachment_id in additional_attachments:
+        if not isinstance(attachment_id, str) or not attachment_id.strip():
+            raise ValueError(
+                "message.additional_kwargs['attachments'] must contain only "
+                "non-empty strings."
+            )
+        if attachment_id not in seen:
+            seen.add(attachment_id)
+            merged.append(attachment_id)
+    return merged
+
+
 def _convert_message_to_dict(
     message: BaseMessage, cached_images: Optional[Mapping[str, str]] = None
 ) -> gm.Messages:
@@ -272,7 +300,16 @@ def _convert_message_to_dict(
     else:
         content, attachments = message.content, []
 
-    attachments += message.additional_kwargs.get("attachments", [])
+    if "attachments" in message.additional_kwargs:
+        attachments = _merge_legacy_additional_attachments(
+            attachments,
+            message.additional_kwargs["attachments"],
+        )
+    if attachments and not isinstance(message, HumanMessage):
+        raise ValueError(
+            "Legacy GigaChat supports attachments only on HumanMessage; "
+            f"{type(message).__name__} attachments cannot be transmitted."
+        )
     functions_state_id = message.additional_kwargs.get("functions_state_id", None)
     if functions_state_id:
         kwargs["functions_state_id"] = functions_state_id
@@ -574,11 +611,12 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             return False, None
         return True, matches
 
-    async def _aupload_attachments(
+    def _attachment_upload_plan(
         self,
-        messages: List[BaseMessage],
-    ) -> Dict[str, str]:
-        request_uploads: Dict[str, str] = {}
+        messages: Sequence[BaseMessage],
+    ) -> List[Tuple[str, str, bytes]]:
+        """Build a complete, side-effect-free plan for attachment uploads."""
+        planned: Dict[str, Tuple[str, str, bytes]] = {}
         for message in messages:
             if not isinstance(message.content, list):
                 continue
@@ -592,77 +630,71 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 if not isinstance(block_data, dict):
                     continue
                 url = block_data.get("url")
-                if not url:
+                if not isinstance(url, str) or not url:
                     continue
                 should_upload, matches = self._should_upload_block(block_type, url)
-                if not should_upload or not matches:
+                if not should_upload or matches is None:
                     continue
                 mime, encoding, data_b64 = matches.groups()
                 if encoding != "base64":
                     continue
-                ext = _extension_for_mime(mime)
-                data = base64.b64decode(data_b64)
-                hashed = hashlib.sha256(url.encode()).hexdigest()
-                cached, pending, owns_upload = self._claim_upload(hashed)
-                if cached is not None:
-                    request_uploads[hashed] = cached
-                    continue
-                if not owns_upload:
-                    request_uploads[hashed] = await asyncio.shield(
-                        asyncio.wrap_future(pending)
-                    )
-                    continue
                 try:
-                    file = await self.aupload_file((f"{uuid4()}{ext}", data))
-                    file_id = self._uploaded_file_id(file)
-                except BaseException as error:
-                    self._fail_upload(hashed, pending, error)
-                    raise
-                self._complete_upload(hashed, pending, file_id)
-                request_uploads[hashed] = file_id
+                    data = base64.b64decode(data_b64, validate=True)
+                except binascii.Error as error:
+                    raise ValueError(
+                        "Invalid base64 data URL attachment; fix the local payload "
+                        "before retrying."
+                    ) from error
+                hashed = hashlib.sha256(url.encode()).hexdigest()
+                planned.setdefault(
+                    hashed,
+                    (hashed, _extension_for_mime(mime), data),
+                )
+        return list(planned.values())
+
+    async def _aupload_attachments(
+        self,
+        messages: List[BaseMessage],
+    ) -> Dict[str, str]:
+        request_uploads: Dict[str, str] = {}
+        for hashed, ext, data in self._attachment_upload_plan(messages):
+            cached, pending, owns_upload = self._claim_upload(hashed)
+            if cached is not None:
+                request_uploads[hashed] = cached
+                continue
+            if not owns_upload:
+                request_uploads[hashed] = await asyncio.shield(
+                    asyncio.wrap_future(pending)
+                )
+                continue
+            try:
+                file = await self.aupload_file((f"{uuid4()}{ext}", data))
+                file_id = self._uploaded_file_id(file)
+            except BaseException as error:
+                self._fail_upload(hashed, pending, error)
+                raise
+            self._complete_upload(hashed, pending, file_id)
+            request_uploads[hashed] = file_id
         return request_uploads
 
     def _upload_attachments(self, messages: List[BaseMessage]) -> Dict[str, str]:
         request_uploads: Dict[str, str] = {}
-        for message in messages:
-            if not isinstance(message.content, list):
+        for hashed, ext, data in self._attachment_upload_plan(messages):
+            cached, pending, owns_upload = self._claim_upload(hashed)
+            if cached is not None:
+                request_uploads[hashed] = cached
                 continue
-            for content_part in message.content:
-                if not isinstance(content_part, dict):
-                    continue
-                block_type = content_part.get("type")
-                if block_type not in ATTACHMENT_BLOCK_KEYS:
-                    continue
-                block_data = content_part.get(block_type, {})
-                if not isinstance(block_data, dict):
-                    continue
-                url = block_data.get("url")
-                if not url:
-                    continue
-                should_upload, matches = self._should_upload_block(block_type, url)
-                if not should_upload or not matches:
-                    continue
-                mime, encoding, data_b64 = matches.groups()
-                if encoding != "base64":
-                    continue
-                ext = _extension_for_mime(mime)
-                data = base64.b64decode(data_b64)
-                hashed = hashlib.sha256(url.encode()).hexdigest()
-                cached, pending, owns_upload = self._claim_upload(hashed)
-                if cached is not None:
-                    request_uploads[hashed] = cached
-                    continue
-                if not owns_upload:
-                    request_uploads[hashed] = pending.result()
-                    continue
-                try:
-                    file = self.upload_file((f"{uuid4()}{ext}", data))
-                    file_id = self._uploaded_file_id(file)
-                except BaseException as error:
-                    self._fail_upload(hashed, pending, error)
-                    raise
-                self._complete_upload(hashed, pending, file_id)
-                request_uploads[hashed] = file_id
+            if not owns_upload:
+                request_uploads[hashed] = pending.result()
+                continue
+            try:
+                file = self.upload_file((f"{uuid4()}{ext}", data))
+                file_id = self._uploaded_file_id(file)
+            except BaseException as error:
+                self._fail_upload(hashed, pending, error)
+                raise
+            self._complete_upload(hashed, pending, file_id)
+            request_uploads[hashed] = file_id
         return request_uploads
 
     def _build_payload(self, messages: List[BaseMessage], **kwargs: Any) -> gm.Chat:
@@ -806,30 +838,8 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
     ) -> Dict[str, str]:
         """Return detached placeholder IDs for valid planned data-URL uploads."""
         validation_cache = self._cached_uploads_snapshot()
-        for message in messages:
-            if not isinstance(message.content, list):
-                continue
-            for content_part in message.content:
-                if not isinstance(content_part, dict):
-                    continue
-                block_type = content_part.get("type")
-                if block_type not in ATTACHMENT_BLOCK_KEYS:
-                    continue
-                block_data = content_part.get(block_type)
-                if not isinstance(block_data, dict):
-                    continue
-                url = block_data.get("url")
-                if not isinstance(url, str):
-                    continue
-                should_upload, matches = self._should_upload_block(block_type, url)
-                if not should_upload or matches is None:
-                    continue
-                _mime, encoding, data_b64 = matches.groups()
-                if encoding != "base64":
-                    continue
-                base64.b64decode(data_b64, validate=True)
-                hashed = hashlib.sha256(url.encode()).hexdigest()
-                validation_cache.setdefault(hashed, f"pending-upload-{hashed}")
+        for hashed, _ext, _data in self._attachment_upload_plan(messages):
+            validation_cache.setdefault(hashed, f"pending-upload-{hashed}")
         return validation_cache
 
     def _validate_request_before_upload(
@@ -839,15 +849,20 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
     ) -> Literal["legacy", "primary"]:
         """Validate the complete request without performing remote side effects."""
         route = self._resolve_chat_contract(kwargs)
+        validation_cache = self._validation_upload_cache(messages)
         if route == "primary":
             self._build_primary_payload(
                 messages,
                 kwargs,
-                cached_uploads=self._validation_upload_cache(messages),
+                cached_uploads=validation_cache,
             )
         else:
             self._validate_legacy_kwargs(kwargs)
-            self._build_payload(messages, **dict(kwargs))
+            self._build_legacy_payload(
+                messages,
+                validation_cache,
+                **dict(kwargs),
+            )
         return route
 
     def _create_chat_result(self, response: gm.ChatCompletion) -> ChatResult:
