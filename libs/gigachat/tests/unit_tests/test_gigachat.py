@@ -880,11 +880,16 @@ def test_bind_tools_any_tool_choice_raises_by_default() -> None:
         llm.bind_tools(tools=[PersonTool], tool_choice="any")
 
 
-def test_bind_tools_any_tool_choice_never_weakens_to_auto() -> None:
-    """The compatibility flag must not weaken forced-tool semantics."""
+def test_bind_tools_any_tool_choice_compatibility_fallback_warns() -> None:
+    """The opt-in compatibility path maps ``any`` to ``auto`` visibly."""
     llm = GigaChat(allow_any_tool_choice_fallback=True)
-    with pytest.raises(ValueError, match="would not preserve forced-tool semantics"):
-        llm.bind_tools(tools=[PersonTool], tool_choice="any")
+    with pytest.warns(
+        UserWarning,
+        match="compatibility option maps it to 'auto'",
+    ):
+        bound = llm.bind_tools(tools=[PersonTool], tool_choice="any")
+
+    assert bound.kwargs["function_call"] == "auto"  # type: ignore[attr-defined]
 
 
 def test_bind_tools_auto_tool_choice_works() -> None:

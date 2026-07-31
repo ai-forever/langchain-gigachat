@@ -1389,14 +1389,24 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         if strict is not None and response_format is None:
             raise ValueError("strict is supported only together with response_format.")
         if tool_choice == "any":
-            raise ValueError(
-                "GigaChat API does not support tool_choice='any', and mapping "
-                "it to 'auto' would not preserve forced-tool semantics. For "
-                "create_agent structured output, either pass "
-                "ProviderStrategy(schema) explicitly or provide a verified "
-                "model profile={'structured_output': True}. Otherwise use "
-                "'auto' or a concrete tool name."
-            )
+            if self.allow_any_tool_choice_fallback:
+                warnings.warn(
+                    "GigaChat API does not support tool_choice='any'; the "
+                    "allow_any_tool_choice_fallback compatibility option maps it "
+                    "to 'auto', which does not preserve forced-tool semantics.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                tool_choice = "auto"
+            else:
+                raise ValueError(
+                    "GigaChat API does not support tool_choice='any', and mapping "
+                    "it to 'auto' would not preserve forced-tool semantics. For "
+                    "create_agent structured output, either pass "
+                    "ProviderStrategy(schema) explicitly or provide a verified "
+                    "model profile={'structured_output': True}. Otherwise use "
+                    "'auto' or a concrete tool name."
+                )
         formatted_tools = [normalize_tool_for_binding(tool) for tool in tools]
         if tool_choice is not None and tool_choice:
             if isinstance(tool_choice, str):
