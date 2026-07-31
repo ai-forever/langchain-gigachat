@@ -548,6 +548,22 @@ def test_response_conversion_does_not_mutate_provider_model() -> None:
     assert response.model_dump(exclude_none=False, by_alias=True) == before
 
 
+def test_response_metadata_is_deeply_detached_from_provider_model() -> None:
+    response = _response(
+        additional_data=[{"nested": {"value": 1}}],
+        future_response_field={"nested": {"value": 2}},
+    )
+    before = copy.deepcopy(response.model_dump(exclude_none=False, by_alias=True))
+
+    message = _message(response)
+    message.response_metadata["additional_data"][0]["nested"]["value"] = 10
+    message.response_metadata["provider_fields"]["future_response_field"]["nested"][
+        "value"
+    ] = 20
+
+    assert response.model_dump(exclude_none=False, by_alias=True) == before
+
+
 @pytest.mark.parametrize(
     ("status", "expected_result_status"),
     [("success", "success"), ("failed", "error")],

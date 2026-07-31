@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from typing import Any, Iterable, cast
 
 import gigachat.models as gm
@@ -455,7 +456,7 @@ def _response_metadata(
                 item.model_dump(exclude_none=True, by_alias=True) for item in logprobs
             ]
             or None,
-            "additional_data": response.additional_data,
+            "additional_data": copy.deepcopy(response.additional_data),
             "x_headers": x_headers,
         }
     )

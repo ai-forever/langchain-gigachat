@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
@@ -42,7 +43,7 @@ def provider_dict(value: Any) -> dict[str, Any]:
     if isinstance(value, BaseModel):
         return value.model_dump(exclude_none=True, by_alias=True)
     if isinstance(value, Mapping):
-        return dict(value)
+        return copy.deepcopy(dict(value))
     raise TypeError(
         "Primary provider values must be SDK models or mappings; "
         f"got {type(value).__name__}"
@@ -189,7 +190,7 @@ def convert_text_content(
     if inline := inline_extras(inline_data):
         extras["inline_data"] = inline
     if provider_data:
-        extras["provider_data"] = dict(provider_data)
+        extras["provider_data"] = provider_dict(provider_data)
     if extras:
         block["extras"] = extras
     return block

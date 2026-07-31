@@ -36,6 +36,30 @@ def test_provider_mapping_helpers_detach_known_and_unknown_fields() -> None:
     }
 
 
+def test_provider_mapping_outputs_are_deeply_detached() -> None:
+    provider_value = {
+        "known": {"items": [{"value": 1}]},
+        "future_field": {"items": [{"value": 2}]},
+    }
+
+    dumped = provider_dict(provider_value)
+    unknown = unknown_provider_fields(provider_value, {"known"})
+    text_block = convert_text_content(
+        "answer",
+        role="assistant",
+        provider_data=provider_value,
+    )
+
+    dumped["known"]["items"][0]["value"] = 10
+    unknown["future_field"]["items"][0]["value"] = 20
+    text_block["extras"]["provider_data"]["known"]["items"][0]["value"] = 30
+
+    assert provider_value == {
+        "known": {"items": [{"value": 1}]},
+        "future_field": {"items": [{"value": 2}]},
+    }
+
+
 def test_usage_metadata_preserves_cache_accounting() -> None:
     usage = gm.ChatUsage(
         input_tokens=11,
