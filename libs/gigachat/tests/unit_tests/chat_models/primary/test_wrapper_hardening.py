@@ -68,15 +68,15 @@ def _done_then_metadata() -> Iterator[dict[str, Any]]:
         "created_at": CREATED_AT,
         "message_id": MESSAGE_ID,
         "finish_reason": "stop",
+    }
+    yield {
+        "event": "response.metadata",
+        "x_headers": {"x-request-id": "request-late"},
         "usage": {
             "input_tokens": 2,
             "output_tokens": 1,
             "total_tokens": 3,
         },
-    }
-    yield {
-        "event": "response.metadata",
-        "x_headers": {"x-request-id": "request-late"},
         "future_field": {"trace": "trace-late"},
     }
     yield {
