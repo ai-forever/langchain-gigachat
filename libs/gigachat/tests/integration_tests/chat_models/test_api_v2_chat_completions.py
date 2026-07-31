@@ -138,6 +138,32 @@ def _assert_server_tool_blocks_if_reported(
         )
 
 
+def _assert_streamed_builtin_tool_lifecycle(
+    chunks: Sequence[AIMessageChunk],
+    aggregate: AIMessageChunk,
+) -> None:
+    assert sum(chunk.chunk_position == "last" for chunk in chunks) == 1
+    assert _message_text(aggregate).strip()
+
+    blocks = [dict(block) for block in aggregate.content_blocks]
+    call = next(
+        block
+        for block in blocks
+        if block.get("type") in {"server_tool_call", "server_tool_call_chunk"}
+    )
+    result = next(
+        block for block in blocks if block.get("type") == "server_tool_result"
+    )
+
+    assert call["name"] == "web_search"
+    assert call["id"]
+    assert result["name"] == "web_search"
+    assert result["tool_call_id"] == call["id"]
+    assert result["status"] in {"success", "error"}
+    assert aggregate.response_metadata["finish_reason"]
+    _assert_transport_metadata(aggregate)
+
+
 def test_sync_invoke_uses_primary_route_from_v1_base_url(
     primary_llm: GigaChat,
 ) -> None:
@@ -196,6 +222,41 @@ async def test_async_stream(primary_llm: GigaChat) -> None:
         chunk.response_metadata.get("finish_reason") is not None for chunk in chunks
     )
     _assert_transport_metadata(aggregate)
+
+
+def test_sync_streamed_web_search_lifecycle(primary_llm: GigaChat) -> None:
+    runnable = primary_llm.bind_tools(
+        [{"type": "web_search"}],
+        tool_choice="web_search",
+    )
+
+    chunks = list(
+        runnable.stream(
+            "Use web search to find the official Python website, then briefly "
+            "identify what Python is."
+        )
+    )
+    aggregate = _aggregate(chunks)
+
+    _assert_streamed_builtin_tool_lifecycle(chunks, aggregate)
+
+
+async def test_async_streamed_web_search_lifecycle(primary_llm: GigaChat) -> None:
+    runnable = primary_llm.bind_tools(
+        [{"type": "web_search"}],
+        tool_choice="web_search",
+    )
+
+    chunks = [
+        chunk
+        async for chunk in runnable.astream(
+            "Use web search to find the official Python website, then briefly "
+            "identify what Python is."
+        )
+    ]
+    aggregate = _aggregate(chunks)
+
+    _assert_streamed_builtin_tool_lifecycle(chunks, aggregate)
 
 
 def test_json_schema_structured_output(primary_llm: GigaChat) -> None:
