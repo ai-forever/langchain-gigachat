@@ -13,17 +13,14 @@ from langchain_core.outputs import ChatGeneration, ChatResult
 from pydantic import BaseModel
 
 from langchain_gigachat.chat_models._contracts.primary.content import (
-    ToolExecutionCandidate,
-    ToolExecutionSource,
+    collect_tool_execution_candidates,
     convert_function_call,
     convert_provider_file,
     convert_text_content,
     convert_tool_execution,
     create_usage_metadata,
-    normalized_tool_execution,
     reasoning_content,
     resolve_tool_execution_candidates,
-    server_tool_execution_id,
     unknown_provider_fields,
 )
 
@@ -246,67 +243,6 @@ def _client_tool_state_id(
     return None
 
 
-def _tool_execution_candidates(
-    response: gm.ChatCompletionResponse,
-) -> list[ToolExecutionCandidate]:
-    candidates: list[ToolExecutionCandidate] = []
-    response_state_id = getattr(response, "tools_state_id", None)
-    order = 0
-
-    def append_candidate(
-        execution: Any,
-        *,
-        source: ToolExecutionSource,
-        message_index: int | None,
-        part_index: int | None,
-        container_state_id: str | None,
-    ) -> None:
-        nonlocal order
-        candidates.append(
-            ToolExecutionCandidate(
-                source=source,
-                order=order,
-                message_index=message_index,
-                part_index=part_index,
-                execution=execution,
-                normalized_execution=normalized_tool_execution(execution),
-                execution_id=server_tool_execution_id(execution),
-                container_state_id=container_state_id,
-            )
-        )
-        order += 1
-
-    for message_index, message in enumerate(response.messages):
-        container_state_id = message.tools_state_id or response_state_id
-        for part_index, part in enumerate(message.content or []):
-            if part.tool_execution is not None:
-                append_candidate(
-                    part.tool_execution,
-                    source="part",
-                    message_index=message_index,
-                    part_index=part_index,
-                    container_state_id=container_state_id,
-                )
-        if message.tool_execution is not None:
-            append_candidate(
-                message.tool_execution,
-                source="message",
-                message_index=message_index,
-                part_index=None,
-                container_state_id=container_state_id,
-            )
-
-    if response.tool_execution is not None:
-        append_candidate(
-            response.tool_execution,
-            source="response",
-            message_index=None,
-            part_index=None,
-            container_state_id=response_state_id,
-        )
-    return candidates
-
-
 def _content_blocks(
     response: gm.ChatCompletionResponse,
 ) -> _ContentConversion:
@@ -316,7 +252,11 @@ def _content_blocks(
     invalid_tool_calls: list[InvalidToolCall] = []
     function_call_seen = False
     resolved_executions = resolve_tool_execution_candidates(
-        _tool_execution_candidates(response)
+        collect_tool_execution_candidates(
+            response.messages,
+            response_tool_execution=response.tool_execution,
+            response_state_id=getattr(response, "tools_state_id", None),
+        )
     )
     resolved_by_coordinates = {
         resolved.candidate.coordinates: resolved for resolved in resolved_executions

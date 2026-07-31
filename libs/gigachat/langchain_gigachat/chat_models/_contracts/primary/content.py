@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
-from collections.abc import Collection, Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -67,12 +67,9 @@ class ResolvedToolExecution:
 
     candidate: ToolExecutionCandidate
     tool_call_id: str
+    execution_id: str | None
     provider_state_id: str | None
     mirrored_sources: tuple[ToolExecutionCoordinates, ...]
-
-
-def _candidate_identity(candidate: ToolExecutionCandidate) -> str | None:
-    return candidate.execution_id or candidate.container_state_id
 
 
 def normalized_tool_execution(execution: Any) -> dict[str, Any]:
@@ -82,6 +79,81 @@ def normalized_tool_execution(execution: Any) -> dict[str, Any]:
         for key, value in provider_dict(execution).items()
         if key not in _SERVER_TOOL_ID_FIELDS
     }
+
+
+def collect_tool_execution_candidates(
+    messages: Iterable[Any],
+    *,
+    response_tool_execution: Any = None,
+    response_state_id: str | None = None,
+) -> list[ToolExecutionCandidate]:
+    """Collect part, message, and response observations in provider order."""
+    candidates: list[ToolExecutionCandidate] = []
+
+    def append_candidate(
+        execution: Any,
+        *,
+        source: ToolExecutionSource,
+        message_index: int | None,
+        part_index: int | None,
+        container_state_id: str | None,
+    ) -> None:
+        candidates.append(
+            ToolExecutionCandidate(
+                source=source,
+                order=len(candidates),
+                message_index=message_index,
+                part_index=part_index,
+                execution=execution,
+                normalized_execution=normalized_tool_execution(execution),
+                execution_id=server_tool_execution_id(execution),
+                container_state_id=container_state_id,
+            )
+        )
+
+    for message_index, message_value in enumerate(messages):
+        message = provider_dict(message_value)
+        message_state_value = message.get("tools_state_id")
+        message_state_id = (
+            str(message_state_value)
+            if message_state_value is not None
+            else response_state_id
+        )
+        content = message.get("content")
+        if content is None:
+            parts: Sequence[Any] = ()
+        elif isinstance(content, (str, bytes)) or not isinstance(content, Sequence):
+            raise TypeError("Primary provider messages.content must be a sequence")
+        else:
+            parts = content
+        for part_index, part_value in enumerate(parts):
+            part = provider_dict(part_value)
+            if part.get("tool_execution") is not None:
+                append_candidate(
+                    part["tool_execution"],
+                    source="part",
+                    message_index=message_index,
+                    part_index=part_index,
+                    container_state_id=message_state_id,
+                )
+        if message.get("tool_execution") is not None:
+            append_candidate(
+                message["tool_execution"],
+                source="message",
+                message_index=message_index,
+                part_index=None,
+                container_state_id=message_state_id,
+            )
+
+    if response_tool_execution is not None:
+        append_candidate(
+            response_tool_execution,
+            source="response",
+            message_index=None,
+            part_index=None,
+            container_state_id=response_state_id,
+        )
+    return candidates
 
 
 def _sources_can_mirror(
@@ -108,130 +180,90 @@ def resolve_tool_execution_candidates(
     shared by several distinct executions.
     """
     values = list(candidates)
-    parents = list(range(len(values)))
-
-    def find(index: int) -> int:
-        while parents[index] != index:
-            parents[index] = parents[parents[index]]
-            index = parents[index]
-        return index
-
-    def union(left: int, right: int) -> None:
-        left_root = find(left)
-        right_root = find(right)
-        if left_root == right_root:
-            return
-        identities = {
-            identity
-            for index, candidate in enumerate(values)
-            if find(index) in {left_root, right_root}
-            if (identity := _candidate_identity(candidate)) is not None
-        }
-        if len(identities) <= 1:
-            parents[right_root] = left_root
-
+    payload_by_execution_id: dict[str, dict[str, Any]] = {}
     for candidate in values:
-        if _candidate_identity(candidate) is not None:
+        if candidate.execution_id is None:
             continue
-        compatible_identities = {
-            identity
-            for other in values
-            if other is not candidate
-            and other.normalized_execution == candidate.normalized_execution
-            and _sources_can_mirror(candidate, other)
-            if (identity := _candidate_identity(other)) is not None
-        }
-        if len(compatible_identities) > 1:
+        previous = payload_by_execution_id.setdefault(
+            candidate.execution_id,
+            candidate.normalized_execution,
+        )
+        if previous != candidate.normalized_execution:
             raise ValueError(
-                "Primary GigaChat unidentified server tool mirror matches "
-                "multiple distinct provider identities and cannot be correlated "
-                f"safely: {sorted(compatible_identities)!r}."
+                "Primary GigaChat server tools use the same provider identity "
+                f"{candidate.execution_id!r} with conflicting payloads."
             )
 
-    for left_index, left in enumerate(values):
-        left_identity = _candidate_identity(left)
-        for right_index in range(left_index + 1, len(values)):
-            right = values[right_index]
-            right_identity = _candidate_identity(right)
-            same_payload = left.normalized_execution == right.normalized_execution
-
-            if (
-                left_identity is not None
-                and left_identity == right_identity
-                and not same_payload
-                and (left.execution_id is not None or right.execution_id is not None)
-            ):
-                raise ValueError(
-                    "Primary GigaChat server tools use the same provider identity "
-                    f"{left_identity!r} with conflicting payloads."
-                )
-
-            identities_conflict = (
-                left_identity is not None
-                and right_identity is not None
-                and left_identity != right_identity
-            )
-            if (
-                same_payload
-                and not identities_conflict
-                and _sources_can_mirror(left, right)
-            ):
-                union(left_index, right_index)
-
-    grouped: dict[int, list[ToolExecutionCandidate]] = {}
-    for index, candidate in enumerate(values):
-        grouped.setdefault(find(index), []).append(candidate)
-
-    logical_groups = list(grouped.values())
-    claimed_states: dict[str, list[int]] = {}
-    group_state_ids: dict[int, str] = {}
-    for group_index, group in enumerate(logical_groups):
-        if any(candidate.execution_id is not None for candidate in group):
-            # A state is still server-owned when at least one mirrored source
-            # needs it to resolve to the explicit execution identity.
-            state_ids = {
-                candidate.container_state_id
-                for candidate in group
-                if candidate.execution_id is None
-                and candidate.container_state_id is not None
-            }
-        else:
-            state_ids = {
-                candidate.container_state_id
-                for candidate in group
-                if candidate.container_state_id is not None
-            }
-        if state_ids:
-            state_id = next(iter(state_ids))
-            group_state_ids[group_index] = state_id
-            claimed_states.setdefault(state_id, []).append(group_index)
-
-    for state_id, owners in claimed_states.items():
-        if len(owners) > 1:
-            raise ValueError(
-                f"Primary GigaChat tools_state_id {state_id!r} is shared by "
-                "multiple distinct server tools and cannot be assigned safely."
-            )
-
-    source_priority = {"part": 0, "message": 1, "response": 2}
-    ordered_groups = sorted(
-        enumerate(logical_groups),
-        key=lambda item: min(candidate.order for candidate in item[1]),
-    )
-    resolved: list[ResolvedToolExecution] = []
-    next_local_sequence = 0
-    for group_index, group in ordered_groups:
-        explicit_ids = {
+    def execution_ids(group: Iterable[ToolExecutionCandidate]) -> set[str]:
+        return {
             candidate.execution_id
             for candidate in group
             if candidate.execution_id is not None
         }
-        provider_state_id = group_state_ids.get(group_index)
-        if explicit_ids:
-            tool_call_id = next(iter(explicit_ids))
+
+    def state_ids(group: Iterable[ToolExecutionCandidate]) -> set[str]:
+        return {
+            candidate.container_state_id
+            for candidate in group
+            if candidate.execution_id is None
+            and candidate.container_state_id is not None
+        }
+
+    def can_join(
+        group: list[ToolExecutionCandidate],
+        candidate: ToolExecutionCandidate,
+    ) -> bool:
+        combined = [*group, candidate]
+        return (
+            group[0].normalized_execution == candidate.normalized_execution
+            and any(_sources_can_mirror(member, candidate) for member in group)
+            and len(execution_ids(combined)) <= 1
+            and len(state_ids(combined)) <= 1
+        )
+
+    logical_groups: list[list[ToolExecutionCandidate]] = []
+    for candidate in values:
+        matches = [group for group in logical_groups if can_join(group, candidate)]
+        if len(matches) > 1:
+            if candidate.execution_id is None:
+                raise ValueError(
+                    "Primary GigaChat unidentified server tool mirror matches "
+                    "multiple distinct logical executions and cannot be "
+                    "correlated safely."
+                )
+            raise ValueError(
+                "Primary GigaChat server tool mirror matches multiple logical "
+                "executions and cannot be correlated safely."
+            )
+        if matches:
+            matches[0].append(candidate)
         else:
+            logical_groups.append([candidate])
+
+    group_state_ids: list[str | None] = []
+    claimed_states: set[str] = set()
+    for group in logical_groups:
+        provider_state_id = next(iter(state_ids(group)), None)
+        if provider_state_id in claimed_states:
+            raise ValueError(
+                f"Primary GigaChat tools_state_id {provider_state_id!r} is shared "
+                "by multiple distinct server tools and cannot be assigned safely."
+            )
+        if provider_state_id is not None:
+            claimed_states.add(provider_state_id)
+        group_state_ids.append(provider_state_id)
+
+    source_priority = {"part": 0, "message": 1, "response": 2}
+    resolved: list[ResolvedToolExecution] = []
+    next_local_sequence = 0
+    for group, provider_state_id in zip(logical_groups, group_state_ids):
+        explicit_ids = execution_ids(group)
+        execution_id = next(iter(explicit_ids)) if explicit_ids else None
+        if execution_id is None:
             tool_call_id = f"lc_primary-server-tool-{next_local_sequence}"
             next_local_sequence += 1
+        else:
+            tool_call_id = execution_id
 
         representative = min(
             group,
@@ -244,10 +276,10 @@ def resolve_tool_execution_candidates(
             ResolvedToolExecution(
                 candidate=representative,
                 tool_call_id=tool_call_id,
+                execution_id=execution_id,
                 provider_state_id=provider_state_id,
                 mirrored_sources=tuple(
-                    candidate.coordinates
-                    for candidate in sorted(group, key=lambda value: value.order)
+                    candidate.coordinates for candidate in group
                 ),
             )
         )

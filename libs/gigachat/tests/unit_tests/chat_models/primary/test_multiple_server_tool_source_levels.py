@@ -193,6 +193,80 @@ def test_exact_part_message_response_mirror_is_emitted_once(transport: str) -> N
     assert [block["tool_call_id"] for block in _server_results(message)] == ["search-1"]
 
 
+def test_running_part_message_response_mirror_is_emitted_once() -> None:
+    execution = {
+        "call_id": "search-1",
+        "name": "web_search",
+        "status": "running",
+    }
+    message = _stream_message(
+        [
+            {
+                "event": "response.tool.in_progress",
+                "messages": [
+                    {
+                        "role": "reasoning",
+                        "content": [{"tool_execution": execution}],
+                        "tool_execution": execution,
+                    }
+                ],
+                "tool_execution": execution,
+            }
+        ]
+    )
+
+    calls = [
+        block
+        for block in message.content_blocks
+        if block["type"] == "server_tool_call_chunk"
+    ]
+    assert [block["id"] for block in calls] == ["search-1"]
+
+
+@pytest.mark.parametrize("transport", ["nonstream", "stream"])
+def test_explicit_execution_id_correlates_with_state_only_mirror(
+    transport: str,
+) -> None:
+    explicit_execution = _execution("search-1", "web_search")
+    state_only_mirror = {
+        "name": "web_search",
+        "status": "success",
+    }
+    message_values = {
+        "role": "reasoning",
+        "tools_state_id": "provider-state-1",
+        "content": [{"tool_execution": explicit_execution}],
+        "tool_execution": state_only_mirror,
+    }
+
+    if transport == "nonstream":
+        result = primary.create_chat_result(_response([message_values]))
+        message = result.generations[0].message
+        assert isinstance(message, AIMessage)
+    else:
+        message = _stream_message(
+            [
+                {
+                    "event": "response.tool.completed",
+                    "tools_state_id": "provider-state-1",
+                    "messages": [message_values],
+                },
+                {
+                    "event": "response.message.done",
+                    "tools_state_id": "provider-state-1",
+                    "finish_reason": "stop",
+                },
+            ]
+        )
+
+    assert [block["tool_call_id"] for block in _server_results(message)] == [
+        "search-1"
+    ]
+    assert message.additional_kwargs["provider_server_tool_state_by_call_id"] == {
+        "search-1": "provider-state-1"
+    }
+
+
 @pytest.mark.parametrize("transport", ["nonstream", "stream"])
 def test_equal_execution_payload_with_distinct_explicit_ids_is_not_deduplicated(
     transport: str,

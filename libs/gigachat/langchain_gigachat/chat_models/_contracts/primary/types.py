@@ -81,8 +81,11 @@ class StreamState:
     server_tool_names: dict[str, str] = field(default_factory=dict)
     active_server_tool_call_id: Optional[str] = None
     next_server_tool_sequence: int = 0
-    server_tool_call_ids_by_provider: dict[str, str] = field(default_factory=dict)
-    server_tool_provider_ids: dict[str, str] = field(default_factory=dict)
+    server_tool_call_ids_by_execution_id: dict[str, str] = field(
+        default_factory=dict
+    )
+    server_tool_call_ids_by_state_id: dict[str, str] = field(default_factory=dict)
+    server_tool_state_ids_by_call_id: dict[str, str] = field(default_factory=dict)
     unresolved_server_tool_call_ids: list[str] = field(default_factory=list)
     server_tool_terminal_payloads: dict[str, dict[str, Any]] = field(
         default_factory=dict
