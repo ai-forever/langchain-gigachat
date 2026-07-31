@@ -241,7 +241,7 @@ def test_repeated_dictionary_argument_snapshots_fail_closed() -> None:
 
     with pytest.raises(
         ValueError,
-        match="cumulative snapshot semantics are unsupported",
+        match="second client tool call",
     ):
         _convert(
             {
@@ -254,3 +254,76 @@ def test_repeated_dictionary_argument_snapshots_fail_closed() -> None:
             },
             state,
         )
+
+
+def test_second_same_name_call_without_ids_is_rejected_after_complete_json() -> None:
+    state = primary.StreamState()
+    _convert(
+        {
+            "messages": [
+                {
+                    "function_call": _function_call('{"city":"Moscow"}'),
+                }
+            ]
+        },
+        state,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="second client tool call",
+    ):
+        _convert(
+            {
+                "messages": [
+                    {
+                        "function_call": _function_call('{"city":"Kazan"}'),
+                    }
+                ]
+            },
+            state,
+        )
+
+
+def test_same_name_idless_fragments_continue_until_json_object_is_complete() -> None:
+    state = primary.StreamState()
+    first = _convert(
+        {
+            "messages": [
+                {
+                    "function_call": _function_call('{"city":'),
+                }
+            ]
+        },
+        state,
+    )
+    second = _convert(
+        {
+            "messages": [
+                {
+                    "function_call": _function_call('"Moscow"}'),
+                }
+            ]
+        },
+        state,
+    )
+    done = _convert(
+        {
+            "event": "response.message.done",
+            "tools_state_id": "provider-tool-state-1",
+            "finish_reason": "function_call",
+        },
+        state,
+    )
+
+    result = generate_from_stream(iter([first, second, done]))
+    message = cast(AIMessage, result.generations[0].message)
+
+    assert message.tool_calls == [
+        {
+            "name": "weather",
+            "args": {"city": "Moscow"},
+            "id": "provider-tool-state-1",
+            "type": "tool_call",
+        }
+    ]

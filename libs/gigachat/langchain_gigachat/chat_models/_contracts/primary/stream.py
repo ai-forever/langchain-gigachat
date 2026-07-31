@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping, Sequence
 from typing import Any
 from uuid import uuid4
@@ -85,6 +86,10 @@ _CONTENT_FIELDS = frozenset(
 )
 _MULTIPLE_CLIENT_TOOL_CALLS = (
     "Primary streaming supports one client tool call per completion"
+)
+_SECOND_CLIENT_TOOL_CALL = (
+    "Primary streaming received a second client tool call after the first "
+    "call's arguments were complete"
 )
 
 
@@ -209,6 +214,8 @@ def _tool_call_chunk(
     explicit_index = function_call.get("index")
 
     is_first_fragment = not state.client_tool_started
+    if not is_first_fragment and state.client_tool_arguments_complete:
+        raise ValueError(_SECOND_CLIENT_TOOL_CALL)
     if is_first_fragment:
         if not incoming_name:
             raise ValueError("First primary client tool fragment must include a name")
@@ -273,6 +280,19 @@ def _tool_call_chunk(
                 "Primary client tool arguments contain multiple or mixed "
                 "structured snapshots; cumulative snapshot semantics are unsupported."
             )
+        if isinstance(arguments, str):
+            state.client_tool_arguments_text += arguments
+            try:
+                parsed_arguments = json.loads(state.client_tool_arguments_text)
+            except (TypeError, ValueError):
+                pass
+            else:
+                state.client_tool_arguments_complete = isinstance(
+                    parsed_arguments,
+                    Mapping,
+                )
+        else:
+            state.client_tool_arguments_complete = True
     return tool_call_chunk(
         name=incoming_name if is_first_fragment else None,
         args=json_fragment(arguments) if arguments is not None else "",
