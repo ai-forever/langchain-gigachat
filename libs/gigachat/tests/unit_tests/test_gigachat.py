@@ -369,7 +369,11 @@ def test_gigachat_stream_callbacks(patch_gigachat: None) -> None:
     class TokenCounter(BaseCallbackHandler):
         tokens: int = 0
 
-        def on_llm_new_token(self, token: str, **kwargs: Any) -> None:
+        def on_llm_new_token(
+            self,
+            token: str | list[str | dict[str, Any]],
+            **kwargs: Any,
+        ) -> None:
             self.tokens += 1
 
     counter = TokenCounter()
@@ -880,18 +884,15 @@ def test_bind_tools_any_tool_choice_raises_by_default() -> None:
         llm.bind_tools(tools=[PersonTool], tool_choice="any")
 
 
-def test_bind_tools_any_tool_choice_with_fallback_enabled() -> None:
-    """tool_choice='any' should fallback to 'auto' with warning when enabled."""
-    import warnings
-
+def test_bind_tools_any_tool_choice_compatibility_fallback_warns() -> None:
+    """The opt-in compatibility path maps ``any`` to ``auto`` visibly."""
     llm = GigaChat(allow_any_tool_choice_fallback=True)
-    with warnings.catch_warnings(record=True) as w:
-        warnings.simplefilter("always")
+    with pytest.warns(
+        UserWarning,
+        match="compatibility option maps it to 'auto'",
+    ):
         bound = llm.bind_tools(tools=[PersonTool], tool_choice="any")
-        assert len(w) == 1
-        assert "does not support tool_choice='any'" in str(w[0].message)
-        assert "Using 'auto' instead" in str(w[0].message)
-    # Verify fallback to "auto"
+
     assert bound.kwargs["function_call"] == "auto"  # type: ignore[attr-defined]
 
 
@@ -907,6 +908,30 @@ def test_bind_tools_specific_tool_choice_works() -> None:
     llm = GigaChat()
     bound = llm.bind_tools(tools=[PersonTool], tool_choice="PersonTool")
     assert bound.kwargs["function_call"] == {"name": "PersonTool"}  # type: ignore[attr-defined]
+
+
+@pytest.mark.parametrize("tool_choice", [None, False])
+def test_bind_tools_unspecified_falsey_tool_choices_are_omitted(
+    tool_choice: Any,
+) -> None:
+    bound = GigaChat().bind_tools([PersonTool], tool_choice=tool_choice)
+
+    assert "function_call" not in bound.kwargs  # type: ignore[attr-defined]
+
+
+@pytest.mark.parametrize(
+    ("tool_choice", "message"),
+    [
+        ("", "empty string"),
+        ({}, "empty mapping"),
+    ],
+)
+def test_bind_tools_rejects_invalid_falsey_tool_choices(
+    tool_choice: Any,
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        GigaChat().bind_tools([PersonTool], tool_choice=tool_choice)
 
 
 # ---------------------------------------------------------------------------

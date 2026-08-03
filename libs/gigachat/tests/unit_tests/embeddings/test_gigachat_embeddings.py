@@ -46,6 +46,12 @@ def test_embed_documents(patch_gigachat_embeddings: MagicMock) -> None:
     )
 
 
+def test_model_deep_copy_before_client_initialization() -> None:
+    copied = GigaChatEmbeddings().model_copy(deep=True)
+
+    assert isinstance(copied, GigaChatEmbeddings)
+
+
 def test_embed_documents_empty_list(patch_gigachat_embeddings: MagicMock) -> None:
     emb = GigaChatEmbeddings()
     result = emb.embed_documents([])
