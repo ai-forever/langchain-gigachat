@@ -1,4 +1,5 @@
 import collections.abc
+import copy
 import inspect
 import types
 import typing
@@ -23,6 +24,7 @@ from langchain_core.utils.function_calling import (
 )
 from langchain_core.utils.json_schema import dereference_refs
 from pydantic import BaseModel, Field, create_model
+from pydantic.v1 import BaseModel as BaseModelV1
 from typing_extensions import get_args, get_origin, is_typeddict
 
 
@@ -40,9 +42,72 @@ SCHEMA_DO_NOT_SUPPORT_MESSAGE = """Incorrect function schema!
 GigaChat currently do not support these typings:
 Union[X, Y, ...]"""
 
+PRIMARY_BUILTIN_TOOL_NAMES = frozenset(
+    {
+        "code_interpreter",
+        "image_generate",
+        "web_search",
+        "url_content_extraction",
+        "model_3d_generate",
+    }
+)
+
 
 class IncorrectSchemaException(Exception):
     pass
+
+
+def is_primary_builtin_tool(tool: Any) -> bool:
+    """Return whether a mapping uses a primary-contract built-in tool."""
+    if not isinstance(tool, collections.abc.Mapping):
+        return False
+
+    tool_type = tool.get("type")
+    type_name = (
+        tool_type
+        if isinstance(tool_type, str) and tool_type in PRIMARY_BUILTIN_TOOL_NAMES
+        else None
+    )
+    canonical_names = PRIMARY_BUILTIN_TOOL_NAMES.intersection(tool)
+
+    if type_name is not None:
+        return not canonical_names
+    return len(tool) == 1 and len(canonical_names) == 1
+
+
+def _validate_primary_builtin_tool_mapping(
+    tool: collections.abc.Mapping[str, Any],
+) -> None:
+    tool_type = tool.get("type")
+    type_name = (
+        tool_type
+        if isinstance(tool_type, str) and tool_type in PRIMARY_BUILTIN_TOOL_NAMES
+        else None
+    )
+    canonical_names = PRIMARY_BUILTIN_TOOL_NAMES.intersection(tool)
+    builtin_names = set(canonical_names)
+    if type_name is not None:
+        builtin_names.add(type_name)
+
+    if len(builtin_names) != 1 or (type_name is not None and canonical_names):
+        raise ValueError(
+            "Each provider built-in tool mapping must configure exactly one "
+            "built-in tool."
+        )
+
+    if type_name is not None:
+        return
+
+    tool_name = next(iter(canonical_names))
+    if set(tool) != {tool_name}:
+        raise ValueError(
+            "Canonical provider built-in tools must contain only their tool "
+            f"name; got extra fields for {tool_name!r}."
+        )
+    if not isinstance(tool[tool_name], collections.abc.Mapping):
+        raise ValueError(
+            f"Configuration for provider built-in tool {tool_name!r} must be a mapping."
+        )
 
 
 def gigachat_fix_schema(schema: Any, prev_key: str = "") -> Any:
@@ -207,18 +272,35 @@ def _subscriptable_origin(origin: type) -> type:
     return cast(type, origin_map.get(origin, origin))
 
 
-def _model_to_schema(model: Union[type[BaseModel], dict[str, Any]]) -> dict:
+PydanticModel = Union[type[BaseModel], type[BaseModelV1]]
+
+
+def model_to_json_schema(
+    model: Union[PydanticModel, dict[str, Any]],
+) -> dict[str, Any]:
+    """Return JSON Schema for Pydantic v2 or compatibility-v1 models."""
     from langchain_gigachat.utils.pydantic_generator import GigaChatJsonSchema
 
     if hasattr(model, "model_json_schema"):
-        return model.model_json_schema(schema_generator=GigaChatJsonSchema)
-    else:
-        msg = "Model must be a Pydantic model."
-        raise TypeError(msg)
+        return cast(
+            dict[str, Any],
+            model.model_json_schema(schema_generator=GigaChatJsonSchema),
+        )
+    if hasattr(model, "schema"):
+        return cast(dict[str, Any], model.schema())
+    msg = "Model must be a Pydantic model."
+    raise TypeError(msg)
+
+
+def _model_to_schema(
+    model: Union[PydanticModel, dict[str, Any]],
+) -> dict[str, Any]:
+    """Backward-compatible internal alias for model schema generation."""
+    return model_to_json_schema(model)
 
 
 def _convert_return_schema(
-    return_model: Optional[Union[Type[BaseModel], dict[str, Any]]],
+    return_model: Optional[Union[PydanticModel, dict[str, Any]]],
 ) -> Dict[str, Any]:
     if not return_model:
         return {}
@@ -298,11 +380,11 @@ def format_tool_to_gigachat_function(tool: BaseTool) -> GigaFunctionDescription:
 
 
 def convert_pydantic_to_gigachat_function(
-    model: Union[type[BaseModel], dict[str, Any]],
+    model: Union[PydanticModel, dict[str, Any]],
     *,
     name: Optional[str] = None,
     description: Optional[str] = None,
-    return_model: Optional[Type[BaseModel]] = None,
+    return_model: Optional[Union[PydanticModel, dict[str, Any]]] = None,
     few_shot_examples: Optional[List[dict]] = None,
 ) -> GigaFunctionDescription:
     """Converts a Pydantic model to a function description for the GigaChat API."""
@@ -456,7 +538,34 @@ def convert_to_gigachat_tool(
         A dict version of the passed in tool which is compatible with the
             GigaChat tool-calling API.
     """
+    if is_primary_builtin_tool(tool):
+        raise ValueError(
+            "Provider built-in tools require the GigaChat API v2 contract. "
+            "Set use_api_v2=True instead of binding them to the legacy API."
+        )
     if isinstance(tool, dict) and tool.get("type") == "function" and "function" in tool:
         return tool
     function = convert_to_gigachat_function(tool)
     return {"type": "function", "function": function}
+
+
+def normalize_tool_for_binding(
+    tool: Union[Dict[str, Any], type, Callable, BaseTool],
+) -> Dict[str, Any]:
+    """Normalize a tool before the request route is known.
+
+    Primary built-in mappings stay in their provider-native representation.
+    Client functions continue through the existing GigaChat schema converter.
+    The returned mapping never aliases caller-owned input.
+    """
+    if isinstance(tool, collections.abc.Mapping):
+        tool_type = tool.get("type")
+        has_builtin_type = (
+            isinstance(tool_type, str) and tool_type in PRIMARY_BUILTIN_TOOL_NAMES
+        )
+        has_canonical_builtin = bool(PRIMARY_BUILTIN_TOOL_NAMES.intersection(tool))
+        if has_builtin_type or has_canonical_builtin:
+            _validate_primary_builtin_tool_mapping(tool)
+            return copy.deepcopy(dict(tool))
+
+    return copy.deepcopy(convert_to_gigachat_tool(tool))
