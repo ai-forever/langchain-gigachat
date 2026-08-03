@@ -2,6 +2,70 @@
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+## [0.5.2a1] — 2026-07-30
+
+Primary API v2 preview.
+
+### Added
+
+- Opt-in `GigaChat(use_api_v2=True)` support for `/v2/chat/completions`,
+  including sync/async calls, streaming, tools, attachments, and native JSON
+  Schema structured output.
+- Schema-less native JSON through
+  `with_structured_output(None, method="json_mode")`; the wire payload contains
+  neither a placeholder schema nor `strict`.
+- Per-runnable route overrides through `llm.bind(use_api_v2=True)`, while
+  legacy remains the default.
+- Public `bind_tools()` support for primary provider built-ins such as
+  `web_search`, alongside standard LangChain client tools.
+- Primary assistant/thread state, file-ID content, server-tool content blocks,
+  usage metadata, invalid tool calls, and forward-compatible provider fields.
+
+### Changed
+
+- Primary stream and non-stream results now use equivalent LangChain content
+  blocks and preserve late finish, usage, request, and tool-state metadata.
+- Primary client tool-call IDs use the provider `tools_state_id` required for
+  the following `ToolMessage`; provider-specific tool state is not translated
+  between the legacy and primary API contracts.
+- Primary streaming accepts the SDK's `PrimaryChatCompletionChunk` models; the
+  SDK remains responsible for SSE parsing and alias normalization.
+- Explicit primary response formats preserve SDK `text`, `json_schema`, and
+  `regex` semantics. Unknown response-format types fail before network I/O.
+- `bind_tools(..., strict=...)` now requires a JSON Schema `response_format`
+  instead of silently discarding strict tool-schema intent.
+- Stateful assistant/thread requests no longer receive an implicit default
+  model; an explicitly supplied invocation model is still forwarded.
+- Primary `ToolMessage` continuation uses provider `role="tool"`,
+  `function_result`, and `tools_state_id`. The legacy function transport is
+  unchanged.
+- Direct `bind(response_format=...)` calls return ordinary `AIMessage` values;
+  parsing and `include_raw` behavior belong to `with_structured_output()` and
+  LangChain Agent provider strategies.
+
+### Dependencies
+
+- Package version is `0.5.2a1`.
+- Requires `langchain-core>=1.2.22,<2`. Core 1.0 and 1.1 do not provide every
+  public contract used by this integration.
+- Requires stable `gigachat>=0.2.3,<0.3`, verified with sync/async
+  `chat.create` and `chat.stream` resource methods.
+
+### CI
+
+- Added minimum/latest LangChain Core checks, a focused LangChain Agent smoke
+  check, and clean wheel/sdist installation from the exact PR head.
+
+### Known limitations
+
+- Parallel client tool calls in one primary assistant message are unsupported.
+- `tool_choice="any"` is rejected by default on both routes. The explicit
+  `allow_any_tool_choice_fallback=True` compatibility path maps it to `"auto"`
+  with a `UserWarning` that forced-tool semantics are weakened.
+- Live API coverage was not run without provider credentials.
+
 ## [0.5.1] — 2026-05-04
 
 ### Added
