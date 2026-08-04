@@ -45,7 +45,7 @@ class ToolBinding:
 
 @dataclass
 class StreamState:
-    """Mutable identity and ordering state shared across stream events."""
+    """Small amount of state required to aggregate one primary stream."""
 
     next_block_index: int = 0
     active_text_block_index: int | str | None = None
@@ -55,9 +55,6 @@ class StreamState:
     provider_message_id: Optional[str] = None
     tools_state_id: Optional[str] = None
     client_tools_state_id: Optional[str] = None
-    latest_server_tools_state_id: Optional[str] = None
-    server_owned_tools_state_ids: set[str] = field(default_factory=set)
-    unassigned_tools_state_ids: list[str] = field(default_factory=list)
     provider_tools_state_ids: list[str] = field(default_factory=list)
     thread_id: Optional[str] = None
     model: Optional[str] = None
@@ -74,25 +71,14 @@ class StreamState:
     client_tool_argument_mode: Optional[str] = None
     client_tool_arguments_text: str = ""
     client_tool_arguments_complete: bool = False
+    client_tool_name_emitted: bool = False
+    client_tool_id_emitted: bool = False
 
     server_tool_indexes: dict[str, int] = field(default_factory=dict)
     server_tool_result_indexes: dict[str, int] = field(default_factory=dict)
     server_tool_names: dict[str, str] = field(default_factory=dict)
     active_server_tool_call_id: Optional[str] = None
     next_server_tool_sequence: int = 0
-    server_tool_call_ids_by_execution_id: dict[str, str] = field(default_factory=dict)
-    server_tool_call_ids_with_idless_observations: set[str] = field(default_factory=set)
-    server_tool_observed_state_ids_by_execution_id: dict[str, str] = field(
-        default_factory=dict
-    )
-    server_tool_call_ids_by_state_id: dict[str, str] = field(default_factory=dict)
-    server_tool_state_ids_by_call_id: dict[str, str] = field(default_factory=dict)
     server_tool_argument_state: dict[str, tuple[str, str]] = field(default_factory=dict)
-    unresolved_server_tool_call_ids: list[str] = field(default_factory=list)
-    server_tool_terminal_payloads: dict[str, dict[str, Any]] = field(
-        default_factory=dict
-    )
-    pending_server_tool_result_ids: set[str] = field(default_factory=set)
-    pending_server_tool_result_ids_by_state_id: dict[str, set[str]] = field(
-        default_factory=dict
-    )
+    completed_server_tool_ids: set[str] = field(default_factory=set)
+    last_completed_server_tool_id: Optional[str] = None

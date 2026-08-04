@@ -165,37 +165,6 @@ def _explicit_tool_config(value: Any) -> Optional[gm.ChatToolConfig]:
         candidate = copy.deepcopy(dict(value))
     else:
         raise TypeError("tool_config must be a ChatToolConfig or mapping.")
-
-    unknown = set(candidate).difference({"mode", "tool_name", "function_name"})
-    if unknown:
-        raise ValueError(
-            f"tool_config contains unsupported fields: {', '.join(sorted(unknown))}."
-        )
-    mode = candidate.get("mode")
-    if mode not in {"auto", "forced"}:
-        raise ValueError(
-            f"Unsupported tool_config mode {mode!r}; expected 'auto' or 'forced'."
-        )
-
-    target_names = [
-        field_name
-        for field_name in ("tool_name", "function_name")
-        if candidate.get(field_name) is not None
-    ]
-    for field_name in target_names:
-        target = candidate[field_name]
-        if not isinstance(target, str) or not target:
-            raise ValueError(f"tool_config {field_name} must be a non-empty string.")
-
-    if mode == "auto" and target_names:
-        raise ValueError(
-            "tool_config mode='auto' cannot include tool_name or function_name."
-        )
-    if mode == "forced" and len(target_names) != 1:
-        raise ValueError(
-            "tool_config mode='forced' requires exactly one of tool_name or "
-            "function_name."
-        )
     try:
         return gm.ChatToolConfig.model_validate(candidate)
     except (TypeError, ValueError) as exc:
@@ -249,18 +218,6 @@ def build_tool_binding(
         builtin_tools.append(builtin)
 
     function_names = [spec.name for spec in function_specs]
-    if len(set(function_names)) != len(function_names):
-        raise ValueError("Client function names must be unique.")
-    if len(set(builtin_names)) != len(builtin_names):
-        raise ValueError("Provider built-in tools must not be repeated.")
-    ambiguous_names = set(function_names).intersection(builtin_names)
-    if ambiguous_names:
-        rendered = ", ".join(sorted(ambiguous_names))
-        raise ValueError(
-            "Client function names must not collide with provider built-in "
-            f"tool names: {rendered}."
-        )
-
     normalized_tools: list[gm.ChatTool] = []
     if function_specs:
         normalized_tools.append(

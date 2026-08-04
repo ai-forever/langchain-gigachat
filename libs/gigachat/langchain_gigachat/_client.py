@@ -3,15 +3,12 @@
 from __future__ import annotations
 
 import ssl
-import threading
+from functools import cached_property
 from typing import Any, Dict, Optional, Tuple
 
 import gigachat
 from langchain_core.load.serializable import Serializable
-from pydantic import ConfigDict, PrivateAttr
-from typing_extensions import Self
-
-_CLIENT_INIT_LOCK = threading.Lock()
+from pydantic import ConfigDict
 
 
 class _GigaChatClientMixin(Serializable):
@@ -54,18 +51,6 @@ class _GigaChatClientMixin(Serializable):
     """SSL context."""
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
-
-    _client_instance: Optional[gigachat.GigaChat] = PrivateAttr(default=None)
-
-    def __deepcopy__(self, memo: Optional[Dict[int, Any]] = None) -> Self:
-        """Deep-copy configuration while sharing TLS state and resetting the client."""
-        ssl_context = self.ssl_context
-        staged = self.__copy__()
-        staged._client_instance = None
-        staged.ssl_context = None
-        copied = super(_GigaChatClientMixin, staged).__deepcopy__(memo)
-        copied.ssl_context = ssl_context
-        return copied
 
     ca_bundle_file: Optional[str] = None
     """Path to CA bundle file."""
@@ -138,15 +123,7 @@ class _GigaChatClientMixin(Serializable):
             "retry_on_status_codes": self.retry_on_status_codes,
         }
 
-    @property
+    @cached_property
     def _client(self) -> gigachat.GigaChat:
-        """Return the lazily initialized GigaChat API client."""
-        client = self._client_instance
-        if client is not None:
-            return client
-        with _CLIENT_INIT_LOCK:
-            client = self._client_instance
-            if client is None:
-                client = gigachat.GigaChat(**self._get_client_init_kwargs())
-                self._client_instance = client
-        return client
+        """Return GigaChat API client."""
+        return gigachat.GigaChat(**self._get_client_init_kwargs())

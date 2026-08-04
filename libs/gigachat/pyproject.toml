@@ -7,7 +7,7 @@ readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10,<4"
 dependencies = [
-    "langchain-core>=1.2.22,<2",
+    "langchain-core>=1,<2",
     "gigachat>=0.2.3,<0.3",
 ]
 

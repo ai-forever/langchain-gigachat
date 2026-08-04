@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import copy
 import hashlib
 import json
@@ -24,10 +25,6 @@ from langchain_core.messages import (
 )
 from pydantic import BaseModel
 
-from langchain_gigachat.chat_models._contracts.common import (
-    CROSS_CONTRACT_TOOL_STATE_ERROR,
-)
-
 _ATTACHMENT_BLOCK_TYPES = frozenset({"audio", "file", "image"})
 _ATTACHMENT_URL_BLOCK_TYPES = frozenset({"audio_url", "document_url", "image_url"})
 _ASSISTANT_ATTACHMENT_BLOCK_TYPES = _ATTACHMENT_BLOCK_TYPES | {"video"}
@@ -44,6 +41,10 @@ _ASSISTANT_OUTPUT_ONLY_BLOCK_TYPES = frozenset(
 )
 _TEXT_TOOL_RESULT_BLOCK_KEYS = frozenset(
     {"annotations", "extras", "id", "index", "text", "type"}
+)
+CROSS_CONTRACT_TOOL_STATE_ERROR = (
+    "This message history contains provider-specific tool state from another "
+    "API contract."
 )
 
 
@@ -131,7 +132,7 @@ def _convert_assistant_history_content(
 ) -> list[gm.ChatContentPart]:
     """Convert replayable assistant output without inventing request fields."""
     if isinstance(content, str):
-        return [gm.ChatContentPart(text=content)]
+        return [gm.ChatContentPart(text=content)] if content else []
 
     parts: list[gm.ChatContentPart] = []
     for block in content:
@@ -235,14 +236,17 @@ def _message_metadata(message: BaseMessage) -> dict[str, Any]:
             raise ValueError("Primary message_id metadata must be a non-empty string.")
         metadata["message_id"] = message_id
 
+    return metadata
+
+
+def _tools_state_id(message: BaseMessage) -> str | None:
     tools_state_id = _metadata_value(message, ("tools_state_id",))
     if tools_state_id is not None:
         if not isinstance(tools_state_id, str) or not tools_state_id.strip():
             raise ValueError(
                 "Primary tools_state_id metadata must be a non-empty string."
             )
-        metadata["tools_state_id"] = tools_state_id
-    return metadata
+    return tools_state_id
 
 
 def _tool_call_names(messages: Sequence[BaseMessage]) -> dict[str, str]:
@@ -267,7 +271,7 @@ def _tool_call_names(messages: Sequence[BaseMessage]) -> dict[str, str]:
             function_call = _additional_function_call(message)
             if function_call is None:
                 continue
-            tool_call_id = _message_metadata(message).get("tools_state_id")
+            tool_call_id = _tools_state_id(message)
             additional_name = function_call.get("name")
             if not isinstance(tool_call_id, str) or not tool_call_id.strip():
                 continue
@@ -353,7 +357,10 @@ def _normalize_tool_result(content: Any) -> Any:
         try:
             content = json.loads(content)
         except ValueError:
-            return content
+            try:
+                content = ast.literal_eval(content)
+            except (SyntaxError, ValueError):
+                return content
     return _detach_json_tool_result(
         content,
         path="$",
@@ -400,7 +407,7 @@ def _convert_ai_message(
                 raise ValueError(
                     "Primary AIMessage tool call ID must be a non-empty string."
                 )
-        explicit_state_id = kwargs.get("tools_state_id")
+        explicit_state_id = _tools_state_id(message)
         if (
             tool_call_id is not None
             and explicit_state_id is not None
@@ -419,7 +426,7 @@ def _convert_ai_message(
     else:
         function_call = _additional_function_call(message)
     if not message.tool_calls and function_call is not None:
-        provider_state_id = kwargs.get("tools_state_id")
+        provider_state_id = _tools_state_id(message)
         if provider_state_id is None:
             raise ValueError(
                 "Primary AIMessage function call is missing provider "

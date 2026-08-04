@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import copy
 import json
-from collections.abc import Collection, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from langchain_core.messages import UsageMetadata
+from langchain_core.messages.ai import UsageMetadata
 from langchain_core.messages.tool import (
     InvalidToolCall,
     ToolCall,
@@ -54,7 +54,6 @@ class ToolExecutionCandidate:
     execution: Any
     normalized_execution: dict[str, Any]
     execution_id: str | None
-    container_state_id: str | None
 
     @property
     def coordinates(self) -> ToolExecutionCoordinates:
@@ -68,17 +67,7 @@ class ResolvedToolExecution:
     candidate: ToolExecutionCandidate
     tool_call_id: str
     execution_id: str | None
-    provider_state_id: str | None
-    has_idless_observation: bool
     mirrored_sources: tuple[ToolExecutionCoordinates, ...]
-
-
-ToolStateOwner = Literal["client", "server", "unassigned"]
-AMBIGUOUS_TOOL_STATE_OWNER = (
-    "Primary GigaChat tools_state_id ownership is ambiguous: it could belong "
-    "to both a client function call and a server tool lifecycle; explicit "
-    "independent identities are required."
-)
 
 
 def has_client_function_call(message: Mapping[str, Any]) -> bool:
@@ -91,74 +80,6 @@ def has_client_function_call(message: Mapping[str, Any]) -> bool:
     if isinstance(content, (str, bytes)) or not isinstance(content, Sequence):
         raise TypeError("Primary provider messages.content must be a sequence")
     return any(provider_dict(part).get("function_call") is not None for part in content)
-
-
-def classify_tool_state_owners(
-    *,
-    messages: Sequence[Mapping[str, Any]],
-    candidates: Sequence[ToolExecutionCandidate],
-    resolved_executions: Sequence[ResolvedToolExecution],
-    top_level_tools_state_id: str | None,
-) -> dict[str, ToolStateOwner]:
-    """Classify provider continuation state from its response-local scope.
-
-    Explicit server execution IDs define execution identity independently from
-    their container state. Such a state is server context only when no client
-    function call claims it. An idless server execution, on the other hand,
-    requires its container state for identity and conflicts with a client claim.
-    """
-    observed_state_values = [
-        validate_provider_id(top_level_tools_state_id, field="tools_state_id"),
-        *(
-            validate_provider_id(
-                message.get("tools_state_id"),
-                field="tools_state_id",
-            )
-            for message in messages
-        ),
-    ]
-    observed_state_ids = list(
-        dict.fromkeys(
-            state_id for state_id in observed_state_values if state_id is not None
-        )
-    )
-    client_state_ids: set[str] = set()
-    for message in messages:
-        if not has_client_function_call(message):
-            continue
-        message_state = validate_provider_id(
-            message.get("tools_state_id"),
-            field="tools_state_id",
-        )
-        client_state_id = (
-            message_state if message_state is not None else top_level_tools_state_id
-        )
-        if client_state_id is not None:
-            client_state_ids.add(client_state_id)
-
-    server_context_state_ids = {
-        candidate.container_state_id
-        for candidate in candidates
-        if candidate.container_state_id is not None
-    }
-    server_identity_state_ids = {
-        resolved.provider_state_id
-        for resolved in resolved_executions
-        if resolved.provider_state_id is not None
-    }
-
-    owners: dict[str, ToolStateOwner] = {}
-    for state_id in observed_state_ids:
-        client_claim = state_id in client_state_ids
-        if client_claim and state_id in server_identity_state_ids:
-            raise ValueError(AMBIGUOUS_TOOL_STATE_OWNER)
-        if client_claim:
-            owners[state_id] = "client"
-        elif state_id in server_context_state_ids:
-            owners[state_id] = "server"
-        else:
-            owners[state_id] = "unassigned"
-    return owners
 
 
 def normalized_tool_execution(execution: Any) -> dict[str, Any]:
@@ -180,7 +101,6 @@ def collect_tool_execution_candidates(
     messages: Iterable[Any],
     *,
     response_tool_execution: Any = None,
-    response_state_id: str | None = None,
 ) -> list[ToolExecutionCandidate]:
     """Collect part, message, and response observations in provider order."""
     candidates: list[ToolExecutionCandidate] = []
@@ -191,7 +111,6 @@ def collect_tool_execution_candidates(
         source: ToolExecutionSource,
         message_index: int | None,
         part_index: int | None,
-        container_state_id: str | None,
     ) -> None:
         candidates.append(
             ToolExecutionCandidate(
@@ -202,18 +121,11 @@ def collect_tool_execution_candidates(
                 execution=execution,
                 normalized_execution=normalized_tool_execution(execution),
                 execution_id=server_tool_execution_id(execution),
-                container_state_id=container_state_id,
             )
         )
 
     for message_index, message_value in enumerate(messages):
         message = provider_dict(message_value)
-        message_state_id = validate_provider_id(
-            message.get("tools_state_id"),
-            field="tools_state_id",
-        )
-        if message_state_id is None:
-            message_state_id = response_state_id
         content = message.get("content")
         if content is None:
             parts: Sequence[Any] = ()
@@ -229,7 +141,6 @@ def collect_tool_execution_candidates(
                     source="part",
                     message_index=message_index,
                     part_index=part_index,
-                    container_state_id=message_state_id,
                 )
         if message.get("tool_execution") is not None:
             append_candidate(
@@ -237,7 +148,6 @@ def collect_tool_execution_candidates(
                 source="message",
                 message_index=message_index,
                 part_index=None,
-                container_state_id=message_state_id,
             )
 
     if response_tool_execution is not None:
@@ -246,7 +156,6 @@ def collect_tool_execution_candidates(
             source="response",
             message_index=None,
             part_index=None,
-            container_state_id=response_state_id,
         )
     return candidates
 
@@ -267,13 +176,10 @@ def _sources_can_mirror(
 
 def resolve_tool_execution_candidates(
     candidates: Iterable[ToolExecutionCandidate],
+    *,
+    id_factory: Callable[[], str] | None = None,
 ) -> list[ResolvedToolExecution]:
-    """Correlate only executions proven to be mirrors.
-
-    Explicit execution IDs take precedence over container states. A container
-    state may identify one logical execution, but is rejected when it would be
-    shared by several distinct executions.
-    """
+    """Correlate source-level mirrors without treating tools_state_id as identity."""
     values = list(candidates)
     payload_by_execution_id: dict[str, dict[str, Any]] = {}
     for candidate in values:
@@ -296,14 +202,6 @@ def resolve_tool_execution_candidates(
             if candidate.execution_id is not None
         }
 
-    def state_ids(group: Iterable[ToolExecutionCandidate]) -> set[str]:
-        return {
-            candidate.container_state_id
-            for candidate in group
-            if candidate.execution_id is None
-            and candidate.container_state_id is not None
-        }
-
     def can_join(
         group: list[ToolExecutionCandidate],
         candidate: ToolExecutionCandidate,
@@ -313,7 +211,6 @@ def resolve_tool_execution_candidates(
             group[0].normalized_execution == candidate.normalized_execution
             and any(_sources_can_mirror(member, candidate) for member in group)
             and len(execution_ids(combined)) <= 1
-            and len(state_ids(combined)) <= 1
         )
 
     logical_groups: list[list[ToolExecutionCandidate]] = []
@@ -335,42 +232,18 @@ def resolve_tool_execution_candidates(
         else:
             logical_groups.append([candidate])
 
-    for group in logical_groups:
-        container_state_ids = {
-            candidate.container_state_id
-            for candidate in group
-            if candidate.container_state_id is not None
-        }
-        if len(container_state_ids) > 1:
-            identity = next(iter(execution_ids(group)), None)
-            raise ValueError(
-                "Primary GigaChat server tools use the same provider identity "
-                f"{identity!r} with multiple tools_state_id values: "
-                f"{sorted(container_state_ids)!r}."
-            )
-
-    group_state_ids: list[str | None] = []
-    claimed_states: set[str] = set()
-    for group in logical_groups:
-        provider_state_id = next(iter(state_ids(group)), None)
-        if provider_state_id in claimed_states:
-            raise ValueError(
-                f"Primary GigaChat tools_state_id {provider_state_id!r} is shared "
-                "by multiple distinct server tools and cannot be assigned safely."
-            )
-        if provider_state_id is not None:
-            claimed_states.add(provider_state_id)
-        group_state_ids.append(provider_state_id)
-
     source_priority = {"part": 0, "message": 1, "response": 2}
     resolved: list[ResolvedToolExecution] = []
     next_local_sequence = 0
-    for group, provider_state_id in zip(logical_groups, group_state_ids):
+    for group in logical_groups:
         explicit_ids = execution_ids(group)
         execution_id = next(iter(explicit_ids)) if explicit_ids else None
         if execution_id is None:
-            tool_call_id = f"lc_primary-server-tool-{next_local_sequence}"
-            next_local_sequence += 1
+            if id_factory is None:
+                tool_call_id = f"lc_primary-server-tool-{next_local_sequence}"
+                next_local_sequence += 1
+            else:
+                tool_call_id = id_factory()
         else:
             tool_call_id = execution_id
 
@@ -386,10 +259,6 @@ def resolve_tool_execution_candidates(
                 candidate=representative,
                 tool_call_id=tool_call_id,
                 execution_id=execution_id,
-                provider_state_id=provider_state_id,
-                has_idless_observation=any(
-                    candidate.execution_id is None for candidate in group
-                ),
                 mirrored_sources=tuple(candidate.coordinates for candidate in group),
             )
         )

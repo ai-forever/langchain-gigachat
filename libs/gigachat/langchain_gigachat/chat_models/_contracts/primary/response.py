@@ -3,19 +3,15 @@
 from __future__ import annotations
 
 import copy
-from collections.abc import Mapping
 from typing import Any, Iterable, cast
 
 import gigachat.models as gm
 from langchain_core.messages import AIMessage
-from langchain_core.messages.content import ContentBlock
 from langchain_core.messages.tool import InvalidToolCall, ToolCall
 from langchain_core.outputs import ChatGeneration, ChatResult
 from pydantic import BaseModel
 
 from langchain_gigachat.chat_models._contracts.primary.content import (
-    ToolStateOwner,
-    classify_tool_state_owners,
     collect_tool_execution_candidates,
     convert_function_call,
     convert_provider_file,
@@ -23,7 +19,6 @@ from langchain_gigachat.chat_models._contracts.primary.content import (
     convert_text_content,
     convert_tool_execution,
     create_usage_metadata,
-    provider_dict,
     reasoning_content,
     request_id_from_headers,
     resolve_reasoning_value,
@@ -74,8 +69,6 @@ _ContentConversion = tuple[
     list[dict[str, Any]],
     list[ToolCall],
     list[InvalidToolCall],
-    dict[str, str],
-    list[str],
 ]
 
 
@@ -231,10 +224,8 @@ def _text_content(messages: Iterable[gm.ChatMessage]) -> str:
 def _client_tool_state_id(
     message: gm.ChatMessage,
     response: gm.ChatCompletionResponse,
-    *,
-    tool_state_owners: Mapping[str, ToolStateOwner],
 ) -> str | None:
-    """Return only provider-issued state that can replay a client tool call."""
+    """Return the provider continuation ID used as the LangChain tool-call ID."""
     observed_state_ids = list(
         dict.fromkeys(
             state_id
@@ -245,30 +236,12 @@ def _client_tool_state_id(
             if state_id is not None
         )
     )
-    client_state_ids = [
-        state_id
-        for state_id in observed_state_ids
-        if tool_state_owners.get(state_id) == "client"
-    ]
-    unassigned_state_ids = [
-        state_id
-        for state_id in observed_state_ids
-        if tool_state_owners.get(state_id) == "unassigned"
-    ]
-    if len(client_state_ids) > 1 or (client_state_ids and unassigned_state_ids):
+    if len(observed_state_ids) > 1:
         raise ValueError(
             "Primary GigaChat client function call has multiple possible "
-            f"tools_state_id values: "
-            f"{[*client_state_ids, *unassigned_state_ids]!r}."
+            f"tools_state_id values: {observed_state_ids!r}."
         )
-    if client_state_ids:
-        return client_state_ids[0]
-    if observed_state_ids:
-        raise ValueError(
-            "Primary GigaChat tools_state_id ownership is ambiguous: every "
-            "observed state is already owned by a server tool execution."
-        )
-    return None
+    return observed_state_ids[0] if observed_state_ids else None
 
 
 def _content_blocks(
@@ -282,39 +255,11 @@ def _content_blocks(
     candidates = collect_tool_execution_candidates(
         response.messages,
         response_tool_execution=response.tool_execution,
-        response_state_id=getattr(response, "tools_state_id", None),
     )
     resolved_executions = resolve_tool_execution_candidates(candidates)
-    tool_state_owners = classify_tool_state_owners(
-        messages=[provider_dict(message) for message in response.messages],
-        candidates=candidates,
-        resolved_executions=resolved_executions,
-        top_level_tools_state_id=getattr(response, "tools_state_id", None),
-    )
     resolved_by_coordinates = {
         resolved.candidate.coordinates: resolved for resolved in resolved_executions
     }
-    provider_server_tool_state_by_call_id = {
-        resolved.tool_call_id: resolved.provider_state_id
-        for resolved in resolved_executions
-        if resolved.provider_state_id is not None
-    }
-    server_owned_tools_state_ids = list(
-        dict.fromkeys(
-            message.tools_state_id
-            for message in response.messages
-            if message.tools_state_id is not None
-            and tool_state_owners.get(message.tools_state_id) == "server"
-        )
-    )
-    response_state_id = getattr(response, "tools_state_id", None)
-    if (
-        response_state_id is not None
-        and tool_state_owners.get(response_state_id) == "server"
-    ):
-        if response_state_id in server_owned_tools_state_ids:
-            server_owned_tools_state_ids.remove(response_state_id)
-        server_owned_tools_state_ids.append(response_state_id)
 
     def append_function_call(
         function_call: gm.PrimaryChatFunctionCall,
@@ -389,7 +334,6 @@ def _content_blocks(
                 provider_state_id=_client_tool_state_id(
                     message,
                     response,
-                    tool_state_owners=tool_state_owners,
                 ),
             )
 
@@ -468,8 +412,6 @@ def _content_blocks(
         raw_function_calls,
         tool_calls,
         invalid_tool_calls,
-        provider_server_tool_state_by_call_id,
-        server_owned_tools_state_ids,
     )
 
 
@@ -582,16 +524,13 @@ def create_chat_result(response: gm.ChatCompletionResponse) -> ChatResult:
         converted_content = _content_blocks(response)
 
     tools_state_ids = _tools_state_ids(response)
-    replay_tools_state_id = tools_state_ids[0] if len(tools_state_ids) == 1 else None
+    replay_tools_state_id = None
     if converted_content is not None:
-        raw_function_calls = converted_content[1]
-        server_state_ids = converted_content[5]
-        if (
-            server_state_ids
-            and not raw_function_calls
-            and set(tools_state_ids) == set(server_state_ids)
-        ):
-            replay_tools_state_id = server_state_ids[-1]
+        tool_calls = converted_content[2]
+        invalid_tool_calls = converted_content[3]
+        calls = [*tool_calls, *invalid_tool_calls]
+        if calls:
+            replay_tools_state_id = calls[0].get("id")
 
     x_headers = dict(response.x_headers or {})
     metadata = _response_metadata(
@@ -605,8 +544,8 @@ def create_chat_result(response: gm.ChatCompletionResponse) -> ChatResult:
     additional_kwargs: dict[str, Any] = {}
     if tools_state_ids:
         additional_kwargs["tools_state_ids"] = tools_state_ids
-        if replay_tools_state_id is not None:
-            additional_kwargs["tools_state_id"] = replay_tools_state_id
+    if replay_tools_state_id is not None:
+        additional_kwargs["tools_state_id"] = replay_tools_state_id
 
     if converted_content is None:
         message = AIMessage(
@@ -621,13 +560,7 @@ def create_chat_result(response: gm.ChatCompletionResponse) -> ChatResult:
             raw_function_calls,
             tool_calls,
             invalid_tool_calls,
-            provider_server_tool_state_by_call_id,
-            _server_owned_tools_state_ids,
         ) = converted_content
-        if provider_server_tool_state_by_call_id:
-            additional_kwargs["provider_server_tool_state_by_call_id"] = (
-                provider_server_tool_state_by_call_id
-            )
         reasoning = reasoning_content(blocks)
         if reasoning is not None:
             additional_kwargs["reasoning_content"] = reasoning
@@ -636,7 +569,7 @@ def create_chat_result(response: gm.ChatCompletionResponse) -> ChatResult:
             if len(raw_function_calls) == 1:
                 additional_kwargs["function_call"] = raw_function_calls[0]
         message = AIMessage(
-            content_blocks=cast("list[ContentBlock]", blocks),
+            content=cast(list[str | dict[Any, Any]], blocks),
             additional_kwargs=additional_kwargs,
             response_metadata=metadata,
             tool_calls=tool_calls,

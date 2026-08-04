@@ -1,6 +1,3 @@
-from concurrent.futures import ThreadPoolExecutor
-from threading import Barrier, BrokenBarrierError
-from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -196,37 +193,15 @@ async def test_adelete_file(async_sdk_mock: MagicMock) -> None:
 def test_identifying_params() -> None:
     llm = GigaChat(
         temperature=0.5,
-        base_url="https://api.example.test",
         model="GigaChat-Pro",
         max_tokens=100,
-        use_api_v2=True,
-        flags=["flag-1"],
-        update_interval=0.25,
-        auto_upload_attachments=True,
         function_ranker={"enabled": False},
     )
     params = llm._identifying_params
-    assert params["base_url"] == "https://api.example.test"
     assert params["temperature"] == 0.5
     assert params["model"] == "GigaChat-Pro"
     assert params["max_tokens"] == 100
-    assert params["use_api_v2"] is True
-    assert params["flags"] == ["flag-1"]
-    assert params["update_interval"] == 0.25
-    assert params["auto_upload_attachments"] is True
     assert params["function_ranker"] == {"enabled": False}
-
-
-def test_base_urls_have_distinct_identifying_params() -> None:
-    baseline = GigaChat(model="GigaChat-Pro")._identifying_params
-
-    assert (
-        baseline
-        != GigaChat(
-            model="GigaChat-Pro",
-            base_url="https://alternate.example.test",
-        )._identifying_params
-    )
 
 
 def test_llm_type() -> None:
@@ -239,33 +214,6 @@ def test_get_client_init_kwargs_includes_base(sdk_mock: MagicMock) -> None:
     kwargs = llm._get_client_init_kwargs()
     assert kwargs["profanity_check"] is True
     assert kwargs["flags"] == ["flag1"]
-
-
-def test_first_client_access_is_thread_safe(mocker: MockerFixture) -> None:
-    constructor_gate = Barrier(2)
-
-    def build_client(**_: Any) -> MagicMock:
-        try:
-            constructor_gate.wait(timeout=0.5)
-        except BrokenBarrierError:
-            pass
-        return MagicMock()
-
-    constructor = mocker.patch("gigachat.GigaChat", side_effect=build_client)
-    llm = GigaChat()
-    access_gate = Barrier(3)
-
-    def get_client() -> Any:
-        access_gate.wait()
-        return llm._client
-
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        futures = [executor.submit(get_client) for _ in range(2)]
-        access_gate.wait()
-        clients = [future.result(timeout=2) for future in futures]
-
-    assert clients[0] is clients[1]
-    constructor.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

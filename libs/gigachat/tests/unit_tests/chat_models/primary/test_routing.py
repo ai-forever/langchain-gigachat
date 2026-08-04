@@ -1,8 +1,4 @@
-"""Routing and legacy-compatibility matrix for primary chat integration.
-
-This commit is intentionally ordered after the Wave 1 adapters and Thread I:
-foundation exposes the flag, while the assertions below require dispatch.
-"""
+"""Routing matrix for the opt-in primary chat integration."""
 
 from __future__ import annotations
 
@@ -249,6 +245,10 @@ def test_control_kwarg_is_not_forwarded_to_primary_payload(
     payload = sdk_client.chat.create.call_args.args[0]
     assert isinstance(payload, gm.ChatCompletionRequest)
     assert "use_api_v2" not in payload.model_dump()
+
+
+def test_use_api_v2_is_an_identifying_parameter() -> None:
+    assert GigaChat(use_api_v2=True)._identifying_params["use_api_v2"] is True
 
 
 def test_control_kwarg_is_not_forwarded_to_legacy_payload(

@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Optional
 
 import gigachat.models as gm
-from gigachat.models.chat_completions import ChatSource
 
 MODEL = "GigaChat-3-Ultra"
 CREATED_AT = 1_754_000_000
@@ -148,41 +147,6 @@ def build_message_delta_event() -> gm.PrimaryChatCompletionChunk:
     )
 
 
-def build_tool_completed_event() -> gm.PrimaryChatCompletionChunk:
-    """Return a completed built-in-tool event with provider output."""
-    execution = gm.ChatToolExecution(name="web_search", status="completed")
-    return gm.PrimaryChatCompletionChunk(
-        event="response.tool.completed",
-        model=MODEL,
-        created_at=CREATED_AT,
-        messages=[
-            gm.ChatMessageChunk(
-                role="assistant",
-                message_id=MESSAGE_ID,
-                tools_state_id=TOOLS_STATE_ID,
-                content=[
-                    gm.ChatContentPart(
-                        tool_execution=execution,
-                        inline_data=gm.ChatInlineData(
-                            sources={
-                                "source-001": ChatSource(
-                                    url="https://example.test/weather",
-                                    title="Weather source",
-                                )
-                            }
-                        ),
-                    )
-                ],
-            )
-        ],
-        message_id=MESSAGE_ID,
-        thread_id=THREAD_ID,
-        tools_state_id=TOOLS_STATE_ID,
-        tool_execution=execution,
-        x_headers=_x_headers(),
-    )
-
-
 def build_message_done_event() -> gm.PrimaryChatCompletionChunk:
     """Return a metadata-only done event carrying usage and stable IDs."""
     return gm.PrimaryChatCompletionChunk(
@@ -197,42 +161,3 @@ def build_message_done_event() -> gm.PrimaryChatCompletionChunk:
         usage=_usage(),
         x_headers=_x_headers(),
     )
-
-
-def build_unknown_event() -> dict[str, Any]:
-    """Return a well-formed but unknown provider event to preserve losslessly."""
-    return {
-        "event": "response.provider_extension.delta",
-        "model": MODEL,
-        "created_at": CREATED_AT,
-        "message_id": MESSAGE_ID,
-        "thread_id": THREAD_ID,
-        "messages": [
-            {
-                "role": "assistant",
-                "content": [
-                    {
-                        "provider_extension": {
-                            "kind": "future-content",
-                            "value": 42,
-                        }
-                    }
-                ],
-            }
-        ],
-        "x_headers": _x_headers(),
-        "provider_metadata": {"preserve": True},
-    }
-
-
-def build_malformed_event() -> dict[str, Any]:
-    """Return a malformed known event for defensive converter coverage."""
-    return {
-        "event": "response.message.delta",
-        "messages": "not-a-message-list",
-        "message_id": MESSAGE_ID,
-        "provider_error": {
-            "code": "malformed_fixture",
-            "detail": "messages must be a list",
-        },
-    }

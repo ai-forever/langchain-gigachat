@@ -57,7 +57,6 @@ jobs:
     uses: ./.github/workflows/_test.yml
     with:
       working-directory: ${{ matrix.working-directory }}
-      candidate-sha: ${{ github.event.pull_request.head.sha || github.sha }}
     secrets: inherit
 
   ci_success:

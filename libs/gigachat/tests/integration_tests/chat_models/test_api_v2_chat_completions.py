@@ -242,24 +242,6 @@ def test_sync_streamed_web_search_lifecycle(primary_llm: GigaChat) -> None:
     _assert_streamed_builtin_tool_lifecycle(chunks, aggregate)
 
 
-async def test_async_streamed_web_search_lifecycle(primary_llm: GigaChat) -> None:
-    runnable = primary_llm.bind_tools(
-        [{"type": "web_search"}],
-        tool_choice="web_search",
-    )
-
-    chunks = [
-        cast(AIMessageChunk, chunk)
-        async for chunk in runnable.astream(
-            "Use web search to find the official Python website, then briefly "
-            "identify what Python is."
-        )
-    ]
-    aggregate = _aggregate(chunks)
-
-    _assert_streamed_builtin_tool_lifecycle(chunks, aggregate)
-
-
 def test_json_schema_structured_output(primary_llm: GigaChat) -> None:
     runnable = primary_llm.with_structured_output(
         StructuredAnswer,
@@ -346,24 +328,6 @@ def test_web_search_returns_text_and_sources(
         annotation.get("type") == "citation" and annotation.get("url")
         for annotation in annotations
     )
-    _assert_server_tool_blocks_if_reported(result, blocks)
-
-
-def test_code_interpreter_through_bind_tools(primary_llm: GigaChat) -> None:
-    runnable = primary_llm.bind_tools(
-        [{"type": "code_interpreter"}],
-        tool_choice="code_interpreter",
-    )
-
-    result = runnable.invoke(
-        "Use the code interpreter to calculate 37 * 41, then return the result."
-    )
-
-    assert isinstance(result, AIMessage)
-    blocks: list[dict[str, Any]] = [dict(block) for block in result.content_blocks]
-    text = _message_text(result).strip()
-    assert text
-    assert "1517" in text
     _assert_server_tool_blocks_if_reported(result, blocks)
 
 

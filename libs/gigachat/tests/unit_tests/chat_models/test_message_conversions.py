@@ -2,14 +2,8 @@
 
 import pytest
 from gigachat.models import FunctionCall, Messages, MessagesRole
-from langchain_core.messages import (
-    AIMessage,
-    FunctionMessage,
-    HumanMessage,
-    ToolMessage,
-)
+from langchain_core.messages import AIMessage, FunctionMessage, HumanMessage
 
-from langchain_gigachat.chat_models._contracts import primary
 from langchain_gigachat.chat_models.gigachat import (
     _convert_dict_to_message,
     _convert_message_to_dict,
@@ -46,44 +40,6 @@ def test_convert_dict_to_message_function_call_dict() -> None:
     assert isinstance(result, AIMessage)
     assert result.additional_kwargs["function_call"]["name"] == "my_tool"
     assert len(result.tool_calls) == 1
-
-
-def test_legacy_function_call_state_is_not_replayed_on_primary_route() -> None:
-    legacy_message = _convert_dict_to_message(
-        Messages(
-            id=None,
-            role=MessagesRole.ASSISTANT,
-            content="",
-            function_call=FunctionCall(
-                name="lookup",
-                arguments={"key": "value"},
-            ),
-            functions_state_id="provider-state",
-        )
-    )
-    assert isinstance(legacy_message, AIMessage)
-    call_id = legacy_message.tool_calls[0]["id"]
-    assert call_id is not None
-    assert "provider_tool_state_by_call_id" not in legacy_message.additional_kwargs
-
-    with pytest.raises(ValueError, match="another API contract"):
-        primary.convert_messages(
-            [
-                legacy_message,
-                ToolMessage(content='{"result": 1}', tool_call_id=call_id),
-            ],
-            cached_uploads={},
-        )
-
-
-def test_legacy_rejects_primary_provider_tool_state() -> None:
-    message = AIMessage(
-        content="stateful primary history",
-        additional_kwargs={"tools_state_id": "provider-state"},
-    )
-
-    with pytest.raises(ValueError, match="another API contract"):
-        _convert_message_to_dict(message)
 
 
 # ---------------------------------------------------------------------------

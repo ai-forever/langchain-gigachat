@@ -27,8 +27,7 @@ This library is part of [GigaChain](https://github.com/ai-forever/gigachain) and
   - [Reasoning Models](#reasoning-models)
   - [API v2 (`/v2/chat/completions`)](#api-v2-v2chatcompletions)
 - [Tool Calling](#tool-calling)
-  - [Legacy tool transport](#legacy-tool-transport)
-  - [Primary API v2 tool transport](#primary-api-v2-tool-transport)
+  - [Legacy `bind_functions()`](#legacy-bind_functions)
 - [Structured Output](#structured-output)
 - [Attachments](#attachments)
   - [File Operations](#file-operations)
@@ -170,51 +169,29 @@ print(msg.additional_kwargs.get("reasoning_content"))  # model's chain-of-though
 
 ### API v2 (`/v2/chat/completions`)
 
-The primary v2 contract is opt-in. Legacy requests remain the default.
-
-Enable it on the model for plain sync, async, and streaming calls:
+The primary API v2 contract is opt-in; existing applications keep using the
+legacy contract by default. Enable it on the model or on one bound runnable:
 
 ```python
-import asyncio
-
 from langchain_gigachat import GigaChat
 
-
 llm = GigaChat(model="GigaChat-3-Ultra", use_api_v2=True)
-
-response = llm.invoke("What is the capital of Russia?")
-print(response.content)
-
-
-async def main() -> None:
-    response = await llm.ainvoke("Name three cities on the Volga.")
-    print(response.content)
-
-
-asyncio.run(main())
+print(llm.invoke("Hello!").content)
 
 for chunk in llm.stream("Write one sentence about Lake Baikal."):
     print(chunk.text, end="", flush=True)
+
+primary_once = GigaChat().bind(use_api_v2=True)
 ```
 
-Use `bind()` when only one runnable should use v2:
+`ainvoke()` and `astream()` use the SDK's native async v2 resources.
 
-```python
-llm = GigaChat(model="GigaChat-3-Ultra")
-primary_llm = llm.bind(use_api_v2=True)
-response = primary_llm.invoke("Hello!")
-```
-
-#### Client tools and `ToolMessage` continuation
-
-Client functions use standard LangChain tools. Pass the returned LangChain
-tool-call ID back unchanged through `ToolMessage`:
+Client functions continue to use LangChain tools. For a continuation, pass the
+returned tool-call ID to `ToolMessage` unchanged:
 
 ```python
 from langchain_core.messages import HumanMessage, ToolMessage
 from langchain_core.tools import tool
-
-from langchain_gigachat import GigaChat
 
 
 @tool
@@ -223,53 +200,36 @@ def get_weather(city: str) -> str:
     return f"{city}: sunny, 22C"
 
 
-llm = GigaChat(use_api_v2=True)
 with_tools = llm.bind_tools([get_weather], tool_choice="auto")
-
 question = HumanMessage("What is the weather in Moscow?")
 assistant = with_tools.invoke([question])
 call = assistant.tool_calls[0]
-tool_result = ToolMessage(
+result = ToolMessage(
     content=get_weather.invoke(call["args"]),
     tool_call_id=call["id"],
     name=call["name"],
 )
-answer = with_tools.invoke([question, assistant, tool_result])
-print(answer.content)
+answer = with_tools.invoke([question, assistant, result])
 ```
 
-Primary continuation serializes the tool result as provider `role="tool"` with
-`function_result` and `tools_state_id`. It does not use the legacy
-`role="function"` transport. The returned LangChain tool-call ID is the
-provider `tools_state_id`; pass it to `ToolMessage.tool_call_id` unchanged.
-Stateful tool history is route-specific and is not translated between the
-legacy and primary contracts.
-
-#### Provider built-in tools
-
-Provider built-ins use the public `bind_tools()` API:
+Provider-managed tools are also bound through the public API:
 
 ```python
-from langchain_gigachat import GigaChat
-
-llm = GigaChat(use_api_v2=True)
 with_search = llm.bind_tools(
     [{"type": "web_search"}],
     tool_choice="web_search",
 )
-response = with_search.invoke("Find the latest GigaChat SDK release.")
-print(response.content)
+response = with_search.invoke("Find recent GigaChat news.")
 ```
 
-Built-ins require v2. Binding one and then overriding the runnable with
-`use_api_v2=False` raises an actionable `ValueError`.
+Built-in tools require `use_api_v2=True`. Client tool history is
+route-specific: primary `tools_state_id` values are not translated to legacy
+`functions_state_id` values.
 
-#### Native structured JSON output
+Use native JSON Schema output with a Pydantic model:
 
 ```python
 from pydantic import BaseModel
-
-from langchain_gigachat import GigaChat
 
 
 class City(BaseModel):
@@ -277,114 +237,37 @@ class City(BaseModel):
     population: int
 
 
-llm = GigaChat(use_api_v2=True)
 structured = llm.with_structured_output(City, method="json_schema")
 city = structured.invoke("Return information about Kazan.")
 ```
 
-Primary v2 can also request a native JSON object without a schema and without
-`strict`:
+API v2 also supports schema-less JSON mode. It sends the provider-native
+`{"type": "json_schema"}` response format without inventing a schema or
+`strict` value:
 
 ```python
-json_object_llm = llm.with_structured_output(None, method="json_mode")
-payload = json_object_llm.invoke("Return a JSON object with a short answer.")
-assert isinstance(payload, dict)
+json_llm = llm.with_structured_output(None, method="json_mode")
+value = json_llm.invoke("Return a JSON object with a short answer.")
+assert isinstance(value, dict)
 ```
 
-The equivalent low-level response format contains only the provider type:
+Existing file IDs work in standard `image`, `audio`, and `file` content blocks;
+the existing experimental `auto_upload_attachments` path can also supply IDs to
+v2 messages. Stateful requests accept `assistant_id=...` or
+`storage={"thread_id": ...}`. For stored assistant/thread state, an instance
+default model is omitted unless the invocation provides an explicit model.
 
-```python
-json_object_llm = llm.bind(response_format={"type": "json_schema"})
-```
+Current limitations:
 
-Low-level `bind(response_format=...)` returns an ordinary `AIMessage`.
-Use `with_structured_output()` when the runnable should parse and validate the
-response, or rely on a LangChain Agent provider strategy.
-
-Primary v2 also preserves other explicit SDK response formats when binding
-directly:
-
-```python
-ticket_id_llm = llm.bind(
-    response_format={
-        "type": "regex",
-        "regex": r"[A-Z]{2}-[0-9]{4}",
-    }
-)
-```
-
-Supported explicit types are `text`, `json_schema`, and `regex`. A mapping
-without an explicit response-format discriminator is treated as a raw JSON
-Schema. On the primary route, `{"type": "json_schema"}` is the schema-less
-form and is serialized without synthetic `schema` or `strict` fields. Supplying
-`strict` without a schema is rejected, including `strict=False`. Unknown
-explicit formats are rejected before the provider call. GigaChat has no
-confirmed strict tool-schema field, so `bind_tools(..., strict=True)` without
-`response_format` raises.
-
-#### Assistant and thread state
-
-Stateful requests accept either a top-level assistant ID or a storage thread:
-
-```python
-llm = GigaChat(use_api_v2=True)
-
-assistant_reply = llm.invoke(
-    "Continue the assistant conversation.",
-    assistant_id="assistant-id",
-)
-thread_reply = llm.invoke(
-    "Continue this thread.",
-    storage={"thread_id": "thread-id"},
-)
-```
-
-For assistant/thread requests, the configured default model is omitted so the
-provider can resolve the model from stored state. Pass `model=...` on the
-individual invocation only when an explicit override is required.
-
-#### File ID input
-
-An existing provider file ID can be supplied without re-uploading the file:
-
-```python
-from langchain_core.messages import HumanMessage
-
-from langchain_gigachat import GigaChat
-
-llm = GigaChat(use_api_v2=True)
-message = HumanMessage(
-    content=[
-        {"type": "text", "text": "Summarize this document."},
-        {
-            "type": "file",
-            "file_id": "provider-file-id",
-            "mime_type": "application/pdf",
-        },
-    ]
-)
-response = llm.invoke([message])
-```
-
-#### Current release status and limitations
-
-`langchain-gigachat==0.5.2a1` requires `langchain-core>=1.2.22,<2` and stable
-`gigachat>=0.2.3,<0.3`. CI covers minimum/latest LangChain Core, a focused
-LangChain Agent contract, and clean wheel/sdist installation. The
-credential-backed live-provider matrix was not run.
-
-Primary v2 currently rejects parallel client tool calls in one assistant
-message. `tool_choice="any"` is rejected by default on both routes because
-mapping forced-tool semantics to `"auto"` weakens the request. Compatibility
-callers may explicitly set `allow_any_tool_choice_fallback=True`; this maps
-`"any"` to `"auto"` with a `UserWarning`.
+- one client function call per assistant message;
+- `tool_choice="any"` has no confirmed v2 semantic; use `"auto"`, `"none"`, or
+  a specific client/provider tool;
+- parallel provider tools without explicit IDs are rejected as ambiguous;
+- model support for native response formats is provider-dependent.
 
 ## Tool Calling
 
-### Legacy tool transport
-
-With the default `use_api_v2=False`, use the standard LangChain `@tool`
-decorator for client functions. Pass GigaChat-specific metadata via `extras`:
+Use the standard LangChain `@tool` decorator. Pass GigaChat-specific metadata via `extras`:
 
 ```python
 from langchain_gigachat import GigaChat
@@ -416,15 +299,11 @@ llm = GigaChat(function_ranker={"enabled": False})
 llm_with_tools = llm.bind_tools([get_weather], tool_choice="auto")
 ```
 
-> **Note:** `tool_choice="any"` is not supported by GigaChat. Use `"auto"`,
-> `"none"`, or a specific tool name. If compatibility with upstream code is
-> required, `allow_any_tool_choice_fallback=True` explicitly converts `"any"`
-> to `"auto"` and emits a `UserWarning` because forced-tool semantics are not
-> preserved.
+> **Note:** `tool_choice="any"` is not supported by the GigaChat API. Use `"auto"`, `"none"`, or a specific tool name. If upstream code passes `"any"`, set `allow_any_tool_choice_fallback=True` to silently convert it to `"auto"`.
 
 > **Note:** GigaChat API does not support parallel tool calls in a single assistant message. If `AIMessage` contains more than one `tool_calls` entry, a `ValueError` is raised.
 
-#### Legacy `bind_functions()`
+### Legacy `bind_functions()`
 
 For legacy LangChain function-calling flows, `bind_functions()` is still available:
 
@@ -446,19 +325,9 @@ llm_with_functions = llm.bind_functions(
 
 Use `bind_tools()` for new code. `bind_functions()` is kept as a compatibility layer over the provider's `function_call` transport and supports `None`, `"auto"`, `"none"`, or a specific function name.
 
-The legacy provider transport is function-oriented. `ToolMessage` results are
-therefore serialized back as provider `role="function"` messages when
-continuing a legacy conversation. Provider built-in tools are not supported on
-this route.
-
-### Primary API v2 tool transport
-
-With `use_api_v2=True`, `bind_tools()` accepts both client functions and
-provider built-ins such as `{"type": "web_search"}`. Client tool results use
-provider `role="tool"`, `function_result`, and `tools_state_id`; see the
-[complete continuation example](#client-tools-and-toolmessage-continuation).
-The primary and legacy transports are selected only after the invocation-level
-`use_api_v2` override is resolved.
+Internally, the provider transport is still function-oriented. That is why
+`ToolMessage` results are serialized back as provider `function` messages when
+continuing a conversation.
 
 ## Structured Output
 
@@ -486,28 +355,20 @@ print(parsed)
 
 By default, `with_structured_output()` uses GigaChat function calling for
 backward-compatible schema extraction. Native API-level JSON Schema constraints
-are available explicitly on a compatible model:
+are also available explicitly:
 
 ```python
-primary = GigaChat(use_api_v2=True)
-primary.with_structured_output(Answer, method="json_schema")
+llm.with_structured_output(Answer, method="json_schema")
 ```
 
-Use `schema=None` with `method="json_mode"` for schema-less native JSON. The
-primary request contains `response_format={"type": "json_schema"}` with no
-`schema` and no `strict`, and the runnable returns a parsed JSON object:
+> **Note:** `method="json_schema"` requires `gigachat>=0.2.1` and a model that
+> supports the `response_format` API field. Support is currently in beta on
+> GigaChat side and may not be available for every model — fall back to the
+> default `method="function_calling"` if the API rejects the request.
 
-```python
-json_object = primary.with_structured_output(None, method="json_mode")
-result = json_object.invoke("Return a JSON object with keys answer and confidence.")
-```
-
-`method="json_schema"` requires a schema; its `strict` option applies only to
-that schema-bearing form. Model support for native response formats remains
-provider-dependent, so retain the default `method="function_calling"` fallback
-for mixed model versions. The older schema-bearing
-`with_structured_output(schema, method="json_mode")` form remains accepted but
-deprecated; the new `schema=None` primary mode is not deprecated.
+The legacy `method="json_mode"` is still accepted for backward compatibility,
+but it emits a `DeprecationWarning` — prefer `method="json_schema"` for new
+code.
 
 ## Attachments
 
@@ -602,7 +463,7 @@ Most commonly used parameters (all are optional):
 | `use_api_v2` | `bool` | `False` | Use the `/v2/chat/completions` contract |
 | `streaming` | `bool` | `False` | Stream results by default |
 | `auto_upload_attachments` | `bool` | `False` | Auto-upload base64 content from `image_url` / `audio_url` / `document_url` blocks |
-| `allow_any_tool_choice_fallback` | `bool` | `False` | Explicitly map `tool_choice="any"` to `"auto"` with a warning |
+| `allow_any_tool_choice_fallback` | `bool` | `False` | Silently convert `tool_choice="any"` to `"auto"` |
 
 For the full list of parameters (auth, SSL/mTLS, retry, flags, etc.), see the [GigaChat SDK README](https://github.com/ai-forever/gigachat#constructor-parameters) — the LangChain wrapper accepts the same constructor arguments.
 
@@ -640,11 +501,10 @@ For the full exception hierarchy and HTTP status code mapping, see the [GigaChat
 
 ## Tracing Metadata
 
-When the provider returns tracing identifiers or headers, the wrapper preserves
-them in both non-streaming and streaming flows:
+When the provider returns tracing headers, the wrapper preserves them in both
+non-streaming and streaming flows:
 
-- `AIMessage.id` / `AIMessageChunk.id` prefers `x-request-id`; primary v2
-  responses fall back to the provider `message_id`
+- `AIMessage.id` / `AIMessageChunk.id` carries `x-request-id`
 - non-streaming responses keep full headers in `ChatResult.llm_output["x_headers"]`
 - streaming responses expose full headers on the first chunk via
   `generation_info["x_headers"]`

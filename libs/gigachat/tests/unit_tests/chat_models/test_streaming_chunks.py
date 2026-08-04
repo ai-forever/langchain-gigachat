@@ -97,23 +97,6 @@ def test_delta_with_function_call() -> None:
     assert json.loads(args) == {"a": 1}
 
 
-def test_delta_function_call_keeps_legacy_state_without_cross_route_mapping() -> None:
-    chunk = _convert_delta_to_message_chunk(
-        {
-            "role": "assistant",
-            "function_call": {"name": "my_tool", "arguments": {"a": 1}},
-            "functions_state_id": "provider-state",
-        },
-        AIMessageChunk,
-    )
-
-    assert isinstance(chunk, AIMessageChunk)
-    call_id = chunk.tool_call_chunks[0]["id"]
-    assert call_id is not None
-    assert chunk.additional_kwargs["functions_state_id"] == "provider-state"
-    assert "provider_tool_state_by_call_id" not in chunk.additional_kwargs
-
-
 def test_delta_function_call_name_none() -> None:
     delta: Dict[str, Any] = {
         "role": "assistant",
