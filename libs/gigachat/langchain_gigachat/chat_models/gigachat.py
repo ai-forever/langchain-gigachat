@@ -32,6 +32,7 @@ from langchain_core.callbacks import (
     AsyncCallbackManagerForLLMRun,
     CallbackManagerForLLMRun,
 )
+from langchain_core.exceptions import OutputParserException
 from langchain_core.language_models import LanguageModelInput
 from langchain_core.language_models.chat_models import (
     BaseChatModel,
@@ -75,14 +76,20 @@ from langchain_core.runnables import (
     RunnablePassthrough,
 )
 from langchain_core.tools import BaseTool
-from langchain_core.utils.pydantic import is_basemodel_subclass, pre_init
-from pydantic import BaseModel, PrivateAttr
+from langchain_core.utils.pydantic import is_basemodel_subclass
+from pydantic import BaseModel, PrivateAttr, model_validator
 from typing_extensions import override
 
+from langchain_gigachat.chat_models._contracts import primary
+from langchain_gigachat.chat_models._contracts.primary.messages import (
+    CROSS_CONTRACT_TOOL_STATE_ERROR,
+)
 from langchain_gigachat.chat_models.base_gigachat import _BaseGigaChat
 from langchain_gigachat.utils.function_calling import (
     convert_to_gigachat_function,
     convert_to_gigachat_tool,
+    is_primary_builtin_tool,
+    normalize_tool_for_binding,
 )
 
 logger = logging.getLogger(__name__)
@@ -116,6 +123,21 @@ MIME_EXTENSION_FALLBACK: Dict[str, str] = {
 DEFAULT_IMAGE_CACHE_MAX_SIZE = 1000
 
 ATTACHMENT_BLOCK_KEYS = ("image_url", "audio_url", "document_url")
+_PRIMARY_ONLY_KWARGS = frozenset(
+    {
+        "assistant_id",
+        "disable_filter",
+        "filter_config",
+        "model_options",
+        "ranker_options",
+        "reasoning",
+        "strict",
+        "tool_config",
+        "tools_state_id",
+        "user_info",
+    }
+)
+_SCHEMA_LESS_JSON_MODE_KEY = "_schema_less_json_mode"
 
 
 def _extension_for_mime(mime: str) -> str:
@@ -183,7 +205,7 @@ def _convert_dict_to_message(message: gm.Messages) -> BaseMessage:
 
 
 def get_text_and_images_from_content(
-    content: list[Union[str, dict]], cached_images: Dict[str, str]
+    content: list[Union[str, dict]], cached_images: Mapping[str, str]
 ) -> Tuple[str, List[str]]:
     """Extract text and attachment IDs from LangChain content blocks.
 
@@ -238,11 +260,22 @@ def get_text_and_images_from_content(
 
 
 def _convert_message_to_dict(
-    message: BaseMessage, cached_images: Optional[Dict[str, str]] = None
+    message: BaseMessage, cached_images: Optional[Mapping[str, str]] = None
 ) -> gm.Messages:
     kwargs = {}
     if cached_images is None:
         cached_images = {}
+
+    primary_state_keys = {
+        "tools_state_id",
+        "tools_state_ids",
+    }
+    if any(
+        key in source
+        for source in (message.additional_kwargs, message.response_metadata)
+        for key in primary_state_keys
+    ):
+        raise ValueError(CROSS_CONTRACT_TOOL_STATE_ERROR)
 
     if isinstance(message.content, list):
         content, attachments = get_text_and_images_from_content(
@@ -303,7 +336,8 @@ def _convert_message_to_dict(
 
 
 def _convert_delta_to_message_chunk(
-    _dict: Mapping[str, Any], default_class: Type[BaseMessageChunk]
+    _dict: Mapping[str, Any],
+    default_class: Type[BaseMessageChunk],
 ) -> BaseMessageChunk:
     role = _dict.get("role")
     content = _dict.get("content") or ""
@@ -363,6 +397,12 @@ def _convert_delta_to_message_chunk(
 
 def _get_tool_name(tool: Mapping[str, Any]) -> str:
     """Return tool name from normalized or title-only tool payload."""
+    if is_primary_builtin_tool(tool):
+        tool_type = tool.get("type")
+        if isinstance(tool_type, str):
+            return tool_type
+        return next(iter(tool))
+
     function = tool.get("function")
     if not isinstance(function, Mapping):
         raise ValueError("Tool payload must contain a function mapping.")
@@ -415,10 +455,9 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             sending tokens.
         auto_upload_attachments: Auto-upload Base-64 content for image_url,
             audio_url, and document_url blocks. Not for production usage.
-        allow_any_tool_choice_fallback: Allow automatic fallback from
-            tool_choice='any' to 'auto'. By default, 'any' raises an error
-            because GigaChat API doesn't support it. Set to True to silently
-            convert to 'auto' (may cause unpredictable agent behavior).
+        allow_any_tool_choice_fallback: Explicitly convert
+            ``tool_choice='any'`` to ``'auto'`` with a warning. Disabled by
+            default because the conversion weakens forced-tool semantics.
         reasoning_effort: Reasoning effort for reasoning-capable models
             (e.g. GigaChat-2-Reasoning). When set, the API may return
             reasoning_content in the assistant message (see additional_kwargs).
@@ -430,15 +469,15 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
     """Auto-upload Base-64 image/audio/document blocks. Not for production usage."""
     allow_any_tool_choice_fallback: bool = False
     """
-    Allow automatic fallback from tool_choice='any' to 'auto'.
-    GigaChat API doesn't support 'any', so by default it raises an error.
+    Convert ``tool_choice='any'`` to ``'auto'`` with a compatibility warning.
     """
 
     _cached_uploads: Dict[str, str] = PrivateAttr(default_factory=dict)
 
-    @pre_init
-    def validate_environment(cls, values: Dict) -> Dict:
-        if values.get("auto_upload_attachments"):
+    @model_validator(mode="before")
+    @classmethod
+    def validate_environment(cls, values: Any) -> Any:
+        if isinstance(values, Mapping) and values.get("auto_upload_attachments"):
             logger.warning(
                 "`auto_upload_attachments` is experiment option. "
                 "Please, don't use it on production. "
@@ -535,10 +574,12 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             _convert_message_to_dict(m, self._cached_uploads) for m in messages
         ]
         kwargs.pop("messages", None)
+        kwargs.pop("use_api_v2", None)
+        kwargs.pop(_SCHEMA_LESS_JSON_MODE_KEY, None)
 
         functions = kwargs.pop("functions", [])
         for tool in kwargs.pop("tools", []):
-            if tool.get("type", None) == "function" and isinstance(functions, List):
+            if tool.get("type", None) == "function" and isinstance(functions, list):
                 functions.append(tool["function"])
 
         function_call = kwargs.pop("function_call", None)
@@ -562,6 +603,90 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         payload = gm.Chat.model_validate(payload_dict)
 
         return payload
+
+    def _resolve_chat_contract(
+        self, kwargs: Mapping[str, Any]
+    ) -> Literal["legacy", "primary"]:
+        return "primary" if kwargs.get("use_api_v2", self.use_api_v2) else "legacy"
+
+    def _validate_legacy_kwargs(self, kwargs: Mapping[str, Any]) -> None:
+        if kwargs.get(_SCHEMA_LESS_JSON_MODE_KEY):
+            raise ValueError("Schema-less json_mode requires use_api_v2=True.")
+
+        unsupported = sorted(_PRIMARY_ONLY_KWARGS.intersection(kwargs))
+        if unsupported:
+            names = ", ".join(unsupported)
+            raise ValueError(
+                f"Legacy GigaChat does not support primary-only argument(s): {names}. "
+                "Use use_api_v2=True."
+            )
+
+        builtin_names = sorted(
+            _get_tool_name(tool)
+            for tool in (kwargs.get("tools") or ())
+            if is_primary_builtin_tool(tool)
+        )
+        if builtin_names:
+            names = ", ".join(builtin_names)
+            raise ValueError(
+                "Legacy GigaChat does not support provider built-in tool(s): "
+                f"{names}. Use use_api_v2=True."
+            )
+
+    def _primary_defaults(self) -> primary.RequestDefaults:
+        function_ranker = self.function_ranker
+        if isinstance(function_ranker, BaseModel):
+            function_ranker = function_ranker.model_dump(
+                exclude_none=True, by_alias=True
+            )
+        return primary.RequestDefaults(
+            model=self.model,
+            profanity_check=self.profanity_check,
+            temperature=self.temperature,
+            top_p=self.top_p,
+            max_tokens=self.max_tokens,
+            repetition_penalty=self.repetition_penalty,
+            update_interval=self.update_interval,
+            reasoning_effort=self.reasoning_effort,
+            function_ranker=function_ranker,
+            flags=self.flags,
+        )
+
+    def _build_primary_payload(
+        self,
+        messages: List[BaseMessage],
+        kwargs: Mapping[str, Any],
+        *,
+        cached_uploads: Optional[Mapping[str, str]] = None,
+    ) -> gm.ChatCompletionRequest:
+        invocation_kwargs = dict(kwargs)
+        invocation_kwargs.pop("use_api_v2", None)
+        schema_less_json_mode = bool(
+            invocation_kwargs.pop(_SCHEMA_LESS_JSON_MODE_KEY, False)
+        )
+        if schema_less_json_mode:
+            response_format = invocation_kwargs.get("response_format")
+            if response_format is not None:
+                raise ValueError(
+                    "Schema-less json_mode cannot be combined with an explicit "
+                    "response_format."
+                )
+            invocation_kwargs["response_format"] = {"type": "json_schema"}
+        tool_binding = primary.build_tool_binding(
+            functions=invocation_kwargs.get("functions", ()),
+            tools=invocation_kwargs.get("tools", ()),
+            function_call=invocation_kwargs.get("function_call"),
+            explicit_tool_config=invocation_kwargs.get("tool_config"),
+        )
+        return primary.build_payload(
+            messages,
+            defaults=self._primary_defaults(),
+            invocation_kwargs=invocation_kwargs,
+            cached_uploads=(
+                self._cached_uploads if cached_uploads is None else cached_uploads
+            ),
+            tool_binding=tool_binding,
+        )
 
     def _create_chat_result(self, response: gm.ChatCompletion) -> ChatResult:
         """Convert SDK response to ChatResult and preserve tracing metadata.
@@ -622,7 +747,10 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         """
         choice = chunk["choices"][0]
         content = choice.get("delta", {}).get("content", "")
-        chunk_m = _convert_delta_to_message_chunk(choice["delta"], AIMessageChunk)
+        chunk_m = _convert_delta_to_message_chunk(
+            choice["delta"],
+            AIMessageChunk,
+        )
 
         usage_metadata = None
         if chunk.get("usage"):
@@ -669,10 +797,19 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             )
             return generate_from_stream(stream_iter)
 
+        route = self._resolve_chat_contract(kwargs)
+        if route == "legacy":
+            self._validate_legacy_kwargs(kwargs)
         self._upload_attachments(messages)
-        payload = self._build_payload(messages, **kwargs)
-        response = self._client.chat(payload)
-        return self._create_chat_result(response)
+        if route == "primary":
+            primary_payload = self._build_primary_payload(messages, kwargs)
+            primary_response = self._client.chat.create(primary_payload)
+            result = primary.create_chat_result(primary_response)
+        else:
+            payload = self._build_payload(messages, **kwargs)
+            response = self._client.chat(payload)
+            result = self._create_chat_result(response)
+        return result
 
     @override
     async def _agenerate(
@@ -692,10 +829,19 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             )
             return await agenerate_from_stream(stream_iter)
 
+        route = self._resolve_chat_contract(kwargs)
+        if route == "legacy":
+            self._validate_legacy_kwargs(kwargs)
         await self._aupload_attachments(messages)
-        payload = self._build_payload(messages, **kwargs)
-        response = await self._client.achat(payload)
-        return self._create_chat_result(response)
+        if route == "primary":
+            primary_payload = self._build_primary_payload(messages, kwargs)
+            primary_response = await self._client.achat.create(primary_payload)
+            result = primary.create_chat_result(primary_response)
+        else:
+            payload = self._build_payload(messages, **kwargs)
+            response = await self._client.achat(payload)
+            result = self._create_chat_result(response)
+        return result
 
     @override
     def _stream(
@@ -707,7 +853,25 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
     ) -> Iterator[ChatGenerationChunk]:
         # Kept in the signature for LangChain compatibility, but wrapper-side
         # local stop handling was removed in 0.5.x. See MIGRATION.md.
+        route = self._resolve_chat_contract(kwargs)
+        if route == "legacy":
+            self._validate_legacy_kwargs(kwargs)
         self._upload_attachments(messages)
+        if route == "primary":
+            primary_payload = self._build_primary_payload(messages, kwargs)
+            state = primary.StreamState()
+            for event in self._client.chat.stream(primary_payload):
+                primary_chunk = primary.convert_stream_event(event, state=state)
+                if primary_chunk is None:
+                    continue
+                if run_manager:
+                    run_manager.on_llm_new_token(
+                        primary_chunk.text,
+                        chunk=primary_chunk,
+                    )
+                yield primary_chunk
+            return
+
         payload = self._build_payload(messages, **kwargs)
         first_chunk = True
 
@@ -717,12 +881,17 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 continue
 
             chunk_m, generation_info, content = self._build_stream_chunk(
-                chunk, first_chunk
+                chunk,
+                first_chunk,
             )
             first_chunk = False
+            generation_chunk = ChatGenerationChunk(
+                message=chunk_m,
+                generation_info=generation_info,
+            )
             if run_manager:
                 run_manager.on_llm_new_token(content)
-            yield ChatGenerationChunk(message=chunk_m, generation_info=generation_info)
+            yield generation_chunk
 
     @override
     async def _astream(
@@ -734,7 +903,25 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
     ) -> AsyncIterator[ChatGenerationChunk]:
         # Kept in the signature for LangChain compatibility, but wrapper-side
         # local stop handling was removed in 0.5.x. See MIGRATION.md.
+        route = self._resolve_chat_contract(kwargs)
+        if route == "legacy":
+            self._validate_legacy_kwargs(kwargs)
         await self._aupload_attachments(messages)
+        if route == "primary":
+            primary_payload = self._build_primary_payload(messages, kwargs)
+            state = primary.StreamState()
+            async for event in self._client.achat.stream(primary_payload):
+                primary_chunk = primary.convert_stream_event(event, state=state)
+                if primary_chunk is None:
+                    continue
+                if run_manager:
+                    await run_manager.on_llm_new_token(
+                        primary_chunk.text,
+                        chunk=primary_chunk,
+                    )
+                yield primary_chunk
+            return
+
         payload = self._build_payload(messages, **kwargs)
         first_chunk = True
 
@@ -744,12 +931,17 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 continue
 
             chunk_m, generation_info, content = self._build_stream_chunk(
-                chunk, first_chunk
+                chunk,
+                first_chunk,
             )
             first_chunk = False
+            generation_chunk = ChatGenerationChunk(
+                message=chunk_m,
+                generation_info=generation_info,
+            )
             if run_manager:
                 await run_manager.on_llm_new_token(content)
-            yield ChatGenerationChunk(message=chunk_m, generation_info=generation_info)
+            yield generation_chunk
 
     def bind_functions(
         self,
@@ -793,7 +985,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
     @override
     def with_structured_output(
         self,
-        schema: Dict[str, Any] | type,
+        schema: Dict[str, Any] | type | None,
         *,
         include_raw: bool = False,
         **kwargs: Any,
@@ -802,7 +994,9 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
 
         Args:
             schema: Output schema. Can be a dict-like tool/schema description
-                or a Pydantic class.
+                or a Pydantic class. Pass ``None`` with ``method="json_mode"``
+                to request a native JSON object without a schema on the primary
+                API route.
             include_raw: If ``False``, return only parsed structured output.
                 If ``True``, return a dict with ``raw``, ``parsed``, and
                 ``parsing_error`` keys.
@@ -811,8 +1005,8 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 - ``method``: ``"function_calling"`` (default),
                   ``"json_schema"`` (native API-level JSON Schema
                   constraint; requires a model that supports
-                  ``response_format``), ``"json_mode"`` (deprecated,
-                  still accepted for backward compatibility), or
+                  ``response_format``), ``"json_mode"`` (schema-less native
+                  JSON on the primary API route), or
                   ``"format_instructions"`` (legacy).
                 - ``strict``: best-effort strict schema adherence. Only
                   valid with ``method="json_schema"``. Defaults to ``True``.
@@ -841,9 +1035,12 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 "'json_mode' or 'format_instructions'. "
                 f"Received: {method}"
             )
-        if method == "json_mode":
+        native_json_mode = method == "json_mode" and schema is None
+        if method == "json_mode" and schema is not None:
             warnings.warn(
-                "method='json_mode' is deprecated; use method='json_schema'.",
+                "Legacy method='json_mode' behavior is deprecated; use "
+                "method='json_schema', or use the primary API route with "
+                "schema=None for native schema-less JSON.",
                 DeprecationWarning,
                 stacklevel=2,
             )
@@ -852,8 +1049,12 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             raise ValueError("`strict` is only supported with method='json_schema'.")
         if kwargs:
             raise ValueError(f"Received unsupported arguments {kwargs}")
+        if schema is None and method != "json_mode":
+            raise TypeError(f"method={method!r} requires a schema.")
         output_parser: OutputParserLike
+        parser_runnable: Runnable[Any, Any]
         if method == "function_calling":
+            assert schema is not None
             func = convert_to_gigachat_tool(schema)["function"]
             key_name = func.get(
                 "name", func.get("title")
@@ -881,9 +1082,11 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                     )
                 response_format = gm.JsonSchemaResponseFormat(
                     schema=response_format_schema,
-                    strict=strict if strict is not None else True,
+                    strict=strict,
                 )
                 llm = self.bind(response_format=response_format)
+            elif native_json_mode:
+                llm = self.bind(**{_SCHEMA_LESS_JSON_MODE_KEY: True})
             else:
                 llm = self
             if _is_pydantic_class(schema):
@@ -891,6 +1094,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             else:
                 output_parser = JsonOutputParser()
             if method == "format_instructions":
+                assert schema is not None
                 format_instructions = _format_instructions_for_schema(schema)
 
                 def _inject_fi(
@@ -899,10 +1103,18 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                     return _add_format_instructions(_input, format_instructions)
 
                 llm = RunnableLambda(_inject_fi) | llm
+            if native_json_mode:
+                parser_runnable = output_parser | RunnableLambda(_require_json_object)
+            else:
+                parser_runnable = output_parser
+
+        if method == "function_calling":
+            parser_runnable = output_parser
 
         if include_raw:
             parser_assign = RunnablePassthrough.assign(
-                parsed=itemgetter("raw") | output_parser, parsing_error=lambda _: None
+                parsed=itemgetter("raw") | parser_runnable,
+                parsing_error=lambda _: None,
             )
             parser_none = RunnablePassthrough.assign(parsed=lambda _: None)
             parser_with_fallback = parser_assign.with_fallbacks(
@@ -910,7 +1122,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             )
             return RunnableMap(raw=llm) | parser_with_fallback
         else:
-            return llm | output_parser
+            return llm | parser_runnable
 
     @override
     def bind_tools(
@@ -920,14 +1132,16 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         tool_choice: Optional[
             Union[dict, str, Literal["auto", "any", "none"], bool]
         ] = None,
+        strict: Optional[bool] = None,
+        response_format: Optional[Union[Dict[str, Any], Type[BaseModel]]] = None,
         **kwargs: Any,
     ) -> Runnable[LanguageModelInput, AIMessage]:
-        """Bind tool-like objects to this chat model.
-        Assumes model is compatible with GigaChat tool-calling API."""
-        formatted_tools = [convert_to_gigachat_tool(tool) for tool in tools]
+        """Bind tools and an optional structured response schema to this model."""
+        if strict is not None and response_format is None:
+            raise ValueError("strict is supported only together with response_format.")
+        formatted_tools = [normalize_tool_for_binding(tool) for tool in tools]
         if tool_choice is not None and tool_choice:
             if isinstance(tool_choice, str):
-                # GigaChat API doesn't support "any" tool choice
                 if tool_choice == "any":
                     if not self.allow_any_tool_choice_fallback:
                         raise ValueError(
@@ -960,11 +1174,26 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                     f"Received: {tool_choice}"
                 )
             kwargs["function_call"] = tool_choice
+        if response_format is not None:
+            kwargs["response_format"] = response_format
+        if strict is not None:
+            kwargs["strict"] = strict
         return super().bind(tools=formatted_tools, **kwargs)
 
 
 def _is_pydantic_class(obj: Any) -> TypeGuard[Type[BaseModel]]:
     return isinstance(obj, type) and is_basemodel_subclass(obj)
+
+
+def _require_json_object(value: Any) -> dict[str, Any]:
+    """Require the object shape promised by schema-less ``json_mode``."""
+    if not isinstance(value, dict):
+        raise OutputParserException(
+            "GigaChat schema-less JSON mode returned valid JSON, but not a JSON "
+            "object.",
+            llm_output=json.dumps(value, ensure_ascii=False),
+        )
+    return value
 
 
 def _format_instructions_for_schema(schema: Dict[str, Any] | type) -> str:

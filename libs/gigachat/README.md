@@ -25,6 +25,7 @@ This library is part of [GigaChain](https://github.com/ai-forever/gigachain) and
   - [Async](#async)
   - [Embeddings](#embeddings)
   - [Reasoning Models](#reasoning-models)
+  - [API v2 (`/v2/chat/completions`)](#api-v2-v2chatcompletions)
 - [Tool Calling](#tool-calling)
   - [Legacy `bind_functions()`](#legacy-bind_functions)
 - [Structured Output](#structured-output)
@@ -165,6 +166,104 @@ print(msg.additional_kwargs.get("reasoning_content"))  # model's chain-of-though
 ```
 
 > **Note:** `reasoning_content` is also available during streaming — each `AIMessageChunk` carries it in `additional_kwargs`.
+
+### API v2 (`/v2/chat/completions`)
+
+The primary API v2 contract is opt-in; existing applications keep using the
+legacy contract by default. Enable it on the model or on one bound runnable:
+
+```python
+from langchain_gigachat import GigaChat
+
+llm = GigaChat(model="GigaChat-3-Ultra", use_api_v2=True)
+print(llm.invoke("Hello!").content)
+
+for chunk in llm.stream("Write one sentence about Lake Baikal."):
+    print(chunk.text, end="", flush=True)
+
+primary_once = GigaChat().bind(use_api_v2=True)
+```
+
+`ainvoke()` and `astream()` use the SDK's native async v2 resources.
+
+Client functions continue to use LangChain tools. For a continuation, pass the
+returned tool-call ID to `ToolMessage` unchanged:
+
+```python
+from langchain_core.messages import HumanMessage, ToolMessage
+from langchain_core.tools import tool
+
+
+@tool
+def get_weather(city: str) -> str:
+    """Get current weather for a city."""
+    return f"{city}: sunny, 22C"
+
+
+with_tools = llm.bind_tools([get_weather], tool_choice="auto")
+question = HumanMessage("What is the weather in Moscow?")
+assistant = with_tools.invoke([question])
+call = assistant.tool_calls[0]
+result = ToolMessage(
+    content=get_weather.invoke(call["args"]),
+    tool_call_id=call["id"],
+    name=call["name"],
+)
+answer = with_tools.invoke([question, assistant, result])
+```
+
+Provider-managed tools are also bound through the public API:
+
+```python
+with_search = llm.bind_tools(
+    [{"type": "web_search"}],
+    tool_choice="web_search",
+)
+response = with_search.invoke("Find recent GigaChat news.")
+```
+
+Built-in tools require `use_api_v2=True`. Client tool history is
+route-specific: primary `tools_state_id` values are not translated to legacy
+`functions_state_id` values.
+
+Use native JSON Schema output with a Pydantic model:
+
+```python
+from pydantic import BaseModel
+
+
+class City(BaseModel):
+    name: str
+    population: int
+
+
+structured = llm.with_structured_output(City, method="json_schema")
+city = structured.invoke("Return information about Kazan.")
+```
+
+API v2 also supports schema-less JSON mode. It sends the provider-native
+`{"type": "json_schema"}` response format without inventing a schema or
+`strict` value:
+
+```python
+json_llm = llm.with_structured_output(None, method="json_mode")
+value = json_llm.invoke("Return a JSON object with a short answer.")
+assert isinstance(value, dict)
+```
+
+Existing file IDs work in standard `image`, `audio`, and `file` content blocks;
+the existing experimental `auto_upload_attachments` path can also supply IDs to
+v2 messages. Stateful requests accept `assistant_id=...` or
+`storage={"thread_id": ...}`. For stored assistant/thread state, an instance
+default model is omitted unless the invocation provides an explicit model.
+
+Current limitations:
+
+- one client function call per assistant message;
+- `tool_choice="any"` has no confirmed v2 semantic; use `"auto"`, `"none"`, or
+  a specific client/provider tool;
+- parallel provider tools without explicit IDs are rejected as ambiguous;
+- model support for native response formats is provider-dependent.
 
 ## Tool Calling
 
@@ -361,6 +460,7 @@ Most commonly used parameters (all are optional):
 | `max_retries` | `int` | `None` | Retry attempts for transient errors (SDK default: `0`) |
 | `retry_backoff_factor` | `float` | `None` | Exponential backoff multiplier (SDK default: `0.5`) |
 | `profanity_check` | `bool` | `None` | Enable profanity filtering |
+| `use_api_v2` | `bool` | `False` | Use the `/v2/chat/completions` contract |
 | `streaming` | `bool` | `False` | Stream results by default |
 | `auto_upload_attachments` | `bool` | `False` | Auto-upload base64 content from `image_url` / `audio_url` / `document_url` blocks |
 | `allow_any_tool_choice_fallback` | `bool` | `False` | Silently convert `tool_choice="any"` to `"auto"` |

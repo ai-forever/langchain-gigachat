@@ -1,4 +1,5 @@
 import collections.abc
+import copy
 import inspect
 import types
 import typing
@@ -40,9 +41,68 @@ SCHEMA_DO_NOT_SUPPORT_MESSAGE = """Incorrect function schema!
 GigaChat currently do not support these typings:
 Union[X, Y, ...]"""
 
+PRIMARY_BUILTIN_TOOL_NAMES = frozenset(
+    {
+        "code_interpreter",
+        "image_generate",
+        "web_search",
+        "url_content_extraction",
+        "model_3d_generate",
+    }
+)
+
 
 class IncorrectSchemaException(Exception):
     pass
+
+
+def is_primary_builtin_tool(tool: Any) -> bool:
+    """Return whether a mapping describes one API v2 provider tool."""
+    if not isinstance(tool, collections.abc.Mapping):
+        return False
+
+    tool_type = tool.get("type")
+    type_name = (
+        tool_type
+        if isinstance(tool_type, str) and tool_type in PRIMARY_BUILTIN_TOOL_NAMES
+        else None
+    )
+    canonical_names = PRIMARY_BUILTIN_TOOL_NAMES.intersection(tool)
+    if type_name is not None:
+        return not canonical_names
+    return len(tool) == 1 and len(canonical_names) == 1
+
+
+def _validate_primary_builtin_tool_mapping(
+    tool: collections.abc.Mapping[str, Any],
+) -> None:
+    """Validate only the wrapper-specific shape before SDK validation."""
+    tool_type = tool.get("type")
+    type_name = (
+        tool_type
+        if isinstance(tool_type, str) and tool_type in PRIMARY_BUILTIN_TOOL_NAMES
+        else None
+    )
+    canonical_names = PRIMARY_BUILTIN_TOOL_NAMES.intersection(tool)
+    names = set(canonical_names)
+    if type_name is not None:
+        names.add(type_name)
+    if len(names) != 1 or (type_name is not None and canonical_names):
+        raise ValueError(
+            "Each provider built-in tool mapping must configure exactly one "
+            "built-in tool."
+        )
+    if type_name is not None:
+        return
+
+    tool_name = next(iter(canonical_names))
+    if set(tool) != {tool_name} or not isinstance(
+        tool[tool_name], collections.abc.Mapping
+    ):
+        raise ValueError(
+            f"Provider built-in tool {tool_name!r} must contain only a mapping "
+            "with that name."
+        )
 
 
 def gigachat_fix_schema(schema: Any, prev_key: str = "") -> Any:
@@ -254,7 +314,7 @@ def format_tool_to_gigachat_function(tool: BaseTool) -> GigaFunctionDescription:
     if tool.tool_call_schema:
         tool_schema = tool.tool_call_schema
 
-    extras = tool.extras or {}
+    extras = getattr(tool, "extras", None) or {}
     return_schema = extras.get("return_schema")
     few_shot_examples = extras.get("few_shot_examples")
 
@@ -456,7 +516,29 @@ def convert_to_gigachat_tool(
         A dict version of the passed in tool which is compatible with the
             GigaChat tool-calling API.
     """
+    if is_primary_builtin_tool(tool):
+        raise ValueError(
+            "Provider built-in tools require the GigaChat API v2 contract. "
+            "Set use_api_v2=True instead of binding them to the legacy API."
+        )
     if isinstance(tool, dict) and tool.get("type") == "function" and "function" in tool:
         return tool
     function = convert_to_gigachat_function(tool)
     return {"type": "function", "function": function}
+
+
+def normalize_tool_for_binding(
+    tool: Union[Dict[str, Any], type, Callable, BaseTool],
+) -> Dict[str, Any]:
+    """Preserve API v2 built-ins; normalize client functions as before."""
+    if isinstance(tool, collections.abc.Mapping):
+        tool_type = tool.get("type")
+        has_builtin_type = (
+            isinstance(tool_type, str) and tool_type in PRIMARY_BUILTIN_TOOL_NAMES
+        )
+        has_canonical_builtin = bool(PRIMARY_BUILTIN_TOOL_NAMES.intersection(tool))
+        if has_builtin_type or has_canonical_builtin:
+            _validate_primary_builtin_tool_mapping(tool)
+            return copy.deepcopy(dict(tool))
+
+    return copy.deepcopy(convert_to_gigachat_tool(tool))

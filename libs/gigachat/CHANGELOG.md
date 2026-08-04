@@ -2,6 +2,49 @@
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.2a1] — Unreleased
+
+Primary API v2 preview.
+
+### Added
+
+- Opt-in `GigaChat(use_api_v2=True)` routing to `/v2/chat/completions` for
+  sync/async invocation and streaming; legacy remains the default.
+- Primary request, response, message, and stream conversion through the SDK's
+  `chat.create`, `achat.create`, `chat.stream`, and `achat.stream` resources.
+- Client function calls with direct `tools_state_id` / `ToolMessage` roundtrip.
+- Provider built-in tools, assistant/thread state, and existing file-ID input.
+- Native JSON Schema and schema-less
+  `with_structured_output(None, method="json_mode")` output.
+
+### Changed
+
+- Primary sampling, reasoning, filtering, ranking, and response-format options
+  are mapped to their API v2 SDK models.
+- Server tools use provider call IDs when present and stable local IDs otherwise;
+  provider `tools_state_id` is preserved as metadata rather than block identity.
+- Primary stream conversion consumes SDK `PrimaryChatCompletionChunk` models.
+- Primary and legacy tool histories are explicitly route-specific and are not
+  translated between provider contracts.
+- Low-level `bind(response_format=...)` continues to return a normal
+  `AIMessage`; parsing belongs to `with_structured_output()`.
+
+### Fixed
+
+- Primary streaming no longer duplicates `model` or `thread_id` when LangChain
+  aggregates response chunks.
+
+### Dependencies
+
+- Package version is `0.5.2a1` with `langchain-core>=1,<2`.
+- Requires stable `gigachat>=0.2.3,<0.3` for the primary resource API.
+
+### Known limitations
+
+- Parallel client calls and ambiguous parallel idless server tools are unsupported.
+- `tool_choice="any"` is unsupported on API v2; use `"auto"`, `"none"`, or a
+  concrete tool name.
+
 ## [0.5.1] — 2026-05-04
 
 ### Added

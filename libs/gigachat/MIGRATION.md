@@ -1,14 +1,66 @@
-# Migration Guide: langchain-gigachat 0.3.x → 0.5.0
+# Migration Guide: langchain-gigachat 0.3.x → 0.5.x
 
-This guide covers all breaking changes in `langchain-gigachat` 0.5.0 and explains how to update your code.
+This guide covers the breaking changes in `langchain-gigachat` 0.5.0 and the
+opt-in primary API v2 preview added in 0.5.2a1.
+
+## Opting into API v2
+
+Legacy remains the default. Enable `/v2/chat/completions` explicitly on the
+model, or only on one bound runnable:
+
+```python
+from langchain_gigachat import GigaChat
+
+legacy = GigaChat()
+primary = GigaChat(use_api_v2=True)
+primary_once = legacy.bind(use_api_v2=True)
+```
+
+An invocation-level `use_api_v2` value overrides the constructor value and is
+consumed by the wrapper; it is never sent in a provider payload.
+
+The main request mappings are:
+
+| Public input | Legacy | API v2 |
+|--------------|--------|--------|
+| sampling options | top-level `Chat` fields | `model_options` |
+| `profanity_check` | forwarded directly | inverted to `disable_filter` |
+| `function_ranker` | `function_ranker` | `ranker_options` |
+| client tools | `functions` / `function_call` | functions tool / `tool_config` |
+| provider built-ins | rejected | `tools` / `tool_config` |
+| `response_format` | legacy field | `model_options.response_format` |
+| `assistant_id`, `tools_state_id`, `user_info` | rejected | primary request fields |
+
+Client tool continuation differs by contract. Legacy uses
+`functions_state_id` and provider `role="function"`; API v2 uses
+`tools_state_id` and provider `role="tool"`. The `AIMessage.tool_calls[0].id`
+returned by v2 must be copied unchanged to `ToolMessage.tool_call_id`.
+Stateful tool histories are route-specific and are not translated between
+contracts; plain text history can be used with either route.
+
+API v2 storage accepts a boolean, `gigachat.models.ChatStorage`, or a compatible
+mapping. `assistant_id=...` and `storage={"thread_id": ...}` requests omit an
+instance default model so the provider can resolve stored state; an explicit
+invocation model is still forwarded.
+
+Native JSON Schema output uses
+`with_structured_output(schema, method="json_schema")`. Schema-less JSON is:
+
+```python
+json_llm = primary.with_structured_output(None, method="json_mode")
+```
+
+It sends `response_format={"type": "json_schema"}` without a placeholder
+schema or `strict`. Low-level `bind(response_format=...)` returns a normal
+`AIMessage`; parsing belongs to `with_structured_output()`.
 
 ## Requirements
 
-| Dependency | Before (0.3.x) | After (0.5.0) |
-|------------|-----------------|---------------|
-| Python | >= 3.9 | **>= 3.10** |
+| Dependency | Before (0.3.x) | Current (0.5.2a1) |
+|------------|-----------------|-------------------|
+| Python | >= 3.9 | **>= 3.10, < 4** |
 | `langchain-core` | >= 0.3, < 1 | **>= 1, < 2** |
-| `gigachat` (SDK) | >= 0.1.41 | **>= 0.2.0, < 0.3** |
+| `gigachat` (SDK) | >= 0.1.41 | **>= 0.2.3, < 0.3** |
 
 > LangChain Core 1.x dropped Python 3.9 support. GigaChat SDK 0.2.0 migrated to Pydantic V2.
 
@@ -310,5 +362,5 @@ def get_weather(city: str) -> str:
 
 ```python
 import langchain_gigachat
-print(langchain_gigachat.__version__)  # "0.5.0"
+print(langchain_gigachat.__version__)  # "0.5.2a1"
 ```
