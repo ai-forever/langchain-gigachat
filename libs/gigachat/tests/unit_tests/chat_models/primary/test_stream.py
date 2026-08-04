@@ -260,6 +260,35 @@ def test_official_sdk_idless_server_tool_uses_local_identity_only() -> None:
     assert aggregate.message.response_metadata["tools_state_ids"] == ["tools-state-1"]
 
 
+def test_aggregate_does_not_concatenate_repeated_scalar_metadata() -> None:
+    state = primary.StreamState()
+    events = [
+        {
+            "event": "response.message.delta",
+            "model": "GigaChat-3-Ultra:32.9.23.6",
+            "thread_id": "thread-1",
+            "messages": [{"role": "assistant", "content": [{"text": "First"}]}],
+        },
+        {
+            "event": "response.message.done",
+            "model": "GigaChat-3-Ultra:32.9.23.6",
+            "thread_id": "thread-1",
+            "finish_reason": "stop",
+        },
+    ]
+
+    chunks = [_convert(event, state) for event in events]
+    aggregate = reduce(add, chunks)
+
+    assert aggregate.message.response_metadata["model"] == (
+        "GigaChat-3-Ultra:32.9.23.6"
+    )
+    assert aggregate.message.response_metadata["model_name"] == (
+        "GigaChat-3-Ultra:32.9.23.6"
+    )
+    assert aggregate.message.response_metadata["thread_id"] == "thread-1"
+
+
 def test_done_event_preserves_usage_finish_ids_and_headers() -> None:
     state = primary.StreamState()
     chunk = _convert(

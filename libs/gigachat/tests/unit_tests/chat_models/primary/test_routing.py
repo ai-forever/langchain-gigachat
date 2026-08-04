@@ -15,6 +15,7 @@ from langchain_gigachat.chat_models.gigachat import GigaChat
 from .fixtures import (
     MODEL,
     REQUEST_ID,
+    THREAD_ID,
     build_message_delta_event,
     build_message_done_event,
     build_plain_text_response,
@@ -202,6 +203,20 @@ def test_sync_streaming_routing_matrix(
     else:
         sdk_client.stream.assert_not_called()
         sdk_client.chat.stream.assert_called_once()
+
+
+def test_primary_streaming_invoke_keeps_scalar_metadata_once(
+    sdk_client: MagicMock,
+) -> None:
+    sdk_client.chat.stream.side_effect = lambda payload: _primary_stream()
+    llm = GigaChat(model=MODEL, use_api_v2=True, streaming=True)
+
+    result = llm.invoke("Hello")
+
+    assert isinstance(result, AIMessage)
+    assert result.response_metadata["model"] == MODEL
+    assert result.response_metadata["model_name"] == MODEL
+    assert result.response_metadata["thread_id"] == THREAD_ID
 
 
 @pytest.mark.parametrize(

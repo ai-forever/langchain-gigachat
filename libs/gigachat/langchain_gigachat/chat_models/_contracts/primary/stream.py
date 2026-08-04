@@ -737,10 +737,7 @@ def convert_stream_event(
     if event.event == "response.message.done":
         if state.provider_message_id is not None:
             response_metadata["message_id"] = state.provider_message_id
-        if state.thread_id is not None:
-            response_metadata.setdefault("thread_id", state.thread_id)
         if state.model is not None:
-            response_metadata.setdefault("model", state.model)
             response_metadata.setdefault("model_name", state.model)
         if state.provider_tools_state_ids:
             response_metadata["tools_state_ids"] = list(state.provider_tools_state_ids)
