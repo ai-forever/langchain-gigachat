@@ -262,7 +262,7 @@ def test_official_sdk_idless_server_tool_uses_local_identity_only() -> None:
 
 def test_aggregate_does_not_concatenate_repeated_scalar_metadata() -> None:
     state = primary.StreamState()
-    events = [
+    events: list[dict[str, Any]] = [
         {
             "event": "response.message.delta",
             "model": "GigaChat-3-Ultra:32.9.23.6",

@@ -2,14 +2,7 @@
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
-
-### Fixed
-
-- Primary streaming no longer duplicates `model` or `thread_id` when LangChain
-  aggregates response chunks.
-
-## [0.5.2a1] — 2026-07-30
+## [0.5.2a1] — Unreleased
 
 Primary API v2 preview.
 
@@ -35,6 +28,11 @@ Primary API v2 preview.
   translated between provider contracts.
 - Low-level `bind(response_format=...)` continues to return a normal
   `AIMessage`; parsing belongs to `with_structured_output()`.
+
+### Fixed
+
+- Primary streaming no longer duplicates `model` or `thread_id` when LangChain
+  aggregates response chunks.
 
 ### Dependencies
 
