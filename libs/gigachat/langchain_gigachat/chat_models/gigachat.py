@@ -75,8 +75,8 @@ from langchain_core.runnables import (
     RunnablePassthrough,
 )
 from langchain_core.tools import BaseTool
-from langchain_core.utils.pydantic import is_basemodel_subclass, pre_init
-from pydantic import BaseModel, PrivateAttr
+from langchain_core.utils.pydantic import is_basemodel_subclass
+from pydantic import BaseModel, PrivateAttr, model_validator
 from typing_extensions import override
 
 from langchain_gigachat.chat_models.base_gigachat import _BaseGigaChat
@@ -436,9 +436,16 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
 
     _cached_uploads: Dict[str, str] = PrivateAttr(default_factory=dict)
 
-    @pre_init
-    def validate_environment(cls, values: Dict) -> Dict:
-        if values.get("auto_upload_attachments"):
+    @model_validator(mode="before")
+    @classmethod
+    def validate_environment(cls, values: Any) -> Any:
+        # NB: use a before-validator (not langchain's ``pre_init``) so that
+        # unset fields are NOT force-populated into ``model_fields_set``.
+        # ``pre_init`` injects every field default, which made ``streaming``
+        # appear explicitly set to ``False``; newer langchain-core then treats
+        # that as a hard streaming opt-out (see ``_streaming_disabled``) and
+        # ``.stream()`` collapses to a single chunk.
+        if isinstance(values, dict) and values.get("auto_upload_attachments"):
             logger.warning(
                 "`auto_upload_attachments` is experiment option. "
                 "Please, don't use it on production. "

@@ -412,6 +412,12 @@ non-streaming and streaming flows:
 This makes it possible to correlate LangChain runs with provider-side logs or
 support requests without parsing SDK responses directly.
 
+Outgoing tracing headers (`X-Trace-ID`, `X-Agent-ID`, `X-Session-ID` and others) are set
+through the SDK context variables and work through this wrapper unchanged — see
+[GigaChat SDK — Context Variables](https://github.com/ai-forever/gigachat#context-variables)
+and the [`example_contextvars.ipynb`](https://github.com/ai-forever/gigachat/blob/main/examples/example_contextvars.ipynb)
+example.
+
 ## Related Projects
 
 - **[GigaChain](https://github.com/ai-forever/gigachain)** — a set of solutions for developing LLM applications and multi-agent systems, with support for LangChain, LangGraph, LangChain4j, GigaChat and other LLMs
