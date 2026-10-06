@@ -36,8 +36,8 @@ The main request mappings are:
 
 Client tool continuation differs by contract. Legacy uses
 `functions_state_id` and provider `role="function"`; API v2 uses
-`tools_state_id` and provider `role="tool"`. The `AIMessage.tool_calls[0].id`
-returned by v2 must be copied unchanged to `ToolMessage.tool_call_id`.
+`tools_state_id` and provider `role="tool"`. Each `AIMessage.tool_calls` entry
+returned by v2 has an ID that must be copied unchanged to the corresponding `ToolMessage.tool_call_id`.
 For a stored-thread continuation that sends only `ToolMessage` (without the
 preceding `AIMessage`), also set
 `additional_kwargs={"tools_state_id": assistant.additional_kwargs["tools_state_id"]}`
@@ -66,14 +66,12 @@ schema or `strict`. Low-level `bind(response_format=...)` returns a normal
 [Runnable examples and installation steps](../../examples/sdk_contract_alignment/README.md)
 show complete flows for all changes below.
 
-The preview was aligned against Python SDK commit `6e9bb50` on
-`feature/api-contract-alignment`. The minimum stable dependency stays at 0.2.3
-for existing applications. That release predates the constructor `session_id`,
-v1 `assistant_id`, v1 call IDs, object-shaped v2 `additional_data` and new
-v1 response fields; those features require the aligned SDK until it is released.
-Requesting a session or v1 assistant with an older SDK raises an actionable
-error instead of silently ignoring the setting. Explicit JSON null in v2 `additional_fields` also requires
-the aligned SDK serializer. No unreleased package version is advertised as available.
+The `0.5.2a1` prerelease works with the `0.2.4a1` SDK prerelease.
+Install both from source using the linked setup instructions. SDK `0.2.3`
+remains the minimum for basic API v2 support. Session configuration, v1
+assistant IDs and call IDs, expanded response metadata, and explicit JSON
+null in v2 `additional_fields` require the newer SDK. Unsupported session
+and v1 assistant settings raise an error on older SDK versions.
 
 ### Generation controls and additional fields
 
@@ -129,24 +127,9 @@ in the callback result `LLMResult.llm_output["token_usage"]`, so billing
 counters are not rewritten. See the [session usage example](../../examples/sdk_contract_alignment/session_usage.py)
 for both forms printed side by side.
 
-### Scope of the colleague's issue report
-
-| Finding | Resolution |
-|---------|------------|
-| v2 generation controls ignored at request root | Adapter normalizes controls into `model_options`; nested values win. |
-| Session header unavailable on the wrapper | Added shared `session_id` configuration and SDK compatibility check. |
-| Wrapper restricted to v1 | Already addressed by the existing opt-in v2 route; retained and tested. |
-| `any` tool choice and union schemas rejected | Added v2 support; preserved the v1 restrictions. |
-| Function call identities lost | Preserve call IDs separately from continuation state, including streaming. |
-| Cache counters differ from LangChain conventions | Normalize LangChain usage and preserve raw provider counters. |
-| SDK thread listing, error decoding, SSE parsing | Fixed in the companion SDK; no duplicate transport implementation here. |
-| Non-JSON tool results in v1 | Existing JSON normalization retained. |
-| Model determinism, reasoning completion, ignored `n`, storage limits | Server/model behavior; the adapter does not claim to fix it. |
-| GPT2GIGA and Deep Agents middleware/profile behavior | Separate packages; unchanged by this integration. |
-
-Offline transport and conversion tests establish payload/response compatibility.
-They do not establish that a particular account, server or model enables every
-v2 capability, or reproduce the live observations from the issue report.
+Offline conversion and transport tests validate request and response handling.
+Availability of reasoning, provider tools, storage, and response formats depends
+on the server, model, and account.
 
 ## Requirements
 

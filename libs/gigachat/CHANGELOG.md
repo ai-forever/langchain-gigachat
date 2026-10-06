@@ -4,7 +4,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [0.5.2a1] — Unreleased
 
-Primary API v2 preview.
+Unreleased prerelease with opt-in API v2 support and expanded SDK integration.
 
 ### Added
 
@@ -16,6 +16,8 @@ Primary API v2 preview.
 - Provider built-in tools, assistant/thread state, and existing file-ID input.
 - Five runnable examples for generation controls, parallel union-typed tools,
   async streaming metadata, session accounting, and stored-thread tool results.
+- A runnable API v1/v2 comparison notebook with separate examples and
+  illustrative responses.
 - Shared `session_id` client setting and reasoning token budgets.
 - API v2 parallel client function calls with distinct call IDs, `any`/`required`
   client tool choice, and union argument schemas.
@@ -37,6 +39,8 @@ Primary API v2 preview.
 
 ### Fixed
 
+- Reasoning stream fragments aggregate into consecutive blocks without colliding
+  with text blocks, including when the provider omits `message_id`.
 - LangChain input/total usage now includes cached tokens; raw provider usage
   is preserved separately.
 - Explicit nested generation options take precedence over shorthand and defaults.
@@ -53,8 +57,8 @@ Primary API v2 preview.
 ### Known limitations
 
 - Parallel calls without distinct provider IDs remain unsupported.
-- New session and v1 metadata features require the aligned Python SDK
-  (validated against commit `6e9bb50`); stable 0.2.3 remains supported for
+- Session configuration, expanded v1 metadata, and explicit JSON null in v2
+  additional fields require SDK `0.2.4a1`; SDK `0.2.3` remains supported for
   existing features.
 - Server/model support for v2 features must be checked separately.
 
