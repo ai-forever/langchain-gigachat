@@ -85,6 +85,98 @@ def test_native_options_win_over_invocation_and_defaults() -> None:
     assert payload.model_options.response_format == gm.ChatResponseFormat(type="text")
 
 
+@pytest.mark.parametrize("as_model", [False, True])
+def test_native_none_suppresses_flat_options_and_defaults(as_model: bool) -> None:
+    native = {"temperature": None, "reasoning": None, "response_format": None}
+    payload = primary.build_payload(
+        [],
+        defaults=_defaults(),
+        invocation_kwargs={
+            "temperature": 0.8,
+            "reasoning_effort": "high",
+            "response_format": {"type": "json_schema"},
+            "model_options": gm.ChatModelOptions(**native) if as_model else native,
+        },
+        cached_uploads={},
+    )
+    options = _dump(payload)["model_options"]
+    assert "temperature" not in options
+    assert "reasoning" not in options
+    assert "response_format" not in options
+    assert options["max_tokens"] == 100
+
+
+def test_reasoning_budget_and_parallel_calls_map_to_nested_options() -> None:
+    payload = primary.build_payload(
+        [],
+        defaults=_defaults(reasoning_max_tokens=50, parallel_tool_calls=True),
+        invocation_kwargs={"reasoning_max_tokens": 25, "parallel_tool_calls": False},
+        cached_uploads={},
+    )
+    dumped = _dump(payload)
+    assert dumped["model_options"]["reasoning"] == {"effort": "low", "max_tokens": 25}
+    assert dumped["model_options"]["parallel_tool_calls"] is False
+    assert "reasoning_max_tokens" not in dumped
+    assert "parallel_tool_calls" not in dumped
+
+
+def test_additional_fields_are_normalized_below_explicit_invocation() -> None:
+    kwargs = {
+        "model": "explicit-model",
+        "temperature": 0.9,
+        "additional_fields": {
+            "model": "extra-model",
+            "temperature": 0.4,
+            "reasoning_max_tokens": 10,
+            "messages": [{"role": "user", "content": "injected"}],
+            "custom_option": {"enabled": True},
+        },
+    }
+    original = copy.deepcopy(kwargs)
+    payload = primary.build_payload(
+        [HumanMessage(content="real")],
+        defaults=_defaults(),
+        invocation_kwargs=kwargs,
+        cached_uploads={},
+    )
+    dumped = _dump(payload)
+    assert kwargs == original
+    assert dumped["model"] == "explicit-model"
+    assert dumped["messages"] == [{"role": "user", "content": [{"text": "real"}]}]
+    assert dumped["model_options"]["temperature"] == 0.9
+    assert dumped["model_options"]["reasoning"]["max_tokens"] == 10
+    assert dumped["custom_option"] == {"enabled": True}
+    assert "additional_fields" not in dumped
+
+
+def test_additional_fields_nulls_survive_sdk_serialization() -> None:
+    from gigachat.api.chat_completions import _build_request_json
+
+    kwargs = {"additional_fields": {"vendor_option": None}}
+    if "additional_fields" not in gm.ChatCompletionRequest.model_fields:
+        with pytest.raises(ValueError, match="requires an updated GigaChat SDK"):
+            primary.build_payload(
+                [], defaults=_defaults(), invocation_kwargs=kwargs, cached_uploads={}
+            )
+        return
+    payload = primary.build_payload(
+        [], defaults=_defaults(), invocation_kwargs=kwargs, cached_uploads={}
+    )
+    wire = _build_request_json(payload)
+    assert "vendor_option" in wire and wire["vendor_option"] is None
+    assert "additional_fields" not in wire
+
+
+def test_additional_fields_win_over_explicit_none_like_sdk_serializer() -> None:
+    payload = primary.build_payload(
+        [],
+        defaults=_defaults(),
+        cached_uploads={},
+        invocation_kwargs={"model": None, "additional_fields": {"model": "extra"}},
+    )
+    assert payload.model == "extra"
+
+
 @pytest.mark.parametrize(
     "stateful_kwargs",
     [
@@ -154,7 +246,7 @@ def test_adapter_specific_filter_and_ranker_mapping() -> None:
     )
 
     assert payload.disable_filter is True
-    assert payload.ranker_options == gm.ChatRankerOptions(enabled=False)
+    assert _dump(payload)["ranker_options"] == {"enabled": False}
 
 
 def test_tool_binding_is_applied_and_control_keys_are_consumed() -> None:

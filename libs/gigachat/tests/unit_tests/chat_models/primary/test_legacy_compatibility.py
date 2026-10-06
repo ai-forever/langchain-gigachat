@@ -140,7 +140,6 @@ def test_legacy_rejects_primary_builtin_after_route_override(
 @pytest.mark.parametrize(
     ("field", "value"),
     [
-        ("assistant_id", "assistant-1"),
         ("filter_config", {}),
         ("tool_config", {}),
         ("tools_state_id", "tools-state-1"),

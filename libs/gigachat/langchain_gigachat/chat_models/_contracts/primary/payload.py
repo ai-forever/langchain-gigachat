@@ -19,6 +19,7 @@ from langchain_gigachat.chat_models._contracts.primary.types import (
 )
 
 _MODEL_OPTION_DEFAULTS = (
+    "parallel_tool_calls",
     "temperature",
     "top_p",
     "max_tokens",
@@ -31,6 +32,7 @@ _MODEL_OPTION_KEYS = frozenset(
         "model_options",
         "reasoning",
         "reasoning_effort",
+        "reasoning_max_tokens",
         "response_format",
     }
 )
@@ -148,7 +150,7 @@ def normalize_response_format(
 
 def _copy_mapping_or_model(value: Any, *, field_name: str) -> dict[str, Any]:
     if isinstance(value, BaseModel):
-        return value.model_dump(exclude_none=True, by_alias=True)
+        return value.model_dump(exclude_unset=True, by_alias=True)
     if isinstance(value, Mapping):
         return copy.deepcopy(dict(value))
     raise ValueError(f"{field_name} must be a mapping or Pydantic model.")
@@ -166,7 +168,7 @@ def _model_options(
         options = _copy_mapping_or_model(native, field_name="model_options")
 
     for field_name in _MODEL_OPTION_DEFAULTS:
-        if options.get(field_name) is not None:
+        if field_name in options:
             continue
         invocation_value = invocation_kwargs.get(field_name)
         default_value = getattr(defaults, field_name)
@@ -174,23 +176,31 @@ def _model_options(
         if value is not None:
             options[field_name] = copy.deepcopy(value)
 
-    if options.get("reasoning") is None:
-        reasoning = invocation_kwargs.get("reasoning")
-        if reasoning is not None:
-            options["reasoning"] = _copy_mapping_or_model(
-                reasoning,
-                field_name="reasoning",
+    if "reasoning" not in options:
+        if "reasoning" in invocation_kwargs:
+            reasoning = invocation_kwargs["reasoning"]
+            options["reasoning"] = (
+                _copy_mapping_or_model(reasoning, field_name="reasoning")
+                if reasoning is not None
+                else None
             )
         else:
-            effort = invocation_kwargs.get("reasoning_effort")
-            if effort is None:
-                effort = defaults.reasoning_effort
-            if effort is not None:
-                options["reasoning"] = {"effort": effort}
+            reasoning_options = {}
+            for field_name, alias in (
+                ("effort", "reasoning_effort"),
+                ("max_tokens", "reasoning_max_tokens"),
+            ):
+                value = invocation_kwargs.get(alias)
+                if value is None:
+                    value = getattr(defaults, alias)
+                if value is not None:
+                    reasoning_options[field_name] = value
+            if reasoning_options:
+                options["reasoning"] = reasoning_options
 
-    response_format = options.get("response_format")
-    if response_format is None:
-        response_format = invocation_kwargs.get("response_format")
+    response_format = options.get(
+        "response_format", invocation_kwargs.get("response_format")
+    )
     normalized_response_format = normalize_response_format(
         response_format,
         strict=invocation_kwargs.get("strict"),
@@ -237,6 +247,38 @@ def _copy_tool_binding(binding: ToolBinding) -> dict[str, Any]:
     return values
 
 
+def merge_request_kwargs(invocation_kwargs: Mapping[str, Any]) -> dict[str, Any]:
+    """Merge request extras below explicit invocation fields before normalization."""
+    kwargs = copy.deepcopy(dict(invocation_kwargs))
+    extra_fields = kwargs.pop("additional_fields", None)
+    if extra_fields is None:
+        return kwargs
+    if not isinstance(extra_fields, Mapping):
+        raise ValueError("additional_fields must be a mapping.")
+    merged = {
+        **copy.deepcopy(dict(extra_fields)),
+        **{
+            key: value
+            for key, value in kwargs.items()
+            if value is not None or key not in extra_fields
+        },
+    }
+    # SDK serialization excludes None on regular request fields, but preserves
+    # JSON null inside the additional_fields escape hatch.
+    null_extras = {
+        key: value
+        for key, value in extra_fields.items()
+        if value is None and merged.get(key) is None
+    }
+    if null_extras:
+        if "additional_fields" not in gm.ChatCompletionRequest.model_fields:
+            raise ValueError(
+                "JSON null in additional_fields requires an updated GigaChat SDK."
+            )
+        merged["additional_fields"] = null_extras
+    return merged
+
+
 def build_payload(
     messages: Sequence[BaseMessage],
     *,
@@ -246,7 +288,8 @@ def build_payload(
     tool_binding: ToolBinding | None = None,
 ) -> gm.ChatCompletionRequest:
     """Build a primary SDK request without mutating caller-owned inputs."""
-    kwargs = copy.deepcopy(dict(invocation_kwargs))
+    invocation_kwargs = merge_request_kwargs(invocation_kwargs)
+    kwargs = dict(invocation_kwargs)
     consumed_keys = set(_LOCAL_CONTROL_KEYS) | set(_MODEL_OPTION_KEYS)
     consumed_keys.add("function_ranker")
     consumed_keys.add("profanity_check")

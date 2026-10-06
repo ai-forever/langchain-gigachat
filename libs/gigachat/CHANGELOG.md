@@ -14,6 +14,12 @@ Primary API v2 preview.
   `chat.create`, `achat.create`, `chat.stream`, and `achat.stream` resources.
 - Client function calls with direct `tools_state_id` / `ToolMessage` roundtrip.
 - Provider built-in tools, assistant/thread state, and existing file-ID input.
+- Five runnable examples for generation controls, parallel union-typed tools,
+  async streaming metadata, session accounting, and stored-thread tool results.
+- Shared `session_id` client setting and reasoning token budgets.
+- API v2 parallel client function calls with distinct call IDs, `any`/`required`
+  client tool choice, and union argument schemas.
+- Additional request fields and response error/inline metadata preservation.
 - Native JSON Schema and schema-less
   `with_structured_output(None, method="json_mode")` output.
 
@@ -31,8 +37,13 @@ Primary API v2 preview.
 
 ### Fixed
 
-- Primary streaming no longer duplicates `model` or `thread_id` when LangChain
-  aggregates response chunks.
+- LangChain input/total usage now includes cached tokens; raw provider usage
+  is preserved separately.
+- Explicit nested generation options take precedence over shorthand and defaults.
+- Legacy invocation reasoning settings override instance defaults.
+- Primary streaming preserves unnamed terminal SSE events and no longer
+  duplicates identifiers, complete function arguments, or metadata snapshots
+  when LangChain aggregates response chunks.
 
 ### Dependencies
 
@@ -41,9 +52,11 @@ Primary API v2 preview.
 
 ### Known limitations
 
-- Parallel client calls and ambiguous parallel idless server tools are unsupported.
-- `tool_choice="any"` is unsupported on API v2; use `"auto"`, `"none"`, or a
-  concrete tool name.
+- Parallel calls without distinct provider IDs remain unsupported.
+- New session and v1 metadata features require the aligned Python SDK
+  (validated against commit `6e9bb50`); stable 0.2.3 remains supported for
+  existing features.
+- Server/model support for v2 features must be checked separately.
 
 ## [0.5.1] — 2026-05-04
 

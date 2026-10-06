@@ -271,7 +271,7 @@ def _tool_call_names(messages: Sequence[BaseMessage]) -> dict[str, str]:
             function_call = _additional_function_call(message)
             if function_call is None:
                 continue
-            tool_call_id = _tools_state_id(message)
+            tool_call_id = function_call.get("id") or _tools_state_id(message)
             additional_name = function_call.get("name")
             if not isinstance(tool_call_id, str) or not tool_call_id.strip():
                 continue
@@ -382,63 +382,71 @@ def _convert_ai_message(
     if additional_files is not None:
         content.append(additional_files)
 
-    function_call: dict[str, Any] | None = None
-    if len(message.tool_calls) > 1:
-        raise ValueError(
-            "Primary GigaChat does not support multiple client function calls "
-            "in one AIMessage."
-        )
-    if message.tool_calls:
-        tool_call = message.tool_calls[0]
-        name = tool_call.get("name")
-        if not isinstance(name, str) or not name.strip():
-            raise ValueError("Primary AIMessage tool call requires a function name.")
-        content.append(
-            gm.ChatContentPart(
-                function_call=ChatFunctionCall(
-                    name=name,
-                    arguments=copy.deepcopy(tool_call.get("args", {})),
+    provider_state_id = _tools_state_id(message)
+    calls = list(message.tool_calls)
+    has_calls = bool(calls)
+    if calls:
+        if len(calls) > 1:
+            ids = [call.get("id") for call in calls]
+            if any(not value for value in ids) or len(set(ids)) != len(ids):
+                raise ValueError("Parallel client function calls require unique IDs.")
+        # Older primary responses used the continuation state as a synthetic
+        # LangChain ID. Preserve that replay shape when no call ID was supplied.
+        raw_calls = message.additional_kwargs.get("function_calls") or [
+            _additional_function_call(message)
+        ]
+        has_explicit_ids = False
+        for tool_call in calls:
+            name = tool_call.get("name")
+            if not isinstance(name, str) or not name.strip():
+                raise ValueError(
+                    "Primary AIMessage tool call requires a function name."
                 )
-            )
-        )
-        tool_call_id = tool_call.get("id")
-        if tool_call_id is not None:
-            if not isinstance(tool_call_id, str) or not tool_call_id.strip():
+            call_id = tool_call.get("id")
+            if call_id is not None and (
+                not isinstance(call_id, str) or not call_id.strip()
+            ):
                 raise ValueError(
                     "Primary AIMessage tool call ID must be a non-empty string."
                 )
-        explicit_state_id = _tools_state_id(message)
-        if (
-            tool_call_id is not None
-            and explicit_state_id is not None
-            and explicit_state_id != tool_call_id
-        ):
-            raise ValueError(
-                "Primary AIMessage tool call ID must equal tools_state_id."
+            explicit_id = (
+                len(calls) > 1
+                or (provider_state_id is not None and call_id != provider_state_id)
+                or any(
+                    isinstance(raw, Mapping) and raw.get("id") == call_id
+                    for raw in raw_calls or []
+                )
             )
-        provider_state_id = explicit_state_id or tool_call_id
-        if provider_state_id is None:
-            raise ValueError(
-                "Primary AIMessage function call is missing provider "
-                "tools_state_id and cannot be replayed."
+            call_data: dict[str, Any] = {
+                "name": name,
+                "arguments": copy.deepcopy(tool_call.get("args", {})),
+            }
+            if explicit_id and call_id is not None:
+                has_explicit_ids = True
+                call_data["id"] = call_id
+            content.append(
+                gm.ChatContentPart(
+                    function_call=ChatFunctionCall.model_validate(call_data)
+                )
             )
-        kwargs["tools_state_id"] = provider_state_id
+        if provider_state_id is None and len(calls) == 1 and not has_explicit_ids:
+            provider_state_id = calls[0].get("id")
     else:
         function_call = _additional_function_call(message)
-    if not message.tool_calls and function_call is not None:
-        provider_state_id = _tools_state_id(message)
-        if provider_state_id is None:
-            raise ValueError(
-                "Primary AIMessage function call is missing provider "
-                "tools_state_id and cannot be replayed."
+        if function_call is not None:
+            content.append(
+                gm.ChatContentPart(
+                    function_call=ChatFunctionCall.model_validate(function_call)
+                )
             )
-        kwargs["tools_state_id"] = provider_state_id
-        function_call.pop("id", None)
-        content.append(
-            gm.ChatContentPart(
-                function_call=ChatFunctionCall.model_validate(function_call),
-            )
+            has_calls = True
+    if has_calls and provider_state_id is None:
+        raise ValueError(
+            "Primary AIMessage function call is missing provider "
+            "tools_state_id and cannot be replayed."
         )
+    if provider_state_id is not None:
+        kwargs["tools_state_id"] = provider_state_id
 
     return gm.ChatMessage(
         role="assistant",
@@ -451,6 +459,7 @@ def _convert_tool_message(
     message: ToolMessage,
     *,
     tool_call_names: Mapping[str, str],
+    tool_context: Mapping[str, tuple[str | None, bool]],
 ) -> gm.ChatMessage:
     tool_call_id = message.tool_call_id
     if not isinstance(tool_call_id, str) or not tool_call_id.strip():
@@ -478,15 +487,24 @@ def _convert_tool_message(
             "Primary ToolMessage requires a function name. Set ToolMessage.name "
             "or include the preceding AIMessage tool call in the history."
         )
+    state_id, has_call_id = tool_context.get(
+        tool_call_id, (_tools_state_id(message) or tool_call_id, False)
+    )
+    explicit_state = _tools_state_id(message)
+    if explicit_state is not None and state_id != explicit_state:
+        raise ValueError("ToolMessage tools_state_id conflicts with its function call.")
+    result_data: dict[str, Any] = {
+        "name": name,
+        "result": _normalize_tool_result(message.content),
+    }
+    if has_call_id or (explicit_state is not None and explicit_state != tool_call_id):
+        result_data["id"] = tool_call_id
     return gm.ChatMessage(
         role="tool",
-        tools_state_id=tool_call_id,
+        tools_state_id=state_id,
         content=[
             gm.ChatContentPart(
-                function_result=ChatFunctionResult(
-                    name=name,
-                    result=_normalize_tool_result(message.content),
-                )
+                function_result=ChatFunctionResult.model_validate(result_data)
             )
         ],
     )
@@ -507,21 +525,29 @@ def convert_messages(
 
     tool_call_names = _tool_call_names(messages)
     converted: list[gm.ChatMessage] = []
+    tool_context: dict[str, tuple[str | None, bool]] = {}
     for message in messages:
         if isinstance(message, SystemMessage):
             role = "system"
         elif isinstance(message, HumanMessage):
             role = "user"
         elif isinstance(message, AIMessage):
-            converted.append(
-                _convert_ai_message(message, cached_uploads=cached_uploads)
-            )
+            assistant = _convert_ai_message(message, cached_uploads=cached_uploads)
+            converted.append(assistant)
+            for part in assistant.content or []:
+                if part.function_call is None:
+                    continue
+                raw = part.function_call.model_dump(exclude_none=True, by_alias=True)
+                call_id = raw.get("id") or assistant.tools_state_id
+                if call_id is not None:
+                    tool_context[call_id] = (assistant.tools_state_id, "id" in raw)
             continue
         elif isinstance(message, ToolMessage):
             converted.append(
                 _convert_tool_message(
                     message,
                     tool_call_names=tool_call_names,
+                    tool_context=tool_context,
                 )
             )
             continue

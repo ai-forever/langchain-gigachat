@@ -259,11 +259,35 @@ default model is omitted unless the invocation provides an explicit model.
 
 Current limitations:
 
-- one client function call per assistant message;
-- `tool_choice="any"` has no confirmed v2 semantic; use `"auto"`, `"none"`, or
-  a specific client/provider tool;
+- parallel client function calls require distinct provider call IDs;
 - parallel provider tools without explicit IDs are rejected as ambiguous;
 - model support for native response formats is provider-dependent.
+
+### SDK contract alignment
+
+See the [five runnable examples](../../examples/sdk_contract_alignment/README.md)
+for complete request/response flows and setup with the aligned SDK.
+
+The preview supports reasoning budgets, per-call IDs, parallel v2 functions,
+`anyOf` tool schemas on v2, and provider response metadata. Generation controls
+are placed inside `model_options` on v2; explicit nested values take priority.
+Rare service options can be passed with `bind(additional_fields={...})` without
+adding them to the model constructor.
+
+With the aligned SDK, use a stable session identifier for related requests:
+
+```python
+llm = GigaChat(use_api_v2=True, session_id="my-conversation", max_tokens=256)
+```
+
+`usage_metadata.input_tokens` includes cached input, and `cache_read` reports
+its cached portion. Provider counters in the callback result
+`LLMResult.llm_output["token_usage"]` retain their original billing semantics
+([example](../../examples/sdk_contract_alignment/session_usage.py)). A session
+makes caching possible; cache hits depend on the server and request contents.
+
+See [SDK alignment and compatibility](MIGRATION.md#sdk-contract-alignment)
+for requirements, request examples, and the scope of the fixes.
 
 ## Tool Calling
 
@@ -299,9 +323,9 @@ llm = GigaChat(function_ranker={"enabled": False})
 llm_with_tools = llm.bind_tools([get_weather], tool_choice="auto")
 ```
 
-> **Note:** `tool_choice="any"` is not supported by the GigaChat API. Use `"auto"`, `"none"`, or a specific tool name. If upstream code passes `"any"`, set `allow_any_tool_choice_fallback=True` to silently convert it to `"auto"`.
+> **Note:** API v2 maps `tool_choice="any"` and `"required"` to `tool_config.mode="any"` for client functions. API v1 supports `"auto"`, `"none"`, and a specific function name; its opt-in `allow_any_tool_choice_fallback=True` falls back to `"auto"` with a warning. Server and model capabilities still determine whether a request is supported.
 
-> **Note:** GigaChat API does not support parallel tool calls in a single assistant message. If `AIMessage` contains more than one `tool_calls` entry, a `ValueError` is raised.
+> **Note:** API v1 accepts one function call per assistant message. With API v2, set `parallel_tool_calls=True` and return a `ToolMessage` for every call, using its original ID. The wrapper preserves the separate `tools_state_id` for continuation.
 
 ### Legacy `bind_functions()`
 
@@ -461,11 +485,14 @@ Most commonly used parameters (all are optional):
 | `retry_backoff_factor` | `float` | `None` | Exponential backoff multiplier (SDK default: `0.5`) |
 | `profanity_check` | `bool` | `None` | Enable profanity filtering |
 | `use_api_v2` | `bool` | `False` | Use the `/v2/chat/completions` contract |
+| `session_id` | `str` | `None` | Default X-Session-ID; requires the aligned SDK |
+| `reasoning_max_tokens` | `int` | `None` | Reasoning token budget |
+| `parallel_tool_calls` | `bool` | `None` | Allow parallel client functions on API v2 |
 | `streaming` | `bool` | `False` | Stream results by default |
 | `auto_upload_attachments` | `bool` | `False` | Auto-upload base64 content from `image_url` / `audio_url` / `document_url` blocks |
-| `allow_any_tool_choice_fallback` | `bool` | `False` | Silently convert `tool_choice="any"` to `"auto"` |
+| `allow_any_tool_choice_fallback` | `bool` | `False` | Convert v1 `tool_choice="any"` to `"auto"` with a warning |
 
-For the full list of parameters (auth, SSL/mTLS, retry, flags, etc.), see the [GigaChat SDK README](https://github.com/ai-forever/gigachat#constructor-parameters) — the LangChain wrapper accepts the same constructor arguments.
+For the full list of parameters (auth, SSL/mTLS, retry, flags, etc.), see the [GigaChat SDK README](https://github.com/ai-forever/gigachat#constructor-parameters) — the wrapper exposes the shared authentication and connection options.
 
 ### Environment Variables
 

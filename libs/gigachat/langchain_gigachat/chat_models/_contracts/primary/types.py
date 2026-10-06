@@ -32,6 +32,8 @@ class RequestDefaults:
     reasoning_effort: Optional[str]
     function_ranker: Optional[Mapping[str, Any]]
     flags: Optional[Sequence[str]]
+    reasoning_max_tokens: Optional[int] = None
+    parallel_tool_calls: Optional[bool] = None
 
 
 @dataclass(frozen=True)
@@ -41,6 +43,16 @@ class ToolBinding:
     tools: Optional[list[gm.ChatTool]]
     tool_config: Optional[gm.ChatToolConfig]
     consumed_keys: frozenset[str]
+
+
+@dataclass
+class ClientToolStreamState:
+    """Argument and emission state for an explicitly identified function call."""
+
+    name: str
+    index: int
+    argument_mode: Optional[str] = None
+    arguments: str = ""
 
 
 @dataclass
@@ -61,9 +73,11 @@ class StreamState:
     created_at: Optional[int] = None
     x_headers: dict[str, Any] = field(default_factory=dict)
     emitted_metadata_fields: set[str] = field(default_factory=set)
+    provider_metadata_snapshots: dict[str, Any] = field(default_factory=dict)
     completion_event: Optional[dict[str, Any]] = None
     usage_metadata: Optional[dict[str, Any]] = None
 
+    client_calls: dict[str, ClientToolStreamState] = field(default_factory=dict)
     client_tool_started: bool = False
     client_tool_name: Optional[str] = None
     client_tool_id: Optional[str] = None

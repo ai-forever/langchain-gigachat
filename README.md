@@ -32,6 +32,10 @@ print(msg.content)
 
 Full documentation, usage examples, and configuration reference are in [`libs/gigachat/README.md`](libs/gigachat/README.md).
 
+Runnable [SDK contract alignment examples](examples/sdk_contract_alignment/README.md)
+cover parallel tools, reasoning budgets, streaming metadata, sessions, and stored
+thread continuation.
+
 ## Related Projects
 
 - **[GigaChain](https://github.com/ai-forever/gigachain)** — a set of solutions for developing LLM applications and multi-agent systems

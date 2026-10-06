@@ -172,7 +172,7 @@ def test_tool_result_can_supply_its_name_without_prior_history() -> None:
     assert function_result.result == "not json"
 
 
-def test_client_tool_call_id_is_the_provider_tools_state_id() -> None:
+def test_client_tool_call_id_is_distinct_from_provider_tools_state_id() -> None:
     message = AIMessage(
         content="",
         additional_kwargs={"tools_state_id": "different-state"},
@@ -186,11 +186,21 @@ def test_client_tool_call_id_is_the_provider_tools_state_id() -> None:
         ],
     )
 
-    with pytest.raises(ValueError, match="must equal tools_state_id"):
-        primary.convert_messages([message], cached_uploads={})
+    converted = primary.convert_messages(
+        [
+            message,
+            ToolMessage(content='{"ok": true}', tool_call_id="tools-state-1"),
+        ],
+        cached_uploads={},
+    )
+    dumped = _dump(converted)
+    assert dumped[0]["tools_state_id"] == "different-state"
+    assert dumped[0]["content"][0]["function_call"]["id"] == "tools-state-1"
+    assert dumped[1]["tools_state_id"] == "different-state"
+    assert dumped[1]["content"][0]["function_result"]["id"] == "tools-state-1"
 
 
-def test_parallel_client_tool_calls_are_rejected() -> None:
+def test_parallel_client_tool_calls_require_continuation_state() -> None:
     message = AIMessage(
         content="",
         tool_calls=[
@@ -199,7 +209,7 @@ def test_parallel_client_tool_calls_are_rejected() -> None:
         ],
     )
 
-    with pytest.raises(ValueError, match="multiple client function calls"):
+    with pytest.raises(ValueError, match="missing provider tools_state_id"):
         primary.convert_messages([message], cached_uploads={})
 
 
@@ -227,3 +237,107 @@ def test_uncached_url_is_rejected_before_the_sdk_request() -> None:
 
     with pytest.raises(ValueError, match="cached_uploads"):
         primary.convert_messages([message], cached_uploads={})
+
+
+def test_parallel_same_function_roundtrip_keeps_ids_and_shared_state() -> None:
+    response = gm.ChatCompletionResponse.model_validate(
+        {
+            "tools_state_id": "shared-state",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "function_call": {
+                                "id": "call-1",
+                                "name": "lookup",
+                                "arguments": {"key": 1},
+                            }
+                        },
+                        {
+                            "function_call": {
+                                "id": "call-2",
+                                "name": "lookup",
+                                "arguments": {"key": 2},
+                            }
+                        },
+                    ],
+                }
+            ],
+        }
+    )
+    assistant = primary.create_chat_result(response).generations[0].message
+    results = [
+        ToolMessage(content=str(index), tool_call_id=f"call-{index}")
+        for index in (1, 2)
+    ]
+    original = copy.deepcopy(assistant)
+    converted = _dump(
+        primary.convert_messages([assistant, *results], cached_uploads={})
+    )
+    assert [part["function_call"]["id"] for part in converted[0]["content"]] == [
+        "call-1",
+        "call-2",
+    ]
+    assert [item["tools_state_id"] for item in converted] == ["shared-state"] * 3
+    assert [item["content"][0]["function_result"] for item in converted[1:]] == [
+        {"id": "call-1", "name": "lookup", "result": 1},
+        {"id": "call-2", "name": "lookup", "result": 2},
+    ]
+    assert assistant == original
+
+
+def test_explicit_call_id_equal_to_state_is_still_preserved() -> None:
+    assistant = AIMessage(
+        content="",
+        additional_kwargs={
+            "tools_state_id": "same",
+            "function_calls": [{"id": "same", "name": "lookup", "arguments": {}}],
+        },
+        tool_calls=[{"id": "same", "name": "lookup", "args": {}}],
+    )
+    converted = _dump(
+        primary.convert_messages(
+            [assistant, ToolMessage(content="ok", tool_call_id="same")],
+            cached_uploads={},
+        )
+    )
+    assert converted[0]["content"][0]["function_call"]["id"] == "same"
+    assert converted[1]["content"][0]["function_result"]["id"] == "same"
+
+
+def test_standalone_tool_result_accepts_separate_explicit_state() -> None:
+    message = ToolMessage(
+        content='{"value": 2}',
+        name="lookup",
+        tool_call_id="call-2",
+        additional_kwargs={"tools_state_id": "shared-state"},
+    )
+    converted = _dump(primary.convert_messages([message], cached_uploads={}))
+    assert converted == [
+        {
+            "role": "tool",
+            "tools_state_id": "shared-state",
+            "content": [
+                {
+                    "function_result": {
+                        "id": "call-2",
+                        "name": "lookup",
+                        "result": {"value": 2},
+                    }
+                }
+            ],
+        }
+    ]
+
+
+def test_explicit_raw_call_id_never_substitutes_missing_continuation_state() -> None:
+    assistant = AIMessage(
+        content="",
+        additional_kwargs={
+            "function_calls": [{"id": "real-call", "name": "lookup", "arguments": {}}],
+        },
+        tool_calls=[{"id": "real-call", "name": "lookup", "args": {}}],
+    )
+    with pytest.raises(ValueError, match="missing provider tools_state_id"):
+        primary.convert_messages([assistant], cached_uploads={})

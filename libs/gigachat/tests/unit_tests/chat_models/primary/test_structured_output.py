@@ -10,6 +10,7 @@ import gigachat.models as gm
 import pytest
 from langchain_core.exceptions import OutputParserException
 from langchain_core.messages import AIMessage
+from langchain_core.runnables import RunnableBinding, RunnableSequence
 from pydantic import BaseModel
 
 from langchain_gigachat.chat_models._contracts import primary
@@ -20,6 +21,27 @@ from .fixtures import CREATED_AT, MESSAGE_ID, MODEL, build_function_call_respons
 
 class OutputSchema(BaseModel):
     value: int
+
+
+class UnionOutputSchema(BaseModel):
+    """Return the capacity as a number or a label."""
+
+    capacity: int | str
+
+
+def test_function_structured_output_preserves_union_schema() -> None:
+    model = GigaChat(use_api_v2=True)
+    structured = model.with_structured_output(UnionOutputSchema)
+    assert isinstance(structured, RunnableSequence)
+    assert isinstance(structured.first, RunnableBinding)
+    payload = model._build_primary_payload([], structured.first.kwargs)
+    function = payload.model_dump(exclude_none=True)["tools"][0]["functions"][
+        "specifications"
+    ][0]
+    assert function["parameters"]["properties"]["capacity"]["anyOf"] == [
+        {"type": "integer"},
+        {"type": "string"},
+    ]
 
 
 def _json_response(content: str = '{"value": 7}') -> gm.ChatCompletionResponse:

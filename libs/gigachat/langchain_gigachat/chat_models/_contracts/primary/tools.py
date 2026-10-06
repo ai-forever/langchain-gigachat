@@ -141,11 +141,8 @@ def _derived_tool_config(
         return gm.ChatToolConfig(mode="auto"), False
     if choice == "none":
         return None, True
-    if choice == "any":
-        raise ValueError(
-            "GigaChat API v2 does not have a confirmed tool_choice='any' "
-            "semantic. Use 'auto' or select a concrete tool."
-        )
+    if choice in {"any", "required"}:
+        return gm.ChatToolConfig(mode="any"), False
     return (
         _forced_config(
             choice,
@@ -189,6 +186,12 @@ def _validate_explicit_config_targets(
             f"tool_config tool_name {config.tool_name!r} was not found in the "
             "available provider built-in tools."
         )
+    for name in getattr(config, "functions_names_any", None) or ():
+        if name not in function_names:
+            raise ValueError(
+                f"tool_config functions_names_any target {name!r} was not found "
+                "in the available client functions."
+            )
 
 
 def _config_dump(value: Optional[gm.ChatToolConfig]) -> Any:
@@ -203,27 +206,45 @@ def build_tool_binding(
     tools: Sequence[Mapping[str, Any]],
     function_call: Any,
     explicit_tool_config: Any = None,
+    allow_native_tools: bool = False,
 ) -> ToolBinding:
     """Normalize client and provider tools for the primary contract."""
     function_specs = [_function_specification(function) for function in functions]
+    native_tools: list[gm.ChatTool] = []
+    native_function_names: list[str] = []
     builtin_tools: list[gm.ChatTool] = []
     builtin_names: list[str] = []
 
     for tool in tools:
+        if "functions" in tool:
+            native_tool = gm.ChatTool.model_validate(copy.deepcopy(dict(tool)))
+            if native_tool.functions is not None:
+                native_tools.append(native_tool)
+                native_function_names.extend(
+                    spec.name for spec in native_tool.functions.specifications or ()
+                )
+                continue
         if tool.get("type") == "function":
             function_specs.append(_function_specification(tool))
+            continue
+        if allow_native_tools and "type" not in tool:
+            # additional_fields is the SDK escape hatch for provider tools
+            # outside this adapter's public built-in-tool catalog.
+            native_tools.append(gm.ChatTool.model_validate(copy.deepcopy(dict(tool))))
+            builtin_names.extend(tool)
             continue
         builtin_name, builtin = _builtin_tool(tool)
         builtin_names.append(builtin_name)
         builtin_tools.append(builtin)
 
-    function_names = [spec.name for spec in function_specs]
+    function_names = [spec.name for spec in function_specs] + native_function_names
     normalized_tools: list[gm.ChatTool] = []
     if function_specs:
         normalized_tools.append(
             gm.ChatTool(functions=gm.ChatFunctionsTool(specifications=function_specs))
         )
     normalized_tools.extend(builtin_tools)
+    normalized_tools.extend(native_tools)
 
     derived_config, omit_tools = _derived_tool_config(
         function_call,

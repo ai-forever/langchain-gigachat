@@ -29,12 +29,19 @@ The main request mappings are:
 | client tools | `functions` / `function_call` | functions tool / `tool_config` |
 | provider built-ins | rejected | `tools` / `tool_config` |
 | `response_format` | legacy field | `model_options.response_format` |
-| `assistant_id`, `tools_state_id`, `user_info` | rejected | primary request fields |
+| `assistant_id` | top-level field with aligned SDK | primary request field |
+| `tools_state_id`, `user_info` | rejected | primary request fields |
+| `reasoning_max_tokens` | top-level field | `model_options.reasoning.max_tokens` |
+| `parallel_tool_calls` | rejected | `model_options.parallel_tool_calls` |
 
 Client tool continuation differs by contract. Legacy uses
 `functions_state_id` and provider `role="function"`; API v2 uses
 `tools_state_id` and provider `role="tool"`. The `AIMessage.tool_calls[0].id`
 returned by v2 must be copied unchanged to `ToolMessage.tool_call_id`.
+For a stored-thread continuation that sends only `ToolMessage` (without the
+preceding `AIMessage`), also set
+`additional_kwargs={"tools_state_id": assistant.additional_kwargs["tools_state_id"]}`
+on the tool result. The call ID and continuation state serve different purposes.
 Stateful tool histories are route-specific and are not translated between
 contracts; plain text history can be used with either route.
 
@@ -53,6 +60,93 @@ json_llm = primary.with_structured_output(None, method="json_mode")
 It sends `response_format={"type": "json_schema"}` without a placeholder
 schema or `strict`. Low-level `bind(response_format=...)` returns a normal
 `AIMessage`; parsing belongs to `with_structured_output()`.
+
+## SDK contract alignment
+
+[Runnable examples and installation steps](../../examples/sdk_contract_alignment/README.md)
+show complete flows for all changes below.
+
+The preview was aligned against Python SDK commit `6e9bb50` on
+`feature/api-contract-alignment`. The minimum stable dependency stays at 0.2.3
+for existing applications. That release predates the constructor `session_id`,
+v1 `assistant_id`, v1 call IDs, object-shaped v2 `additional_data` and new
+v1 response fields; those features require the aligned SDK until it is released.
+Requesting a session or v1 assistant with an older SDK raises an actionable
+error instead of silently ignoring the setting. Explicit JSON null in v2 `additional_fields` also requires
+the aligned SDK serializer. No unreleased package version is advertised as available.
+
+### Generation controls and additional fields
+
+```python
+llm = GigaChat(
+    use_api_v2=True,
+    max_tokens=512,
+    reasoning_max_tokens=128,
+    parallel_tool_calls=True,
+)
+# Nested values take precedence over shorthand and instance defaults.
+limited = llm.bind(model_options={"max_tokens": 64})
+# Advanced request options remain an explicit escape hatch.
+advanced = llm.bind(additional_fields={"ranker_options": {"enabled": False}})
+```
+
+An explicit nested `None` suppresses the corresponding generation default.
+Reasoning is opt-in; setting a budget does not guarantee that a model will
+produce a final answer. `temperature=0` does not promise deterministic output.
+
+### Functions and metadata
+
+The [parallel tools example](../../examples/sdk_contract_alignment/parallel_tools.py)
+uses `int | str` arguments, requires the first call, then lets the model finish
+with `auto`. The [stored result example](../../examples/sdk_contract_alignment/stored_tool_results.py)
+shows continuation without replaying the full history.
+
+API v2 accepts union (`anyOf`) argument schemas and
+`bind_tools(..., tool_choice="any")` / `"required"` for client functions.
+Parallel calls retain individual provider IDs; return every result with that
+ID, including when several calls invoke the same function. The continuation
+state is stored separately in `tools_state_id`. Single calls without an ID
+retain compatibility with older responses; ambiguous parallel histories are
+rejected. API v1 continues to use one function call and JSON-encoded results.
+
+Response metadata preserves additional data and error details; message content
+preserves inline metadata and token probabilities when the SDK exposes them.
+Streaming preserves the same data without repeating terminal snapshots
+or concatenating repeated identifiers. Additional data and error metadata are
+emitted once at completion, using the latest snapshot.
+
+### Session and token accounting
+
+`GigaChat(session_id="conversation-id")` and
+`GigaChatEmbeddings(session_id="conversation-id")` forward the session to the
+SDK. Existing SDK context-variable overrides keep their precedence. A session
+is not a storage thread and does not itself preserve conversation history.
+
+LangChain usage now counts the entire input: provider input tokens plus cached
+tokens. `input_token_details.cache_read` identifies the cached portion, while
+`total_tokens` is full input plus output. Raw provider usage remains available
+in the callback result `LLMResult.llm_output["token_usage"]`, so billing
+counters are not rewritten. See the [session usage example](../../examples/sdk_contract_alignment/session_usage.py)
+for both forms printed side by side.
+
+### Scope of the colleague's issue report
+
+| Finding | Resolution |
+|---------|------------|
+| v2 generation controls ignored at request root | Adapter normalizes controls into `model_options`; nested values win. |
+| Session header unavailable on the wrapper | Added shared `session_id` configuration and SDK compatibility check. |
+| Wrapper restricted to v1 | Already addressed by the existing opt-in v2 route; retained and tested. |
+| `any` tool choice and union schemas rejected | Added v2 support; preserved the v1 restrictions. |
+| Function call identities lost | Preserve call IDs separately from continuation state, including streaming. |
+| Cache counters differ from LangChain conventions | Normalize LangChain usage and preserve raw provider counters. |
+| SDK thread listing, error decoding, SSE parsing | Fixed in the companion SDK; no duplicate transport implementation here. |
+| Non-JSON tool results in v1 | Existing JSON normalization retained. |
+| Model determinism, reasoning completion, ignored `n`, storage limits | Server/model behavior; the adapter does not claim to fix it. |
+| GPT2GIGA and Deep Agents middleware/profile behavior | Separate packages; unchanged by this integration. |
+
+Offline transport and conversion tests establish payload/response compatibility.
+They do not establish that a particular account, server or model enables every
+v2 capability, or reproduce the live observations from the issue report.
 
 ## Requirements
 
@@ -199,7 +293,7 @@ If you previously relied on it, update call sites to stop passing `stop=...`.
 
 ---
 
-### `tool_choice="any"` raises `ValueError`
+### API v1: `tool_choice="any"` raises `ValueError`
 
 Previously, `tool_choice="any"` was silently converted to `"auto"`. Now it raises `ValueError` by default.
 
@@ -218,17 +312,17 @@ llm = GigaChat(allow_any_tool_choice_fallback=True, ...)
 llm.bind_tools(tools, tool_choice="any")  # converts to "auto" with UserWarning
 ```
 
-**Why:** GigaChat API does not support `tool_choice="any"` (forced tool calling). Silent conversion to `"auto"` changed semantics unpredictably — the user expected a forced tool call, but the model could return plain text. An explicit error is safer.
+**Why:** GigaChat API v1 does not support `tool_choice="any"` (forced tool calling). Silent conversion to `"auto"` changed semantics unpredictably — the user expected a forced tool call, but the model could return plain text. An explicit error is safer.
 
 ---
 
-### Multiple `tool_calls` in `AIMessage` raises `ValueError`
+### API v1: multiple `tool_calls` in `AIMessage` raises `ValueError`
 
 Previously, when an `AIMessage` had multiple `tool_calls`, only `tool_calls[0]` was sent to the API and the rest were silently dropped. Now a `ValueError` is raised.
 
 ```python
 # If you encounter this error, restructure to use one tool call per turn.
-# GigaChat API does not support parallel function calls.
+# GigaChat API v1 does not support parallel function calls.
 ```
 
 **Why:** Silently dropping tool calls corrupted conversation history and led to unpredictable behavior in later turns.
