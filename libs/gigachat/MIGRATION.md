@@ -51,15 +51,19 @@ instance default model so the provider can resolve stored state; an explicit
 invocation model is still forwarded.
 
 Native JSON Schema output uses
-`with_structured_output(schema, method="json_schema")`. Schema-less JSON is:
+`with_structured_output(schema, method="json_schema")`. To return an arbitrary
+JSON object without a user-provided schema:
 
 ```python
 json_llm = primary.with_structured_output(None, method="json_mode")
 ```
 
-It sends `response_format={"type": "json_schema"}` without a placeholder
-schema or `strict`. Low-level `bind(response_format=...)` returns a normal
-`AIMessage`; parsing belongs to `with_structured_output()`.
+The wrapper supplies the minimal schema required by the API:
+`response_format={"type": "json_schema", "schema": {"type": "object"}}`.
+It omits `strict` and parses the response as a dict; arrays and scalar JSON
+values are rejected. Low-level `bind(response_format=...)` requires a schema
+for `type="json_schema"` and returns a normal `AIMessage`; parsing belongs to
+`with_structured_output()`.
 
 ## SDK contract alignment
 

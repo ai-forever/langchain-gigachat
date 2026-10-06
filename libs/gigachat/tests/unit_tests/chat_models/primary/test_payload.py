@@ -67,7 +67,7 @@ def test_native_options_win_over_invocation_and_defaults() -> None:
             "temperature": 0.4,
             "max_tokens": 200,
             "reasoning_effort": "medium",
-            "response_format": {"type": "json_schema"},
+            "response_format": {"type": "json_schema", "schema": {"type": "object"}},
             "model_options": {
                 "temperature": 0.9,
                 "reasoning": {"effort": "high"},
@@ -94,7 +94,7 @@ def test_native_none_suppresses_flat_options_and_defaults(as_model: bool) -> Non
         invocation_kwargs={
             "temperature": 0.8,
             "reasoning_effort": "high",
-            "response_format": {"type": "json_schema"},
+            "response_format": {"type": "json_schema", "schema": {"type": "object"}},
             "model_options": gm.ChatModelOptions(**native) if as_model else native,
         },
         cached_uploads={},

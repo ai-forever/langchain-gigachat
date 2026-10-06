@@ -136,7 +136,7 @@ _PRIMARY_ONLY_KWARGS = frozenset(
         "user_info",
     }
 )
-_SCHEMA_LESS_JSON_MODE_KEY = "_schema_less_json_mode"
+_JSON_OBJECT_MODE_KEY = "_json_object_mode"
 
 
 def _extension_for_mime(mime: str) -> str:
@@ -589,7 +589,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         ]
         kwargs.pop("messages", None)
         kwargs.pop("use_api_v2", None)
-        kwargs.pop(_SCHEMA_LESS_JSON_MODE_KEY, None)
+        kwargs.pop(_JSON_OBJECT_MODE_KEY, None)
 
         functions = kwargs.pop("functions", [])
         for tool in kwargs.pop("tools", []):
@@ -636,8 +636,10 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         return "primary" if kwargs.get("use_api_v2", self.use_api_v2) else "legacy"
 
     def _validate_legacy_kwargs(self, kwargs: Mapping[str, Any]) -> None:
-        if kwargs.get(_SCHEMA_LESS_JSON_MODE_KEY):
-            raise ValueError("Schema-less json_mode requires use_api_v2=True.")
+        if kwargs.get(_JSON_OBJECT_MODE_KEY):
+            raise ValueError(
+                "json_mode without a user schema requires use_api_v2=True."
+            )
 
         if self.parallel_tool_calls is not None:
             raise ValueError("parallel_tool_calls requires use_api_v2=True.")
@@ -691,17 +693,27 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
     ) -> gm.ChatCompletionRequest:
         invocation_kwargs = primary.merge_request_kwargs(kwargs)
         invocation_kwargs.pop("use_api_v2", None)
-        schema_less_json_mode = bool(
-            invocation_kwargs.pop(_SCHEMA_LESS_JSON_MODE_KEY, False)
-        )
-        if schema_less_json_mode:
+        json_object_mode = bool(invocation_kwargs.pop(_JSON_OBJECT_MODE_KEY, False))
+        if json_object_mode:
             response_format = invocation_kwargs.get("response_format")
-            if response_format is not None:
-                raise ValueError(
-                    "Schema-less json_mode cannot be combined with an explicit "
-                    "response_format."
+            model_options = invocation_kwargs.get("model_options")
+            if isinstance(model_options, BaseModel):
+                model_options = model_options.model_dump(
+                    exclude_unset=True, by_alias=True
                 )
-            invocation_kwargs["response_format"] = {"type": "json_schema"}
+            has_nested_response_format = (
+                isinstance(model_options, Mapping)
+                and "response_format" in model_options
+            )
+            if response_format is not None or has_nested_response_format:
+                raise ValueError(
+                    "json_mode without a user schema cannot be combined with "
+                    "an explicit response_format."
+                )
+            invocation_kwargs["response_format"] = {
+                "type": "json_schema",
+                "schema": {"type": "object"},
+            }
         extra_fields = kwargs.get("additional_fields")
         tools_from_extras = (
             isinstance(extra_fields, Mapping)
@@ -785,7 +797,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         self,
         chunk: Dict[str, Any],
         first_chunk: bool,
-        emitted_metadata: Optional[Dict[str, Any]] = None,
+        pending_metadata: Optional[Dict[str, Any]] = None,
     ) -> Tuple[BaseMessageChunk, Dict[str, Any], Any]:
         """Build message chunk and generation_info from a normalized stream chunk dict.
 
@@ -795,13 +807,17 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         ``generation_info`` so callers can keep tracing metadata in streaming and
         non-streaming paths.
 
-        Caller is responsible for normalizing the raw chunk to a dict and for
-        callbacks.
+        When provided, ``pending_metadata`` keeps the latest response snapshots
+        for emission once the SDK stream ends. They are not text deltas: emitting
+        an updated snapshot twice would concatenate its strings during LangChain
+        chunk aggregation. Caller is responsible for flushing those snapshots,
+        normalizing the raw chunk to a dict, and callbacks.
         """
-        choice = chunk["choices"][0]
-        content = choice.get("delta", {}).get("content", "")
+        choice = chunk["choices"][0] if chunk["choices"] else {}
+        delta = choice.get("delta") or {}
+        content = delta.get("content", "")
         chunk_m = _convert_delta_to_message_chunk(
-            choice["delta"],
+            delta,
             AIMessageChunk,
         )
 
@@ -831,12 +847,9 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             for key in ("thread_id", "message_id", "additional_data", "error_details")
             if chunk.get(key) is not None
         }
-        if emitted_metadata is not None:
-            for key, value in list(generation_info.items()):
-                if emitted_metadata.get(key) == value:
-                    generation_info.pop(key)
-                else:
-                    emitted_metadata[key] = copy.deepcopy(value)
+        if pending_metadata is not None:
+            pending_metadata.update(generation_info)
+            generation_info = {}
         if finish_reason := choice.get("finish_reason"):
             generation_info["model_name"] = chunk.get("model")
             generation_info["finish_reason"] = finish_reason
@@ -940,7 +953,8 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
 
         payload = self._build_payload(messages, **kwargs)
         first_chunk = True
-        emitted_metadata: Dict[str, Any] = {}
+        pending_metadata: Dict[str, Any] = {}
+        request_id: Optional[str] = None
 
         for chunk_d in self._client.stream(payload):
             chunk = (
@@ -948,15 +962,13 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 if isinstance(chunk_d, dict)
                 else chunk_d.model_dump(by_alias=True)
             )
-            if len(chunk["choices"]) == 0:
-                continue
-
             chunk_m, generation_info, content = self._build_stream_chunk(
                 chunk,
                 first_chunk,
-                emitted_metadata,
+                pending_metadata,
             )
             first_chunk = False
+            request_id = chunk_m.id or request_id
             generation_chunk = ChatGenerationChunk(
                 message=chunk_m,
                 generation_info=generation_info,
@@ -964,6 +976,17 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             if run_manager:
                 run_manager.on_llm_new_token(content)
             yield generation_chunk
+
+        if pending_metadata:
+            final_chunk = ChatGenerationChunk(
+                message=AIMessageChunk(
+                    content="", id=request_id, chunk_position="last"
+                ),
+                generation_info=pending_metadata,
+            )
+            if run_manager:
+                run_manager.on_llm_new_token("", chunk=final_chunk)
+            yield final_chunk
 
     @override
     async def _astream(
@@ -996,7 +1019,8 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
 
         payload = self._build_payload(messages, **kwargs)
         first_chunk = True
-        emitted_metadata: Dict[str, Any] = {}
+        pending_metadata: Dict[str, Any] = {}
+        request_id: Optional[str] = None
 
         async for chunk_d in self._client.astream(payload):
             chunk = (
@@ -1004,15 +1028,13 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 if isinstance(chunk_d, dict)
                 else chunk_d.model_dump(by_alias=True)
             )
-            if len(chunk["choices"]) == 0:
-                continue
-
             chunk_m, generation_info, content = self._build_stream_chunk(
                 chunk,
                 first_chunk,
-                emitted_metadata,
+                pending_metadata,
             )
             first_chunk = False
+            request_id = chunk_m.id or request_id
             generation_chunk = ChatGenerationChunk(
                 message=chunk_m,
                 generation_info=generation_info,
@@ -1020,6 +1042,17 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             if run_manager:
                 await run_manager.on_llm_new_token(content)
             yield generation_chunk
+
+        if pending_metadata:
+            final_chunk = ChatGenerationChunk(
+                message=AIMessageChunk(
+                    content="", id=request_id, chunk_position="last"
+                ),
+                generation_info=pending_metadata,
+            )
+            if run_manager:
+                await run_manager.on_llm_new_token("", chunk=final_chunk)
+            yield final_chunk
 
     def bind_functions(
         self,
@@ -1081,8 +1114,8 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         Args:
             schema: Output schema. Can be a dict-like tool/schema description
                 or a Pydantic class. Pass ``None`` with ``method="json_mode"``
-                to request a native JSON object without a schema on the primary
-                API route.
+                to request a JSON object on the primary API route. The wrapper
+                supplies the minimal JSON Schema ``{"type": "object"}``.
             include_raw: If ``False``, return only parsed structured output.
                 If ``True``, return a dict with ``raw``, ``parsed``, and
                 ``parsing_error`` keys.
@@ -1091,11 +1124,12 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 - ``method``: ``"function_calling"`` (default),
                   ``"json_schema"`` (native API-level JSON Schema
                   constraint; requires a model that supports
-                  ``response_format``), ``"json_mode"`` (schema-less native
-                  JSON on the primary API route), or
+                  ``response_format``), ``"json_mode"`` (a JSON object without
+                  a user-provided schema on the primary API route), or
                   ``"format_instructions"`` (legacy).
                 - ``strict``: best-effort strict schema adherence. Only
-                  valid with ``method="json_schema"``. Defaults to ``True``.
+                  valid with ``method="json_schema"``. Defaults to ``None``
+                  (omitted from the request).
 
         Raises:
             ValueError: If ``method`` is unsupported, ``strict`` is passed
@@ -1126,7 +1160,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             warnings.warn(
                 "Legacy method='json_mode' behavior is deprecated; use "
                 "method='json_schema', or use the primary API route with "
-                "schema=None for native schema-less JSON.",
+                "schema=None for a JSON object with a minimal schema.",
                 DeprecationWarning,
                 stacklevel=2,
             )
@@ -1174,7 +1208,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                 )
                 llm = self.bind(response_format=response_format)
             elif native_json_mode:
-                llm = self.bind(**{_SCHEMA_LESS_JSON_MODE_KEY: True})
+                llm = self.bind(**{_JSON_OBJECT_MODE_KEY: True})
             else:
                 llm = self
             if _is_pydantic_class(schema):
@@ -1279,11 +1313,10 @@ def _is_pydantic_class(obj: Any) -> TypeGuard[Type[BaseModel]]:
 
 
 def _require_json_object(value: Any) -> dict[str, Any]:
-    """Require the object shape promised by schema-less ``json_mode``."""
+    """Require the object shape promised by ``json_mode`` without a user schema."""
     if not isinstance(value, dict):
         raise OutputParserException(
-            "GigaChat schema-less JSON mode returned valid JSON, but not a JSON "
-            "object.",
+            "GigaChat JSON object mode returned valid JSON, but not a JSON object.",
             llm_output=json.dumps(value, ensure_ascii=False),
         )
     return value

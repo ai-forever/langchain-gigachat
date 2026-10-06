@@ -114,15 +114,16 @@ def normalize_response_format(
             "JsonSchemaResponseFormat, Pydantic BaseModel class, mapping, or None."
         )
 
+    if candidate.get("type") == "json_schema" and candidate.get("schema") is None:
+        raise ValueError(
+            "response_format type 'json_schema' requires a 'schema' field. "
+            "Pass schema={'type': 'object'} for an arbitrary JSON object."
+        )
+
     if strict is not None:
         if candidate.get("type") != "json_schema":
             raise ValueError(
                 "strict is supported only with a JSON Schema response_format."
-            )
-        if candidate.get("schema") is None:
-            raise ValueError(
-                "schema-less response_format type 'json_schema' cannot include "
-                "field: strict."
             )
         existing_strict = candidate.get("strict")
         if existing_strict is not None and existing_strict != strict:
@@ -131,16 +132,6 @@ def normalize_response_format(
                 f"{existing_strict}, but strict={strict} was also provided."
             )
         candidate["strict"] = strict
-
-    if (
-        candidate.get("type") == "json_schema"
-        and candidate.get("schema") is None
-        and candidate.get("strict") is not None
-    ):
-        raise ValueError(
-            "schema-less response_format type 'json_schema' cannot include "
-            "field: strict."
-        )
 
     try:
         return gm.ChatResponseFormat.model_validate(candidate)

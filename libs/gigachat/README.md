@@ -251,9 +251,10 @@ structured = llm.with_structured_output(City, method="json_schema")
 city = structured.invoke("Return information about Kazan.")
 ```
 
-API v2 also supports schema-less JSON mode. It sends the provider-native
-`{"type": "json_schema"}` response format without inventing a schema or
-`strict` value:
+On API v2, JSON mode can return an arbitrary JSON object without a user-provided
+schema. The wrapper sends
+`{"type": "json_schema", "schema": {"type": "object"}}`, satisfying the API's
+required `schema` field. It leaves `strict` unset and parses the result as a dict:
 
 ```python
 json_llm = llm.with_structured_output(None, method="json_mode")
@@ -363,9 +364,9 @@ llm_with_functions = llm.bind_functions(
 
 Use `bind_tools()` for new code. `bind_functions()` is kept as a compatibility layer over the provider's `function_call` transport and supports `None`, `"auto"`, `"none"`, or a specific function name.
 
-Internally, the provider transport is still function-oriented. That is why
-`ToolMessage` results are serialized back as provider `function` messages when
-continuing a conversation.
+On API v1, `ToolMessage` results are serialized as provider `function` messages
+when continuing a conversation. API v2 serializes them as `tool` messages and
+preserves the provider's tool-call ID.
 
 ## Structured Output
 
@@ -404,9 +405,14 @@ llm.with_structured_output(Answer, method="json_schema")
 > GigaChat side and may not be available for every model — fall back to the
 > default `method="function_calling"` if the API rejects the request.
 
-The legacy `method="json_mode"` is still accepted for backward compatibility,
-but it emits a `DeprecationWarning` — prefer `method="json_schema"` for new
-code.
+`strict` defaults to `None` and is omitted from the request; pass it explicitly
+with `method="json_schema"` when needed. Low-level
+`response_format={"type": "json_schema", ...}` also requires a `schema`.
+
+The legacy `method="json_mode"` with a supplied schema is still accepted for
+backward compatibility, but it emits a `DeprecationWarning`; prefer
+`method="json_schema"` for new code. Passing `None` with `method="json_mode"`
+on API v2 uses the JSON object mode shown above and does not emit a warning.
 
 ## Attachments
 

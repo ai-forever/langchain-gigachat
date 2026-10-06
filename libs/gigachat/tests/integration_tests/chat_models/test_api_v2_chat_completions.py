@@ -254,7 +254,7 @@ def test_json_schema_structured_output(primary_llm: GigaChat) -> None:
     assert result == StructuredAnswer(status="PRIMARY_V2_JSON_SCHEMA_OK")
 
 
-def test_schema_less_json_mode(primary_llm: GigaChat) -> None:
+def test_json_object_mode(primary_llm: GigaChat) -> None:
     result = primary_llm.with_structured_output(
         None,
         method="json_mode",

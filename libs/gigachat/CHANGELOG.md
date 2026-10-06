@@ -22,8 +22,9 @@ Unreleased prerelease with opt-in API v2 support and expanded SDK integration.
 - API v2 parallel client function calls with distinct call IDs, `any`/`required`
   client tool choice, and union argument schemas.
 - Additional request fields and response error/inline metadata preservation.
-- Native JSON Schema and schema-less
-  `with_structured_output(None, method="json_mode")` output.
+- Native JSON Schema output and
+  `with_structured_output(None, method="json_mode")` with a generic JSON-object
+  schema supplied by the adapter.
 
 ### Changed
 
@@ -48,6 +49,10 @@ Unreleased prerelease with opt-in API v2 support and expanded SDK integration.
 - Primary streaming preserves unnamed terminal SSE events and no longer
   duplicates identifiers, complete function arguments, or metadata snapshots
   when LangChain aggregates response chunks.
+- Legacy streaming emits the final `additional_data` and `error_details`
+  snapshots once, so updated metadata is not concatenated during aggregation.
+- Native `json_schema` response formats require an explicit schema; JSON-object
+  mode supplies `{"type": "object"}` without enabling strict validation.
 
 ### Dependencies
 

@@ -1,5 +1,6 @@
 """Regression checks for the SDK contract alignment (without provider requests)."""
 
+import json
 from typing import Any
 
 import gigachat.models as gm
@@ -197,9 +198,94 @@ def test_legacy_response_and_stream_preserve_contract_metadata() -> None:
     assert message.additional_kwargs["inline_data"] == {"sources": []}
     assert message.additional_kwargs["logprobs"][0]["token"] == "ok"
     stream = {**metadata, "choices": [{"delta": {"content": "ok"}}]}
-    seen: dict[str, Any] = {}
+    pending: dict[str, Any] = {}
     llm = GigaChat()
-    _, first, _ = llm._build_stream_chunk(stream, True, seen)
-    _, second, _ = llm._build_stream_chunk(stream, False, seen)
-    assert all(first[key] == value for key, value in metadata.items())
+    _, first, _ = llm._build_stream_chunk(stream, True, pending)
+    _, second, _ = llm._build_stream_chunk(stream, False, pending)
+    assert first == {"x_headers": {}}
     assert second == {}
+    assert pending == metadata
+
+
+@pytest.mark.skipif(
+    "additional_data" not in gm.ChatCompletionChunk.model_fields,
+    reason="SDK metadata requires aligned SDK",
+)
+@pytest.mark.parametrize("asynchronous", [False, True])
+async def test_legacy_metadata_snapshots_survive_sdk_http_stream(
+    monkeypatch: pytest.MonkeyPatch, asynchronous: bool
+) -> None:
+    common = {
+        "created": 1,
+        "model": "test-model",
+        "object": "chat.completion.chunk",
+        "thread_id": "thread",
+        "message_id": "message",
+    }
+    draft = {"sources": [{"index": 0, "url": "https://example.com", "title": "Draft"}]}
+    final = {"sources": [{"index": 0, "url": "https://example.com", "title": "Final"}]}
+    events = [
+        {
+            **common,
+            "choices": [{"delta": {"content": "ok"}, "index": 0}],
+            "additional_data": draft,
+            "error_details": {"message": "Pending"},
+        },
+        {
+            **common,
+            "choices": [{"delta": {}, "index": 0, "finish_reason": "stop"}],
+            "additional_data": draft,
+        },
+        {
+            **common,
+            "choices": [],
+            "additional_data": final,
+            "error_details": {"message": "Complete"},
+            "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7},
+        },
+    ]
+    body = "".join(f"data: {json.dumps(event)}\n\n" for event in events)
+    body += "data: [DONE]\n\n"
+    seen: list[httpx.Request] = []
+
+    def send(
+        client: httpx.Client | httpx.AsyncClient, request: httpx.Request, **kwargs: Any
+    ) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(
+            200,
+            text=body,
+            headers={"content-type": "text/event-stream", "x-request-id": "request"},
+            request=request,
+        )
+
+    async def asend(
+        client: httpx.AsyncClient, request: httpx.Request, **kwargs: Any
+    ) -> httpx.Response:
+        return send(client, request, **kwargs)
+
+    monkeypatch.setattr(httpx.Client, "send", send)
+    monkeypatch.setattr(httpx.AsyncClient, "send", asend)
+    llm = GigaChat(model="test-model", access_token="test-token")
+    chunks = (
+        [chunk async for chunk in llm.astream("hello")]
+        if asynchronous
+        else list(llm.stream("hello"))
+    )
+    aggregate = chunks[0]
+    for chunk in chunks[1:]:
+        aggregate += chunk
+    assert aggregate.content == "ok"
+    assert aggregate.id == chunks[-1].id == "request"
+    assert aggregate.response_metadata["additional_data"] == final
+    assert aggregate.response_metadata["error_details"] == {"message": "Complete"}
+    assert aggregate.response_metadata["thread_id"] == "thread"
+    assert aggregate.response_metadata["message_id"] == "message"
+    assert aggregate.usage_metadata == {
+        "input_tokens": 5,
+        "output_tokens": 2,
+        "total_tokens": 7,
+        "input_token_details": {"cache_read": 0},
+    }
+    assert len(seen) == 1
+    assert seen[0].url.path == "/v1/chat/completions"
