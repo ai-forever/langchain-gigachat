@@ -87,7 +87,6 @@ from langchain_gigachat.chat_models._contracts.primary.messages import (
 from langchain_gigachat.chat_models.base_gigachat import _BaseGigaChat
 from langchain_gigachat.utils.function_calling import (
     convert_to_gigachat_function,
-    convert_to_gigachat_tool,
     is_primary_builtin_tool,
     normalize_tool_for_binding,
 )
@@ -125,10 +124,10 @@ DEFAULT_IMAGE_CACHE_MAX_SIZE = 1000
 ATTACHMENT_BLOCK_KEYS = ("image_url", "audio_url", "document_url")
 _PRIMARY_ONLY_KWARGS = frozenset(
     {
-        "assistant_id",
         "disable_filter",
         "filter_config",
         "model_options",
+        "parallel_tool_calls",
         "ranker_options",
         "reasoning",
         "strict",
@@ -161,15 +160,17 @@ def _convert_dict_to_message(message: gm.Messages) -> BaseMessage:
     tool_calls = []
     if function_call := message.function_call:
         if isinstance(function_call, gm.FunctionCall):
-            additional_kwargs["function_call"] = dict(function_call)
+            additional_kwargs["function_call"] = function_call.model_dump(
+                exclude_none=True, by_alias=True
+            )
         elif isinstance(function_call, dict):
             additional_kwargs["function_call"] = function_call
         if additional_kwargs.get("function_call") is not None:
             tool_calls = [
                 ToolCall(
                     name=additional_kwargs["function_call"]["name"],
-                    args=additional_kwargs["function_call"]["arguments"],
-                    id=str(uuid4()),
+                    args=additional_kwargs["function_call"].get("arguments") or {},
+                    id=additional_kwargs["function_call"].get("id") or str(uuid4()),
                 )
             ]
     if message.functions_state_id:
@@ -186,6 +187,10 @@ def _convert_dict_to_message(message: gm.Messages) -> BaseMessage:
     reasoning_content = getattr(message, "reasoning_content", None)
     if reasoning_content is not None:
         additional_kwargs["reasoning_content"] = reasoning_content
+    for field in ("inline_data", "logprobs"):
+        value = getattr(message, field, None)
+        if value is not None:
+            additional_kwargs[field] = copy.deepcopy(value)
     if message.role == gm.MessagesRole.SYSTEM:
         return SystemMessage(content=message.content)
     elif message.role == gm.MessagesRole.USER:
@@ -352,8 +357,14 @@ def _convert_delta_to_message_chunk(
             tool_call_chunks = [
                 ToolCallChunk(
                     name=additional_kwargs["function_call"]["name"],
-                    args=json.dumps(additional_kwargs["function_call"]["arguments"]),
-                    id=str(uuid4()),
+                    args=json.dumps(
+                        additional_kwargs["function_call"].get("arguments") or {}
+                    ),
+                    id=(
+                        function_call.get("id")
+                        or function_call.get("id_")
+                        or str(uuid4())
+                    ),
                     index=0,
                 )
             ]
@@ -361,6 +372,9 @@ def _convert_delta_to_message_chunk(
         additional_kwargs["functions_state_id"] = _dict["functions_state_id"]
     if _dict.get("reasoning_content") is not None:
         additional_kwargs["reasoning_content"] = _dict["reasoning_content"]
+    for field in ("inline_data", "logprobs"):
+        if _dict.get(field) is not None:
+            additional_kwargs[field] = copy.deepcopy(_dict[field])
     match = IMAGE_SEARCH_REGEX.search(content)
     if match:
         additional_kwargs["image_uuid"] = match.group("UUID")
@@ -595,10 +609,22 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             "repetition_penalty": self.repetition_penalty,
             "update_interval": self.update_interval,
             "function_ranker": self.function_ranker,
+            "reasoning_effort": self.reasoning_effort,
+            "reasoning_max_tokens": self.reasoning_max_tokens,
             **kwargs,
         }
-        if self.reasoning_effort is not None:
-            payload_dict["reasoning_effort"] = self.reasoning_effort
+        if (
+            payload_dict.get("assistant_id") is not None
+            and "assistant_id" not in gm.Chat.model_fields
+        ):
+            raise ValueError("assistant_id on API v1 requires an updated GigaChat SDK.")
+        if "reasoning_max_tokens" not in gm.Chat.model_fields:
+            reasoning_budget = payload_dict.pop("reasoning_max_tokens", None)
+            if reasoning_budget is not None:
+                payload_dict["additional_fields"] = {
+                    **(payload_dict.get("additional_fields") or {}),
+                    "reasoning_max_tokens": reasoning_budget,
+                }
 
         payload = gm.Chat.model_validate(payload_dict)
 
@@ -613,6 +639,8 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         if kwargs.get(_SCHEMA_LESS_JSON_MODE_KEY):
             raise ValueError("Schema-less json_mode requires use_api_v2=True.")
 
+        if self.parallel_tool_calls is not None:
+            raise ValueError("parallel_tool_calls requires use_api_v2=True.")
         unsupported = sorted(_PRIMARY_ONLY_KWARGS.intersection(kwargs))
         if unsupported:
             names = ", ".join(unsupported)
@@ -648,6 +676,8 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             repetition_penalty=self.repetition_penalty,
             update_interval=self.update_interval,
             reasoning_effort=self.reasoning_effort,
+            reasoning_max_tokens=self.reasoning_max_tokens,
+            parallel_tool_calls=self.parallel_tool_calls,
             function_ranker=function_ranker,
             flags=self.flags,
         )
@@ -659,7 +689,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         *,
         cached_uploads: Optional[Mapping[str, str]] = None,
     ) -> gm.ChatCompletionRequest:
-        invocation_kwargs = dict(kwargs)
+        invocation_kwargs = primary.merge_request_kwargs(kwargs)
         invocation_kwargs.pop("use_api_v2", None)
         schema_less_json_mode = bool(
             invocation_kwargs.pop(_SCHEMA_LESS_JSON_MODE_KEY, False)
@@ -672,11 +702,18 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
                     "response_format."
                 )
             invocation_kwargs["response_format"] = {"type": "json_schema"}
+        extra_fields = kwargs.get("additional_fields")
+        tools_from_extras = (
+            isinstance(extra_fields, Mapping)
+            and extra_fields.get("tools") is not None
+            and kwargs.get("tools") is None
+        )
         tool_binding = primary.build_tool_binding(
-            functions=invocation_kwargs.get("functions", ()),
-            tools=invocation_kwargs.get("tools", ()),
+            functions=invocation_kwargs.get("functions") or (),
+            tools=invocation_kwargs.get("tools") or (),
             function_call=invocation_kwargs.get("function_call"),
             explicit_tool_config=invocation_kwargs.get("tool_config"),
+            allow_native_tools=tools_from_extras,
         )
         return primary.build_payload(
             messages,
@@ -707,16 +744,31 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             if isinstance(message, AIMessage):
                 message.usage_metadata = UsageMetadata(
                     output_tokens=response.usage.completion_tokens,
-                    input_tokens=response.usage.prompt_tokens,
-                    total_tokens=response.usage.total_tokens,
+                    input_tokens=response.usage.prompt_tokens
+                    + (response.usage.precached_prompt_tokens or 0),
+                    total_tokens=response.usage.prompt_tokens
+                    + (response.usage.precached_prompt_tokens or 0)
+                    + response.usage.completion_tokens,
                     input_token_details={
                         "cache_read": response.usage.precached_prompt_tokens or 0
                     },
                 )
+            metadata = {
+                key: copy.deepcopy(value)
+                for key in (
+                    "thread_id",
+                    "message_id",
+                    "additional_data",
+                    "error_details",
+                )
+                if (value := getattr(response, key, None)) is not None
+            }
+            message.response_metadata.update(metadata)
             finish_reason = res.finish_reason
             gen = ChatGeneration(
                 message=message,
                 generation_info={
+                    **metadata,
                     "finish_reason": finish_reason,
                     "model_name": response.model,
                 },
@@ -733,6 +785,7 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         self,
         chunk: Dict[str, Any],
         first_chunk: bool,
+        emitted_metadata: Optional[Dict[str, Any]] = None,
     ) -> Tuple[BaseMessageChunk, Dict[str, Any], Any]:
         """Build message chunk and generation_info from a normalized stream chunk dict.
 
@@ -756,10 +809,13 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         if chunk.get("usage"):
             usage_metadata = UsageMetadata(
                 output_tokens=chunk["usage"]["completion_tokens"],
-                input_tokens=chunk["usage"]["prompt_tokens"],
-                total_tokens=chunk["usage"]["total_tokens"],
+                input_tokens=chunk["usage"]["prompt_tokens"]
+                + (chunk["usage"].get("precached_prompt_tokens") or 0),
+                total_tokens=chunk["usage"]["prompt_tokens"]
+                + (chunk["usage"].get("precached_prompt_tokens") or 0)
+                + chunk["usage"]["completion_tokens"],
                 input_token_details={
-                    "cache_read": chunk["usage"].get("precached_prompt_tokens", 0)
+                    "cache_read": chunk["usage"].get("precached_prompt_tokens") or 0
                 },
             )
         if isinstance(chunk_m, AIMessageChunk):
@@ -770,7 +826,17 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         if "x-request-id" in x_headers:
             chunk_m.id = x_headers["x-request-id"]
 
-        generation_info: Dict[str, Any] = {}
+        generation_info: Dict[str, Any] = {
+            key: copy.deepcopy(chunk[key])
+            for key in ("thread_id", "message_id", "additional_data", "error_details")
+            if chunk.get(key) is not None
+        }
+        if emitted_metadata is not None:
+            for key, value in list(generation_info.items()):
+                if emitted_metadata.get(key) == value:
+                    generation_info.pop(key)
+                else:
+                    emitted_metadata[key] = copy.deepcopy(value)
         if finish_reason := choice.get("finish_reason"):
             generation_info["model_name"] = chunk.get("model")
             generation_info["finish_reason"] = finish_reason
@@ -874,15 +940,21 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
 
         payload = self._build_payload(messages, **kwargs)
         first_chunk = True
+        emitted_metadata: Dict[str, Any] = {}
 
         for chunk_d in self._client.stream(payload):
-            chunk = chunk_d if isinstance(chunk_d, dict) else chunk_d.model_dump()
+            chunk = (
+                chunk_d
+                if isinstance(chunk_d, dict)
+                else chunk_d.model_dump(by_alias=True)
+            )
             if len(chunk["choices"]) == 0:
                 continue
 
             chunk_m, generation_info, content = self._build_stream_chunk(
                 chunk,
                 first_chunk,
+                emitted_metadata,
             )
             first_chunk = False
             generation_chunk = ChatGenerationChunk(
@@ -924,15 +996,21 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
 
         payload = self._build_payload(messages, **kwargs)
         first_chunk = True
+        emitted_metadata: Dict[str, Any] = {}
 
         async for chunk_d in self._client.astream(payload):
-            chunk = chunk_d if isinstance(chunk_d, dict) else chunk_d.model_dump()
+            chunk = (
+                chunk_d
+                if isinstance(chunk_d, dict)
+                else chunk_d.model_dump(by_alias=True)
+            )
             if len(chunk["choices"]) == 0:
                 continue
 
             chunk_m, generation_info, content = self._build_stream_chunk(
                 chunk,
                 first_chunk,
+                emitted_metadata,
             )
             first_chunk = False
             generation_chunk = ChatGenerationChunk(
@@ -965,9 +1043,17 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             kwargs: Any additional parameters forwarded to the underlying
                 runnable binding.
         """
-        formatted_functions = [convert_to_gigachat_function(fn) for fn in functions]
+        use_api_v2 = self._resolve_chat_contract(kwargs) == "primary"
+        formatted_functions = [
+            normalize_tool_for_binding(fn, use_api_v2=True)["function"]
+            if use_api_v2
+            else convert_to_gigachat_function(fn)
+            for fn in functions
+        ]
         if function_call is not None:
-            if function_call in ("auto", "none"):
+            if function_call in ("auto", "none") or (
+                use_api_v2 and function_call in ("any", "required")
+            ):
                 kwargs = {**kwargs, "function_call": function_call}
             else:
                 available_names = [fn.get("name") for fn in formatted_functions]
@@ -1055,7 +1141,9 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         parser_runnable: Runnable[Any, Any]
         if method == "function_calling":
             assert schema is not None
-            func = convert_to_gigachat_tool(schema)["function"]
+            func = normalize_tool_for_binding(schema, use_api_v2=self.use_api_v2)[
+                "function"
+            ]
             key_name = func.get(
                 "name", func.get("title")
             )  # In case of pydantic from JSON (For openai capability)
@@ -1139,10 +1227,15 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         """Bind tools and an optional structured response schema to this model."""
         if strict is not None and response_format is None:
             raise ValueError("strict is supported only together with response_format.")
-        formatted_tools = [normalize_tool_for_binding(tool) for tool in tools]
+        use_api_v2 = self._resolve_chat_contract(kwargs) == "primary"
+        formatted_tools = [
+            normalize_tool_for_binding(tool, use_api_v2=use_api_v2) for tool in tools
+        ]
         if tool_choice is not None and tool_choice:
             if isinstance(tool_choice, str):
-                if tool_choice == "any":
+                if use_api_v2 and tool_choice in ("any", "required"):
+                    tool_choice = "any"
+                elif tool_choice == "any":
                     if not self.allow_any_tool_choice_fallback:
                         raise ValueError(
                             "GigaChat API does not support tool_choice='any'. "

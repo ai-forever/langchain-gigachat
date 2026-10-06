@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 import gigachat.models as gm
 import pytest
@@ -219,9 +219,9 @@ def test_usage_headers_and_provider_ids_are_preserved() -> None:
 
     assert message.id == "request-1"
     assert message.usage_metadata == {
-        "input_tokens": 10,
+        "input_tokens": 12,
         "output_tokens": 4,
-        "total_tokens": 14,
+        "total_tokens": 16,
         "input_token_details": {"cache_read": 2},
     }
     assert message.response_metadata["message_id"] == "provider-message-1"
@@ -261,7 +261,7 @@ def test_unknown_sdk_extension_fields_are_preserved() -> None:
     }
 
 
-def test_multiple_client_function_calls_are_rejected() -> None:
+def test_multiple_idless_client_function_calls_are_rejected() -> None:
     response = _response(
         tools_state_id="tools-state-1",
         messages=[
@@ -276,10 +276,99 @@ def test_multiple_client_function_calls_are_rejected() -> None:
         ],
     )
 
-    with pytest.raises(ValueError, match="multiple client function calls"):
+    with pytest.raises(ValueError, match="unique function_call.id"):
         primary.create_chat_result(response)
 
 
 def test_empty_messages_raise_clear_error() -> None:
     with pytest.raises(ValueError, match="contains no messages"):
         primary.create_chat_result(_response(messages=[]))
+
+
+def test_parallel_calls_and_mirrored_message_call_preserve_explicit_ids() -> None:
+    call = {"id": "call-1", "name": "lookup", "arguments": {"key": 1}}
+    message = _message(
+        _response(
+            tools_state_id="state",
+            messages=[
+                {
+                    "role": "assistant",
+                    "function_call": call,
+                    "content": [
+                        {"function_call": call},
+                        {
+                            "function_call": {
+                                "id": "call-2",
+                                "name": "lookup",
+                                "arguments": {"key": 2},
+                            }
+                        },
+                    ],
+                }
+            ],
+        )
+    )
+    assert [call["id"] for call in message.tool_calls] == ["call-1", "call-2"]
+    assert message.additional_kwargs["tools_state_id"] == "state"
+    assert message.response_metadata["tools_state_id"] == "state"
+
+
+@pytest.mark.parametrize("ids", [("same", "same"), (None, "call-2"), ("call-1", None)])
+def test_parallel_calls_reject_ambiguous_ids(
+    ids: tuple[str | None, str | None],
+) -> None:
+    response = _response(
+        tools_state_id="state",
+        messages=[
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "function_call": {
+                            "id": call_id,
+                            "name": "lookup",
+                            "arguments": {},
+                        }
+                    }
+                    for call_id in ids
+                ],
+            }
+        ],
+    )
+    with pytest.raises(ValueError, match="unique function_call.id"):
+        primary.create_chat_result(response)
+
+
+@pytest.mark.parametrize(
+    "additional_data",
+    [
+        [{"trace": "abc"}],
+        pytest.param(
+            {"trace": "abc"},
+            marks=pytest.mark.skipif(
+                "error_details" not in gm.ChatCompletionResponse.model_fields,
+                reason="SDK 0.2.3 does not parse object-shaped additional_data",
+            ),
+        ),
+    ],
+)
+def test_response_preserves_object_additional_data_error_and_part_logprobs(
+    additional_data: Any,
+) -> None:
+    logprobs = [{"chosen": {"token": "Hi", "token_id": 1, "logprob": -0.2}}]
+    response = _response(
+        messages=[
+            {"role": "assistant", "content": [{"text": "Hi", "logprobs": logprobs}]}
+        ],
+        additional_data=additional_data,
+        error_details={"reason": "filtered"},
+    )
+    message = _message(response)
+    assert message.response_metadata["additional_data"] == additional_data
+    assert message.response_metadata["error_details"] == {"reason": "filtered"}
+    assert (
+        cast(dict[str, Any], message.content_blocks[0])["extras"]["provider_data"][
+            "logprobs"
+        ]
+        == logprobs
+    )

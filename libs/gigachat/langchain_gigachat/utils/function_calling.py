@@ -20,6 +20,7 @@ from langchain_core.tools import BaseTool, Tool
 from langchain_core.utils.function_calling import (
     FunctionDescription,
     _parse_google_docstring,  # no public alternative; tests guard this dependency
+    convert_to_openai_function,
     is_basemodel_subclass,
 )
 from langchain_core.utils.json_schema import dereference_refs
@@ -529,8 +530,10 @@ def convert_to_gigachat_tool(
 
 def normalize_tool_for_binding(
     tool: Union[Dict[str, Any], type, Callable, BaseTool],
+    *,
+    use_api_v2: bool = False,
 ) -> Dict[str, Any]:
-    """Preserve API v2 built-ins; normalize client functions as before."""
+    """Preserve built-ins and use the schema contract of the selected route."""
     if isinstance(tool, collections.abc.Mapping):
         tool_type = tool.get("type")
         has_builtin_type = (
@@ -540,5 +543,36 @@ def normalize_tool_for_binding(
         if has_builtin_type or has_canonical_builtin:
             _validate_primary_builtin_tool_mapping(tool)
             return copy.deepcopy(dict(tool))
+
+    if use_api_v2:
+        if isinstance(tool, dict):
+            # Keep provider extensions and JSON Schema combinators verbatim.
+            if tool.get("type") == "function" and "function" in tool:
+                return copy.deepcopy(tool)
+            if "name" in tool:
+                return {"type": "function", "function": copy.deepcopy(tool)}
+        function = convert_to_openai_function(tool)
+        if isinstance(tool, BaseTool):
+            extras = getattr(tool, "extras", None) or {}
+            if extras.get("return_schema") is not None:
+                schema = extras["return_schema"]
+                function["return_parameters"] = (
+                    cast(type[BaseModel], schema).model_json_schema()
+                    if isinstance(schema, type) and is_basemodel_subclass(schema)
+                    else copy.deepcopy(schema)
+                )
+            if extras.get("few_shot_examples") is not None:
+                function["few_shot_examples"] = copy.deepcopy(
+                    extras["few_shot_examples"]
+                )
+        elif isinstance(tool, type) and is_basemodel_subclass(tool):
+            examples = getattr(tool, "few_shot_examples", None)
+            if callable(examples):
+                function["few_shot_examples"] = examples()
+        elif callable(tool):
+            return_model = create_return_schema_from_function(tool)
+            if return_model is not None:
+                function["return_parameters"] = return_model.model_json_schema()
+        return {"type": "function", "function": copy.deepcopy(function)}
 
     return copy.deepcopy(convert_to_gigachat_tool(tool))

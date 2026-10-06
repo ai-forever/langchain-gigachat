@@ -5,6 +5,7 @@ from langchain_gigachat.chat_models._contracts.primary.messages import (
 )
 from langchain_gigachat.chat_models._contracts.primary.payload import (
     build_payload,
+    merge_request_kwargs,
     normalize_response_format,
 )
 from langchain_gigachat.chat_models._contracts.primary.response import (
@@ -31,5 +32,6 @@ __all__ = [
     "convert_messages",
     "convert_stream_event",
     "create_chat_result",
+    "merge_request_kwargs",
     "normalize_response_format",
 ]

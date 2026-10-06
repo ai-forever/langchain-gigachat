@@ -344,15 +344,12 @@ def create_usage_metadata(usage: Any | None) -> UsageMetadata | None:
     input_tokens_value = raw.get("input_tokens")
     if input_tokens_value is None:
         input_tokens_value = details.get("prompt_tokens")
-    input_tokens = int(input_tokens_value or 0)
+    input_tokens = int(input_tokens_value or 0) + int(details.get("cached_tokens") or 0)
     output_tokens = int(raw.get("output_tokens") or 0)
-    total_tokens = raw.get("total_tokens")
     result = UsageMetadata(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
-        total_tokens=int(
-            total_tokens if total_tokens is not None else input_tokens + output_tokens
-        ),
+        total_tokens=input_tokens + output_tokens,
     )
     if details.get("cached_tokens") is not None:
         result["input_token_details"] = {"cache_read": int(details["cached_tokens"])}

@@ -7,6 +7,7 @@ from functools import cached_property
 from typing import Any, Dict, Optional, Tuple
 
 import gigachat
+from gigachat.settings import Settings
 from langchain_core.load.serializable import Serializable
 from pydantic import ConfigDict
 
@@ -34,6 +35,9 @@ class _GigaChatClientMixin(Serializable):
 
     access_token: Optional[str] = None
     """Access token for GigaChat."""
+
+    session_id: Optional[str] = None
+    """Session ID sent as X-Session-ID by the SDK for shared-prefix caching."""
 
     model: Optional[str] = None
     """Model name to use."""
@@ -101,7 +105,13 @@ class _GigaChatClientMixin(Serializable):
         Subclasses can override to add extra parameters (e.g. ``profanity_check``).
         Always call ``super()._get_client_init_kwargs()`` and update the result.
         """
+        if self.session_id is not None and "session_id" not in Settings.model_fields:
+            raise ValueError(
+                "session_id requires a GigaChat SDK with session_id support. "
+                "Upgrade the SDK or use gigachat.session_id_cvar with this version."
+            )
         return {
+            **({"session_id": self.session_id} if self.session_id is not None else {}),
             "base_url": self.base_url,
             "auth_url": self.auth_url,
             "credentials": self.credentials,

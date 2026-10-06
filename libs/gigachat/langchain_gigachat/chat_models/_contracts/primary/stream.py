@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import json
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Any, cast
 from uuid import uuid4
@@ -30,6 +31,7 @@ from langchain_gigachat.chat_models._contracts.primary.content import (
     validate_provider_id,
 )
 from langchain_gigachat.chat_models._contracts.primary.types import (
+    ClientToolStreamState,
     PrimaryStreamError,
     StreamState,
 )
@@ -51,6 +53,7 @@ _EVENT_FIELDS = frozenset(
         "additional_data",
         "created_at",
         "event",
+        "error_details",
         "finish_reason",
         "logprobs",
         "message_id",
@@ -194,27 +197,22 @@ def _client_function_calls(
             for part in message.content or []
             if part.function_call is not None
         ]
-        if len(part_calls) > 1:
-            raise ValueError(
-                "Primary streaming supports one client tool call per completion."
-            )
-        selected = part_calls[0] if part_calls else message.function_call
+        selected = part_calls or (
+            [message.function_call] if message.function_call is not None else []
+        )
         if part_calls and message.function_call is not None:
-            part_value = part_calls[0].model_dump(exclude_none=True, by_alias=True)
-            message_value = message.function_call.model_dump(
-                exclude_none=True, by_alias=True
-            )
-            if part_value != message_value:
+            message_value = provider_dict(message.function_call)
+            if not any(provider_dict(call) == message_value for call in part_calls):
                 raise ValueError(
                     "Primary stream contains conflicting part- and message-level "
                     "client function calls."
                 )
-        if selected is not None:
-            values.append((selected, message))
+        values.extend((call, message) for call in selected)
     if len(values) > 1:
-        raise ValueError(
-            "Primary streaming supports one client tool call per completion."
-        )
+        ids = [provider_dict(call).get("id") for call, _ in values]
+        if any(value is None for value in ids) or len(set(ids)) != len(ids):
+            raise ValueError("Parallel client function calls require unique IDs.")
+
     return values
 
 
@@ -228,13 +226,96 @@ def _set_client_state_id(state: StreamState, value: str) -> None:
     state.tools_state_id = value
 
 
+def _completed_arguments_match(previous: str, value: Any) -> bool:
+    """Compare a terminal full snapshot with already emitted JSON fragments."""
+    try:
+        decoded = json.loads(previous)
+        incoming = json.loads(value) if isinstance(value, str) else value
+    except (ValueError, TypeError):
+        return False
+    return bool(decoded == incoming)
+
+
+def _explicit_client_tool_chunks(
+    state: StreamState,
+    calls: Sequence[tuple[gm.PrimaryChatFunctionCall, gm.ChatMessageChunk]],
+    *,
+    terminal: bool,
+) -> list[ToolCallChunk]:
+    chunks: list[ToolCallChunk] = []
+    if state.client_tool_name is not None:
+        raise ValueError(
+            "Primary stream mixes identified and unidentified client calls."
+        )
+    for call, _message in calls:
+        call_id = validate_provider_id(
+            provider_dict(call).get("id"), field="function_call.id"
+        )
+        if call_id is None:
+            raise ValueError("Parallel client function calls require unique IDs.")
+        name = call.name
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("Function call name must be a non-empty string.")
+        first = call_id not in state.client_calls
+        if first:
+            state.client_calls[call_id] = ClientToolStreamState(
+                name=name, index=_next_index(state)
+            )
+        current = state.client_calls[call_id]
+        if current.name != name:
+            raise ValueError("Primary stream changed client function name mid-call.")
+        fragment = json_fragment(call.arguments)
+        mode = "fragments" if isinstance(call.arguments, str) else "complete"
+        if (
+            terminal
+            and current.argument_mode is not None
+            and _completed_arguments_match(current.arguments, call.arguments)
+        ):
+            fragment = ""
+        elif current.argument_mode is None:
+            current.argument_mode = mode
+            current.arguments = fragment
+        elif current.argument_mode != mode:
+            raise ValueError(
+                "Primary stream changed client function argument encoding."
+            )
+        elif mode == "fragments":
+            current.arguments += fragment
+        elif current.arguments == fragment:
+            fragment = ""
+        else:
+            raise ValueError(
+                "Primary stream emitted multiple complete client argument values."
+            )
+        chunks.append(
+            tool_call_chunk(
+                name=name if first else None,
+                id=call_id if first else None,
+                args=fragment,
+                index=current.index,
+            )
+        )
+        state.client_tool_started = True
+        _close_text(state)
+    return chunks
+
+
 def _client_tool_chunks(
     state: StreamState,
     calls: Sequence[tuple[gm.PrimaryChatFunctionCall, gm.ChatMessageChunk]],
     *,
     event_state_ids: Sequence[str],
+    terminal: bool,
 ) -> list[ToolCallChunk]:
     chunks: list[ToolCallChunk] = []
+    if state.client_calls or any(
+        provider_dict(call).get("id") is not None for call, _ in calls
+    ):
+        if len(event_state_ids) > 1:
+            raise ValueError("Primary client calls require one shared tools_state_id.")
+        if event_state_ids:
+            _set_client_state_id(state, event_state_ids[0])
+        return _explicit_client_tool_chunks(state, calls, terminal=terminal)
     if calls:
         function_call, message = calls[0]
         message_state_id = validate_provider_id(
@@ -270,7 +351,13 @@ def _client_tool_chunks(
         _close_text(state)
 
         arguments = function_call.arguments
-        if isinstance(arguments, str):
+        if (
+            terminal
+            and state.client_tool_argument_mode is not None
+            and _completed_arguments_match(state.client_tool_arguments_text, arguments)
+        ):
+            fragment = ""
+        elif isinstance(arguments, str):
             fragment = arguments
             if state.client_tool_argument_mode is None:
                 state.client_tool_argument_mode = "fragments"
@@ -656,11 +743,25 @@ def _observe_metadata(
     unknown = unknown_provider_fields(event, _EVENT_FIELDS)
     if unknown:
         metadata["provider_fields"] = unknown
-    if event.additional_data is not None:
-        metadata["additional_data"] = copy.deepcopy(event.additional_data)
-    if event.logprobs is not None:
+    for field_name in ("additional_data", "error_details"):
+        value = getattr(event, field_name, None)
+        if value is not None:
+            state.provider_metadata_snapshots[field_name] = copy.deepcopy(value)
+        # These are snapshots, not token deltas. Emit the latest value once,
+        # after completion, so LangChain cannot concatenate strings inside it.
+        if (
+            _is_completion_event(event)
+            and field_name in state.provider_metadata_snapshots
+        ):
+            metadata[field_name] = copy.deepcopy(
+                state.provider_metadata_snapshots[field_name]
+            )
+    logprobs = event.logprobs or [
+        item for message in event.messages or [] for item in message.logprobs or []
+    ]
+    if logprobs:
         metadata["logprobs"] = [
-            item.model_dump(exclude_none=True, by_alias=True) for item in event.logprobs
+            item.model_dump(exclude_none=True, by_alias=True) for item in logprobs
         ]
     return metadata
 
@@ -676,6 +777,12 @@ def _usage_update(state: StreamState, value: Any) -> UsageMetadata | None:
     if state.usage_metadata == normalized:
         return None
     raise ValueError("Primary stream emitted conflicting usage snapshots.")
+
+
+def _is_completion_event(event: gm.PrimaryChatCompletionChunk) -> bool:
+    return event.event == "response.message.done" or (
+        event.event is None and event.finish_reason is not None
+    )
 
 
 def convert_stream_event(
@@ -706,10 +813,7 @@ def convert_stream_event(
             raise ValueError(
                 "Primary stream emitted content after response.message.done"
             )
-        if (
-            event.event == "response.message.done"
-            and event_data == state.completion_event
-        ):
+        if _is_completion_event(event) and event_data == state.completion_event:
             return None
 
     calls = _client_function_calls(messages)
@@ -717,12 +821,13 @@ def convert_stream_event(
         state,
         calls,
         event_state_ids=event_state_ids,
+        terminal=_is_completion_event(event),
     )
     resolved_tools = _resolve_server_tools(state, event, messages)
     content = _convert_content(state, event, messages, resolved_tools)
 
     if (
-        event.event == "response.message.done"
+        _is_completion_event(event)
         and state.client_tool_started
         and state.client_tools_state_id is None
     ):
@@ -734,7 +839,7 @@ def convert_stream_event(
     response_metadata = _observe_metadata(state, event)
     if event.finish_reason is not None:
         response_metadata["finish_reason"] = event.finish_reason
-    if event.event == "response.message.done":
+    if _is_completion_event(event):
         if state.provider_message_id is not None:
             response_metadata["message_id"] = state.provider_message_id
         if state.model is not None:
@@ -762,7 +867,12 @@ def convert_stream_event(
     reasoning = reasoning_content(content)
     if reasoning is not None:
         additional_kwargs["reasoning_content"] = reasoning
-    if event.event == "response.message.done":
+    if _is_completion_event(event):
+        if state.client_calls:
+            additional_kwargs["function_calls"] = [
+                {"id": call_id, "name": call.name, "arguments": call.arguments}
+                for call_id, call in state.client_calls.items()
+            ]
         if state.provider_tools_state_ids:
             additional_kwargs["tools_state_ids"] = list(state.provider_tools_state_ids)
         if state.client_tools_state_id is not None:
@@ -774,7 +884,7 @@ def convert_stream_event(
     if not has_payload:
         return None
 
-    if event.event == "response.message.done":
+    if _is_completion_event(event):
         state.completion_event = event_data
 
     message = AIMessageChunk(
@@ -784,7 +894,7 @@ def convert_stream_event(
         response_metadata=response_metadata,
         tool_call_chunks=tool_calls,
         usage_metadata=usage_metadata,
-        chunk_position="last" if event.event == "response.message.done" else None,
+        chunk_position="last" if _is_completion_event(event) else None,
     )
     return ChatGenerationChunk(
         message=message,

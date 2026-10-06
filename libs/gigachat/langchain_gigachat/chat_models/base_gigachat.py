@@ -34,6 +34,10 @@ class _BaseGigaChat(_GigaChatClientMixin):
     Reasoning effort for reasoning-capable models (e.g. GigaChat-2-Reasoning).
     When set, the API may return reasoning_content in the assistant message.
     """
+    reasoning_max_tokens: Optional[int] = None
+    """Maximum reasoning tokens before the final answer."""
+    parallel_tool_calls: Optional[bool] = None
+    """Allow parallel client function calls on API v2."""
     function_ranker: Optional[Union[Dict[str, Any], gm.FunctionRanker]] = None
     """Function/tool ranking settings. Use ``{"enabled": False}`` to disable."""
 
@@ -60,6 +64,9 @@ class _BaseGigaChat(_GigaChatClientMixin):
             "top_p": self.top_p,
             "repetition_penalty": self.repetition_penalty,
             "reasoning_effort": self.reasoning_effort,
+            "reasoning_max_tokens": self.reasoning_max_tokens,
+            "parallel_tool_calls": self.parallel_tool_calls,
+            "session_id": self.session_id,
             "function_ranker": self.function_ranker,
         }
 

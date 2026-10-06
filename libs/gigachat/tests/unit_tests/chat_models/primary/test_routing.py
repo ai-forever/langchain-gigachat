@@ -304,9 +304,9 @@ def test_default_route_preserves_legacy_result_metadata(
     assert result.content == "Legacy response"
     assert result.id == REQUEST_ID
     assert result.usage_metadata == {
-        "input_tokens": 11,
+        "input_tokens": 14,
         "output_tokens": 4,
-        "total_tokens": 15,
+        "total_tokens": 18,
         "input_token_details": {"cache_read": 3},
     }
     payload = sdk_client.chat.call_args.args[0]

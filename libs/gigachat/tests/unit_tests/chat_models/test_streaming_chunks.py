@@ -230,9 +230,9 @@ def test_build_stream_chunk_with_usage(gigachat_instance: GigaChat) -> None:
     chunk_m, _, _ = gigachat_instance._build_stream_chunk(raw_chunk, first_chunk=False)
     assert isinstance(chunk_m, AIMessageChunk)
     assert chunk_m.usage_metadata is not None
-    assert chunk_m.usage_metadata["input_tokens"] == 10
+    assert chunk_m.usage_metadata["input_tokens"] == 15
     assert chunk_m.usage_metadata["output_tokens"] == 20
-    assert chunk_m.usage_metadata["total_tokens"] == 30
+    assert chunk_m.usage_metadata["total_tokens"] == 35
 
 
 def test_build_stream_chunk_without_content_uses_empty_string(
