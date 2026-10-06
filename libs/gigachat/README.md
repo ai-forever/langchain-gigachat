@@ -58,6 +58,10 @@ This library is part of [GigaChain](https://github.com/ai-forever/gigachain) and
 pip install -U langchain-gigachat
 ```
 
+This documentation includes the unreleased `0.5.2a1` prerelease.
+For its examples, install the local sources and SDK `0.2.4a1` as described in
+[example setup](../../examples/sdk_contract_alignment/README.md#подготовка).
+
 **Requirements:** Python 3.10+
 
 > **Note:** In production, keep TLS verification enabled (default).
@@ -169,6 +173,10 @@ print(msg.additional_kwargs.get("reasoning_content"))  # model's chain-of-though
 
 ### API v2 (`/v2/chat/completions`)
 
+For a runnable walkthrough, see the [API v2 feature notebook and v1 comparison](../../examples/api_v2_feature_comparison.ipynb)
+(Russian). It includes separate runnable recipes, readable answers, and side-by-side
+examples for both routes. API calls run when you execute the corresponding cells.
+
 The primary API v2 contract is opt-in; existing applications keep using the
 legacy contract by default. Enable it on the model or on one bound runnable:
 
@@ -200,7 +208,7 @@ def get_weather(city: str) -> str:
     return f"{city}: sunny, 22C"
 
 
-with_tools = llm.bind_tools([get_weather], tool_choice="auto")
+with_tools = llm.bind_tools([get_weather], tool_choice="get_weather")
 question = HumanMessage("What is the weather in Moscow?")
 assistant = with_tools.invoke([question])
 call = assistant.tool_calls[0]
@@ -209,7 +217,9 @@ result = ToolMessage(
     tool_call_id=call["id"],
     name=call["name"],
 )
-answer = with_tools.invoke([question, assistant, result])
+answer = llm.bind_tools([get_weather], tool_choice="auto").invoke(
+    [question, assistant, result]
+)
 ```
 
 Provider-managed tools are also bound through the public API:
@@ -257,6 +267,10 @@ v2 messages. Stateful requests accept `assistant_id=...` or
 `storage={"thread_id": ...}`. For stored assistant/thread state, an instance
 default model is omitted unless the invocation provides an explicit model.
 
+API v2 supports `tool_choice="any"` / `"required"`, union argument schemas,
+and `parallel_tool_calls=True`. Return one `ToolMessage` per call, preserving
+each call ID.
+
 Current limitations:
 
 - parallel client function calls require distinct provider call IDs;
@@ -266,7 +280,7 @@ Current limitations:
 ### SDK contract alignment
 
 See the [five runnable examples](../../examples/sdk_contract_alignment/README.md)
-for complete request/response flows and setup with the aligned SDK.
+for complete request/response flows and setup with SDK `0.2.4a1`.
 
 The preview supports reasoning budgets, per-call IDs, parallel v2 functions,
 `anyOf` tool schemas on v2, and provider response metadata. Generation controls
@@ -274,7 +288,7 @@ are placed inside `model_options` on v2; explicit nested values take priority.
 Rare service options can be passed with `bind(additional_fields={...})` without
 adding them to the model constructor.
 
-With the aligned SDK, use a stable session identifier for related requests:
+With SDK `0.2.4a1`, use a stable session identifier for related requests:
 
 ```python
 llm = GigaChat(use_api_v2=True, session_id="my-conversation", max_tokens=256)
@@ -287,7 +301,7 @@ its cached portion. Provider counters in the callback result
 makes caching possible; cache hits depend on the server and request contents.
 
 See [SDK alignment and compatibility](MIGRATION.md#sdk-contract-alignment)
-for requirements, request examples, and the scope of the fixes.
+for requirements, request examples, and compatibility details.
 
 ## Tool Calling
 

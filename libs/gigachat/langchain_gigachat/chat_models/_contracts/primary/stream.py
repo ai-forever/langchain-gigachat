@@ -112,6 +112,7 @@ def _next_index(state: StreamState) -> int:
 
 
 def _text_index(state: StreamState, role: str) -> int | str:
+    state.active_reasoning_message_id = None
     if state.active_text_block_index is None or state.active_text_block_role != role:
         state.active_text_block_index = _next_index(state)
         state.active_text_block_role = role
@@ -121,15 +122,14 @@ def _text_index(state: StreamState, role: str) -> int | str:
 def _close_text(state: StreamState) -> None:
     state.active_text_block_index = None
     state.active_text_block_role = None
+    state.active_reasoning_message_id = None
 
 
 def _reasoning_index(state: StreamState, message_id: str | None) -> int | str:
-    if (
-        state.active_reasoning_message_id is None
-        or state.active_reasoning_message_id != message_id
-    ):
+    reasoning_id = message_id or "__reasoning__"
+    if state.active_reasoning_message_id != reasoning_id:
         _close_text(state)
-        state.active_reasoning_message_id = message_id or "__reasoning__"
+        state.active_reasoning_message_id = reasoning_id
         return _next_index(state)
     # The current index is immediately before next_block_index because reasoning
     # stays active until another content kind is observed.

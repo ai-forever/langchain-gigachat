@@ -41,6 +41,36 @@ def _blocks(chunk: ChatGenerationChunk) -> list[dict[str, Any]]:
     return [dict(block) for block in chunk.message.content_blocks]
 
 
+@pytest.mark.parametrize("message_id", [None, "message-1"])
+def test_reasoning_fragments_merge_without_colliding_with_text(
+    message_id: str | None,
+) -> None:
+    state = primary.StreamState()
+    chunks = [
+        _convert(
+            {
+                "event": "response.message.delta",
+                "messages": [
+                    {"role": "assistant", "message_id": message_id, **fragment}
+                ],
+            },
+            state,
+        )
+        for fragment in (
+            {"reasoning_content": "First "},
+            {"reasoning_content": "thought."},
+            {"content": [{"text": "Answer."}]},
+            {"reasoning_content": "Second "},
+            {"reasoning_content": "thought."},
+        )
+    ]
+    assert _blocks(reduce(add, chunks)) == [
+        {"type": "reasoning", "reasoning": "First thought.", "index": 0},
+        {"type": "text", "text": "Answer.", "index": 1},
+        {"type": "reasoning", "reasoning": "Second thought.", "index": 2},
+    ]
+
+
 def test_text_reasoning_files_and_citations_keep_ordered_blocks() -> None:
     state = primary.StreamState()
     chunk = _convert(
