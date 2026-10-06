@@ -22,7 +22,7 @@ pip install -U langchain-gigachat
 
 This documentation includes the unreleased `0.5.2a1` prerelease.
 For its examples, install the local sources and SDK `0.2.4a1` as described in
-[example setup](examples/sdk_contract_alignment/README.md#подготовка).
+[example setup](examples/sdk_contract_alignment/README.md#setup).
 
 ```python
 from langchain_gigachat import GigaChat

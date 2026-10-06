@@ -25,11 +25,11 @@ def main() -> None:
         max_tokens=64,
     )
     catalog = "\n".join(
-        f"Аудитория {number}: {20 + number % 30} мест, есть проектор."
+        f"Room {number}: {20 + number % 30} seats, projector available."
         for number in range(101, 161)
     )
-    context = SystemMessage("Отвечай по этому справочнику:\n" + catalog)
-    for question in ("Сколько мест в аудитории 101?", "А в аудитории 120?"):
+    context = SystemMessage("Answer using this room directory:\n" + catalog)
+    for question in ("How many seats are in room 101?", "What about room 120?"):
         answer = llm.invoke(
             [context, HumanMessage(question)],
             config={"callbacks": [ShowProviderUsage()]},

@@ -14,7 +14,7 @@ async def main() -> None:
         max_tokens=128,
     )
     combined: AIMessageChunk | None = None
-    async for chunk in llm.astream("В двух предложениях расскажи про озеро Байкал."):
+    async for chunk in llm.astream("Describe Lake Baikal in two sentences."):
         print(chunk.text, end="", flush=True)
         combined = chunk if combined is None else combined + chunk
     if combined is None:

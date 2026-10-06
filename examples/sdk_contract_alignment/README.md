@@ -1,14 +1,14 @@
-# Примеры возможностей GigaChat
+# GigaChat feature examples
 
-Пять самостоятельных скриптов для предрелизной `langchain-gigachat 0.5.2a1`.
-Каждый показывает полный путь: создать модель, отправить запрос, прочитать ответ.
-Скрипты выполняют реальные запросы только при запуске; импортировать их безопасно.
+Five standalone scripts for the `langchain-gigachat 0.5.2a1` prerelease.
+Each covers the full flow: create a model, send a request, and read the response.
+The scripts make live requests only when run; importing them does not send requests.
 
-## Подготовка
+## Setup
 
-Нужны Python 3.10+, предрелизная `langchain-gigachat 0.5.2a1` и
-предрелизный GigaChat SDK `0.2.4a1`. Установите оба пакета из исходников.
-Из корня этого репозитория, если исходники SDK находятся рядом:
+You need Python 3.10+, the `langchain-gigachat 0.5.2a1` prerelease, and the
+GigaChat SDK `0.2.4a1` prerelease. Install both packages from source.
+From this repository's root, with the SDK source in a sibling directory:
 
 ```bash
 python -m venv .venv
@@ -16,89 +16,88 @@ source .venv/bin/activate
 python -m pip install -e ../gigachat -e ./libs/gigachat
 ```
 
-Путь `../gigachat` замените на каталог исходников SDK.
-SDK `0.2.3` поддерживает базовые сценарии, но не все возможности этих примеров.
+Replace `../gigachat` with the path to your SDK source directory.
+SDK `0.2.3` supports the basic flows, but not every feature in these examples.
 
-Авторизация читается SDK из `GIGACHAT_CREDENTIALS` или
-`GIGACHAT_ACCESS_TOKEN`; также поддерживаются его обычные настройки scope и TLS.
-Настройте их в своём окружении. Не записывайте ключи в скрипты.
-Модель задаётся переменной `GIGACHAT_MODEL`, по умолчанию — `GigaChat`.
-Для reasoning, storage и принудительного выбора инструментов нужна поддержка
-соответствующей возможности вашим сервером, моделью и аккаунтом.
+The SDK reads authentication from `GIGACHAT_CREDENTIALS` or
+`GIGACHAT_ACCESS_TOKEN`; its usual scope and TLS settings also apply.
+Configure these in your environment. Do not put credentials in the scripts.
+Set the model through `GIGACHAT_MODEL`; the default is `GigaChat`.
+Reasoning, storage, and forced tool selection require support from your server,
+model, and account.
 
-Запускайте выбранный пример из корня репозитория:
+Run an example from the repository root:
 
 ```bash
 python examples/sdk_contract_alignment/parallel_tools.py
 ```
 
-## Что попробовать
+## What to try
 
-| Скрипт | Сценарий | На что смотреть |
+| Script | Scenario | What to look for |
 |---|---|---|
-| [generation_options.py](generation_options.py) | Одна арифметическая задача через v1 и v2; затем отдельный короткий запрос с вложенными параметрами | `reasoning_max_tokens`, приоритет `model_options.max_tokens`, `additional_fields`, `finish_reason` |
-| [parallel_tools.py](parallel_tools.py) | Сравнить вместимость двух аудиторий; номер — `int` или `str` | `anyOf`, `required` только в первом ходе, отдельный ID каждого вызова и результат для каждого ID |
-| [streaming_metadata.py](streaming_metadata.py) | Получить текст через `astream()` и собрать итоговое сообщение | Текст, итоговый usage, `additional_data`/`error_details`, content blocks без дублирования ID |
-| [session_usage.py](session_usage.py) | Два вопроса к общему справочнику с одним `X-Session-ID` | Полный вход LangChain, его кэшированная часть и исходные счётчики SDK через callback |
-| [stored_tool_results.py](stored_tool_results.py) | Создать storage thread с вызовом функции и продолжить его только результатами | Разные роли `thread_id`, `tools_state_id`, `tool_call_id`; отсутствие повторной передачи истории и модели |
+| [generation_options.py](generation_options.py) | Solve the same arithmetic problem through v1 and v2, then make a separate short request with nested options | `reasoning_max_tokens`, the precedence of `model_options.max_tokens`, `additional_fields`, `finish_reason` |
+| [parallel_tools.py](parallel_tools.py) | Compare the capacities of two rooms whose identifiers can be `int` or `str` | `anyOf`, `required` on the first turn only, a separate ID for each call and a result for each ID |
+| [streaming_metadata.py](streaming_metadata.py) | Stream text with `astream()` and assemble the final message | Text, final usage, `additional_data`/`error_details`, and content blocks without duplicate IDs |
+| [session_usage.py](session_usage.py) | Ask two questions about the same room directory with one `X-Session-ID` | Total LangChain input, its cached portion, and raw SDK counters through a callback |
+| [stored_tool_results.py](stored_tool_results.py) | Create a stored thread with a function call, then continue it using only the results | The distinct roles of `thread_id`, `tools_state_id`, and `tool_call_id`; no need to resend history or the model |
 
-### Почему цикл инструментов устроен именно так
+### How the tool loop works
 
-В `parallel_tools.py` функция `get_room(room: int | str)` описывает два допустимых
-типа аргумента. Через v2 схема сохраняет `anyOf`. В v1 остаётся прежнее ограничение
-на такие union-схемы.
+In `parallel_tools.py`, `get_room(room: int | str)` accepts two argument types.
+The v2 schema preserves `anyOf`. The v1 route still has its existing limitation
+on these union schemas.
 
-`parallel_tool_calls=True` разрешает несколько вызовов в одном ответе. Модель
-может выбрать последовательные вызовы; пример обрабатывает оба случая. Для
-каждого вызова создаётся свой `ToolMessage` с исходным `call["id"]`, даже если
-имя функции совпадает. Локальные функции здесь выполняются последовательно;
-флаг относится к форме ответа модели.
+`parallel_tool_calls=True` allows multiple calls in one response. The model may
+choose sequential calls instead; the example handles both cases. Each call gets
+its own `ToolMessage` with the original `call["id"]`, even when the function name
+is the same. The local functions run sequentially here; the flag controls the
+shape of the model's response.
 
-`required` действует только в первом ходе. После результатов используется
-`auto`, чтобы модель могла закончить текстовым ответом. Цикл ограничен четырьмя
-ходами. В реальном агенте исключения инструментов также нужно обрабатывать
-согласно правилам приложения.
+`required` applies only to the first turn. After returning the results, the loop
+uses `auto` so the model can finish with a text response. The loop is limited to
+four turns. A production agent should also handle tool exceptions according to
+the application's requirements.
 
-### Сессия, история и токены
+### Sessions, history, and tokens
 
-`session_id` повторяется между связанными запросами и позволяет серверу
-использовать кэш общего префикса. Он не хранит диалог. Кэш может остаться нулевым:
-скрипт показывает фактические счётчики, а не проверяет гарантированный cache hit.
-Для хранения диалога используется отдельный `storage.thread_id`.
+Reusing `session_id` across related requests lets the server use a shared prefix
+cache. It does not store the conversation. Cached usage may remain zero: the
+script reports the actual counters and does not assume a guaranteed cache hit.
+Conversation storage uses a separate `storage.thread_id`.
 
-Например, если SDK сообщает 14 новых входных токенов, 2430 кэшированных и 2
-выходных, LangChain вернёт `input_tokens=2444`, `cache_read=2430`,
-`output_tokens=2`, `total_tokens=2446`. В callback исходный SDK usage сохраняет
-свои значения для тарификации. Пример `session_usage.py` выводит обе формы.
+For example, if the SDK reports 14 new input tokens, 2430 cached tokens, and 2
+output tokens, LangChain returns `input_tokens=2444`, `cache_read=2430`,
+`output_tokens=2`, and `total_tokens=2446`. The callback preserves the raw SDK
+usage values for billing. `session_usage.py` prints both representations.
 
-При продолжении сохранённого треда без предыдущего `AIMessage` передайте
-`tools_state_id` в `ToolMessage.additional_kwargs`. `tool_call_id` при этом
-остаётся ID конкретного вызова. Если передаёте всю историю, как в
-`parallel_tools.py`, адаптер извлекает состояние из предыдущего `AIMessage`.
+When continuing a stored thread without the previous `AIMessage`, pass
+`tools_state_id` in `ToolMessage.additional_kwargs`. `tool_call_id` remains the
+ID of the individual call. When you pass the full history, as in
+`parallel_tools.py`, the adapter extracts the state from the previous `AIMessage`.
 
-### Параметры и метаданные
+### Options and metadata
 
-Через v2 параметры генерации попадают в `model_options`. Явное вложенное
-значение имеет приоритет над shorthand и конструктором; вложенный `None`
-подавляет соответствующее значение по умолчанию. В примере дополнительный
-`ranker_options` передаётся через `additional_fields`, без отдельного параметра
-конструктора. Это возможность конкретного сервера: дополнительные настройки
-не гарантируют, что у аккаунта есть доступ к ним.
+On v2, generation options go into `model_options`. An explicit nested value takes
+precedence over shorthand options and constructor defaults; a nested `None`
+suppresses the corresponding default. The example passes `ranker_options`
+through `additional_fields`, without a dedicated constructor parameter. This
+feature depends on the server: passing extra options does not guarantee that
+your account has access to them.
 
-Бюджет reasoning не гарантирует получение финального ответа. Смотрите
-`finish_reason` и фактический текст. `temperature=0` также не гарантирует
-детерминированности.
+A reasoning budget does not guarantee a final answer. Check `finish_reason` and
+the actual response text. `temperature=0` does not guarantee determinism either.
 
-Сервисные поля могут отсутствовать. В v2 streaming снимки `additional_data`
-и `error_details` появляются в конце; пример собирает чанки оператором `+`
-ровно один раз и затем читает итоговые метаданные.
+Provider-specific fields may be absent. In v2 streaming, `additional_data` and
+`error_details` snapshots arrive at the end. The example adds each chunk exactly
+once with `+`, then reads the final metadata.
 
-## Проверка примеров
+## Example validation
 
-Для офлайн-проверки используется предрелизный SDK `0.2.4a1`: адаптер и HTTP-клиент
-SDK с подставленными ответами транспорта. Это проверяет формат запросов,
-обработку ответов и выполнение скриптов. Живые вызовы и доступность возможностей
-для конкретного аккаунта в эту проверку не входят.
+Offline validation uses the `0.2.4a1` SDK prerelease: the adapter and SDK HTTP
+client run with mocked transport responses. This checks request formats,
+response handling, and script execution. It does not test live requests or
+feature availability for a particular account.
 
-[Описание изменений и совместимости](../../libs/gigachat/MIGRATION.md#sdk-contract-alignment)
-· [Документация пакета](../../libs/gigachat/README.md)
+[Changes and compatibility](../../libs/gigachat/MIGRATION.md#sdk-contract-alignment)
+· [Package documentation](../../libs/gigachat/README.md)

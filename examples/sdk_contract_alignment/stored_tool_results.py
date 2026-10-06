@@ -10,7 +10,7 @@ from langchain_gigachat import GigaChat
 @tool
 def get_weather(city: str) -> str:
     """Return illustrative weather data for a city (not a live forecast)."""
-    return f"{city}: +20 °C, ясно (демонстрационные данные)."
+    return f"{city}: +20 °C, clear skies (sample data)."
 
 
 def main() -> None:
@@ -20,7 +20,7 @@ def main() -> None:
         max_tokens=128,
     )
     first = llm.bind_tools([get_weather], tool_choice="get_weather").invoke(
-        "Какая погода в Казани?", storage=True
+        "What is the weather in Kazan?", storage=True
     )
     thread_id = first.response_metadata.get("thread_id")
     state_id = first.additional_kwargs.get("tools_state_id")

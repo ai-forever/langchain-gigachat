@@ -12,7 +12,7 @@ def get_room(room: int | str) -> str:
     """Return room capacity by number or alphanumeric room code."""
     rooms = {"101": 24, "A-2": 40}
     capacity = rooms.get(str(room))
-    return f"Аудитория {room}: {capacity} мест" if capacity else "Аудитория не найдена"
+    return f"Room {room}: {capacity} seats" if capacity else "Room not found"
 
 
 def main() -> None:
@@ -26,7 +26,7 @@ def main() -> None:
     required = llm.bind_tools([get_room], tool_choice="required")
     automatic = llm.bind_tools([get_room], tool_choice="auto")
     history: list[BaseMessage] = [
-        HumanMessage("Узнай вместимость аудиторий 101 и A-2 и сравни их.")
+        HumanMessage("Find the capacities of rooms 101 and A-2 and compare them.")
     ]
     for turn in range(4):
         # Require a call only at the beginning; let the model finish afterwards.

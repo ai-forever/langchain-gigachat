@@ -16,7 +16,7 @@ def main() -> None:
         )
         # v1: reasoning_max_tokens at the root; v2: reasoning.max_tokens
         # inside model_options. The adapter handles the mapping.
-        message = llm.invoke("Сколько будет 17 × 23? Коротко объясни ответ.")
+        message = llm.invoke("What is 17 × 23? Briefly explain your answer.")
         print(f"\nAPI {'v2' if use_api_v2 else 'v1'}: {message.text}")
         print("Finish reason:", message.response_metadata.get("finish_reason"))
         print("Usage:", message.usage_metadata)
@@ -28,7 +28,7 @@ def main() -> None:
         reasoning=None,
         additional_fields={"ranker_options": {"enabled": False}},
     )
-    print("\nBound v2 options:", limited.invoke("Назови столицу Татарстана.").text)
+    print("\nBound v2 options:", limited.invoke("Name the capital of Tatarstan.").text)
 
 
 if __name__ == "__main__":

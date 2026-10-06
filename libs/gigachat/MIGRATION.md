@@ -172,12 +172,12 @@ These methods were removed in LangChain Core 1.x.
 
 ```python
 # Before
-text = llm.predict("Привет")
-text = await llm.apredict("Привет")
+text = llm.predict("Hello")
+text = await llm.apredict("Hello")
 
 # After
-text = llm.invoke("Привет").content
-text = (await llm.ainvoke("Привет")).content
+text = llm.invoke("Hello").content
+text = (await llm.ainvoke("Hello")).content
 ```
 
 **Why:** LangChain 1.x removed deprecated `predict`/`apredict` methods in favor of `invoke`/`ainvoke`.
@@ -349,7 +349,7 @@ These are additive and require no migration, but are worth knowing about.
 
 ```python
 llm = GigaChat(model="GigaChat-2-Reasoning", reasoning_effort="medium")
-msg = llm.invoke([HumanMessage(content="Реши задачу...")])
+msg = llm.invoke([HumanMessage(content="Solve the problem...")])
 reasoning = msg.additional_kwargs.get("reasoning_content")
 ```
 
@@ -372,7 +372,7 @@ Audio and document uploads alongside images:
 from langchain_core.messages import HumanMessage
 
 msg = HumanMessage(content_blocks=[
-    {"type": "text", "text": "Опиши вложения."},
+    {"type": "text", "text": "Describe the attachments."},
     {"type": "image", "file_id": "img-id"},
     {"type": "audio", "file_id": "audio-id"},
     {"type": "file", "file_id": "doc-id"},

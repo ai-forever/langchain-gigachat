@@ -60,7 +60,7 @@ pip install -U langchain-gigachat
 
 This documentation includes the unreleased `0.5.2a1` prerelease.
 For its examples, install the local sources and SDK `0.2.4a1` as described in
-[example setup](../../examples/sdk_contract_alignment/README.md#подготовка).
+[example setup](../../examples/sdk_contract_alignment/README.md#setup).
 
 **Requirements:** Python 3.10+
 
@@ -151,7 +151,7 @@ from langchain_gigachat import GigaChatEmbeddings
 
 emb = GigaChatEmbeddings(model="Embeddings")
 
-vector = emb.embed_query("Привет!")
+vector = emb.embed_query("Hello!")
 print(len(vector))
 ```
 
@@ -174,7 +174,7 @@ print(msg.additional_kwargs.get("reasoning_content"))  # model's chain-of-though
 ### API v2 (`/v2/chat/completions`)
 
 For a runnable walkthrough, see the [API v2 feature notebook and v1 comparison](../../examples/api_v2_feature_comparison.ipynb)
-(Russian). It includes separate runnable recipes, readable answers, and side-by-side
+with separate runnable recipes, readable answers, and side-by-side
 examples for both routes. API calls run when you execute the corresponding cells.
 
 The primary API v2 contract is opt-in; existing applications keep using the
