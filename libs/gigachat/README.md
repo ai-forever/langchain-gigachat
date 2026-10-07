@@ -272,6 +272,9 @@ API v2 supports `tool_choice="any"` / `"required"`, union argument schemas,
 and `parallel_tool_calls=True`. Return one `ToolMessage` per call, preserving
 each call ID.
 
+API v2 accepts only a JSON object as a tool result. Text, markdown, numbers,
+arrays and null are sent as `{"result": <value>}`; objects are sent as is.
+
 Current limitations:
 
 - parallel client function calls require distinct provider call IDs;
@@ -517,6 +520,11 @@ For the full list of parameters (auth, SSL/mTLS, retry, flags, etc.), see the [G
 ### Environment Variables
 
 All parameters can be configured via environment variables with the `GIGACHAT_` prefix (e.g. `GIGACHAT_CREDENTIALS`, `GIGACHAT_MODEL`, `GIGACHAT_BASE_URL`). See the [GigaChat SDK README](https://github.com/ai-forever/gigachat#environment-variables) for the full list.
+
+`GIGACHAT_USE_API_V2=true/false` selects the default chat contract when the model
+is created; `GigaChat(use_api_v2=...)` and invocation settings take priority.
+Tool history is not migrated between v1 and v2: start a new conversation when
+switching after tool calls.
 
 > **Note:** Retries are handled by the underlying `gigachat` SDK. Don't combine them with LangChain `.with_retry()` — the attempts multiply:
 >

@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 import gigachat.models as gm
 import pytest
 from langchain_core.messages import AIMessage, AIMessageChunk
+from pydantic import ValidationError
 
 from langchain_gigachat.chat_models.gigachat import GigaChat
 
@@ -313,3 +314,159 @@ def test_default_route_preserves_legacy_result_metadata(
     assert isinstance(payload, gm.Chat)
     assert payload.messages[0].role == gm.MessagesRole.USER
     assert payload.messages[0].content == "Hello"
+
+
+@pytest.mark.parametrize(
+    ("env_value", "expected_route", "expected_text"),
+    [
+        (None, "legacy", "Legacy response"),
+        ("true", "primary", "Primary response"),
+        ("1", "primary", "Primary response"),
+        ("TRUE", "primary", "Primary response"),
+        ("false", "legacy", "Legacy response"),
+        ("0", "legacy", "Legacy response"),
+        ("FALSE", "legacy", "Legacy response"),
+    ],
+)
+def test_env_selects_chat_contract(
+    sdk_client: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    env_value: str | None,
+    expected_route: str,
+    expected_text: str,
+) -> None:
+    if env_value is None:
+        monkeypatch.delenv("GIGACHAT_USE_API_V2", raising=False)
+    else:
+        monkeypatch.setenv("GIGACHAT_USE_API_V2", env_value)
+    _configure_responses(sdk_client)
+
+    result = GigaChat(model=MODEL).invoke("Hello")
+
+    assert result.content == expected_text
+    _assert_sync_non_stream_route(sdk_client, expected_route)
+
+
+@pytest.mark.parametrize("env_value", ["true", "false", "invalid"])
+@pytest.mark.parametrize("explicit", [True, False])
+def test_explicit_contract_overrides_environment(
+    sdk_client: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    env_value: str,
+    explicit: bool,
+) -> None:
+    monkeypatch.setenv("GIGACHAT_USE_API_V2", env_value)
+    _configure_responses(sdk_client)
+
+    GigaChat(model=MODEL, use_api_v2=explicit).invoke("Hello")
+
+    _assert_sync_non_stream_route(sdk_client, "primary" if explicit else "legacy")
+
+
+@pytest.mark.parametrize("env_value", ["", "v2", "typo"])
+def test_invalid_environment_contract_fails_before_request(
+    sdk_client: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    env_value: str,
+) -> None:
+    monkeypatch.setenv("GIGACHAT_USE_API_V2", env_value)
+
+    with pytest.raises(ValidationError, match="use_api_v2"):
+        GigaChat(model=MODEL)
+
+    sdk_client.chat.assert_not_called()
+    sdk_client.chat.create.assert_not_called()
+
+
+def test_environment_is_read_for_each_new_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GIGACHAT_USE_API_V2", "true")
+    primary_model = GigaChat(model=MODEL)
+    monkeypatch.setenv("GIGACHAT_USE_API_V2", "false")
+    legacy_model = GigaChat(model=MODEL)
+
+    assert primary_model.use_api_v2 is True
+    assert legacy_model.use_api_v2 is False
+
+
+def test_invocation_contract_overrides_environment(
+    sdk_client: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GIGACHAT_USE_API_V2", "true")
+    _configure_responses(sdk_client)
+
+    GigaChat(model=MODEL).bind(use_api_v2=False).invoke("Hello")
+
+    _assert_sync_non_stream_route(sdk_client, "legacy")
+
+
+async def test_async_contract_from_environment(
+    sdk_client: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GIGACHAT_USE_API_V2", "true")
+    _configure_responses(sdk_client)
+
+    result = await GigaChat(model=MODEL).ainvoke("Hello")
+
+    assert result.content == "Primary response"
+    _assert_async_non_stream_route(sdk_client, "primary")
+
+
+def _weather(city: str) -> str:
+    """Weather in a city."""
+    return city
+
+
+@pytest.mark.parametrize("use_api_v2", [False, True])
+def test_disable_streaming_for_tools_wins_over_streaming_flag(
+    sdk_client: MagicMock,
+    use_api_v2: bool,
+) -> None:
+    _configure_responses(sdk_client)
+    llm = GigaChat(
+        model=MODEL,
+        use_api_v2=use_api_v2,
+        streaming=True,
+        disable_streaming="tool_calling",
+    )
+
+    llm.bind_tools([_weather]).invoke("Hello")
+
+    _assert_sync_non_stream_route(sdk_client, "primary" if use_api_v2 else "legacy")
+    sdk_client.stream.assert_not_called()
+    sdk_client.chat.stream.assert_not_called()
+
+
+async def test_async_disable_streaming_for_tools_wins_over_streaming_flag(
+    sdk_client: MagicMock,
+) -> None:
+    _configure_responses(sdk_client)
+    llm = GigaChat(
+        model=MODEL,
+        use_api_v2=True,
+        streaming=True,
+        disable_streaming="tool_calling",
+    )
+
+    await llm.bind_tools([_weather]).ainvoke("Hello")
+
+    _assert_async_non_stream_route(sdk_client, "primary")
+    sdk_client.achat.stream.assert_not_called()
+
+
+def test_streaming_flag_still_streams_without_tools(sdk_client: MagicMock) -> None:
+    sdk_client.chat.stream.side_effect = lambda payload: _primary_stream()
+    llm = GigaChat(
+        model=MODEL,
+        use_api_v2=True,
+        streaming=True,
+        disable_streaming="tool_calling",
+    )
+
+    llm.invoke("Hello")
+
+    sdk_client.chat.stream.assert_called_once()
+    sdk_client.chat.create.assert_not_called()

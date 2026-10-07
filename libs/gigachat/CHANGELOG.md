@@ -19,6 +19,8 @@ Unreleased prerelease with opt-in API v2 support and expanded SDK integration.
 - A runnable API v1/v2 comparison notebook with separate examples and
   illustrative responses.
 - Shared `session_id` client setting and reasoning token budgets.
+- `GIGACHAT_USE_API_V2=true/false` selects the default chat contract at model
+  creation; explicit constructor and invocation settings take priority.
 - API v2 parallel client function calls with distinct call IDs, `any`/`required`
   client tool choice, and union argument schemas.
 - Additional request fields and response error/inline metadata preservation.
@@ -39,6 +41,12 @@ Unreleased prerelease with opt-in API v2 support and expanded SDK integration.
   `AIMessage`; parsing belongs to `with_structured_output()`.
 
 ### Fixed
+
+- API v2 tool results that are not JSON objects (text, markdown, numbers,
+  arrays, null) are sent as `{"result": <value>}`; the API answered 422
+  (`INVALID_PARAMS: invalid function result`) or 500 for long markdown.
+- `disable_streaming` is honored when the model has `streaming=True`;
+  `_generate` no longer re-enters streaming on its own.
 
 - Reasoning stream fragments aggregate into consecutive blocks without colliding
   with text blocks, including when the provider omits `message_id`.

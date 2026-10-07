@@ -4,13 +4,18 @@ from typing import Any, Dict, List, Literal, Optional, Union
 
 import gigachat.models as gm
 from gigachat._types import FileTypes
+from langchain_core.utils.utils import from_env
+from pydantic import Field
 
 from langchain_gigachat._client import _GigaChatClientMixin
 
 
 class _BaseGigaChat(_GigaChatClientMixin):
-    use_api_v2: bool = False
-    """Use the primary ``/v2/chat/completions`` contract."""
+    use_api_v2: bool = Field(
+        default_factory=from_env("GIGACHAT_USE_API_V2", default="false"),
+        validate_default=True,
+    )
+    """Use API v2. Defaults to GIGACHAT_USE_API_V2, read at model creation."""
     profanity_check: Optional[bool] = None
     """Check for profanity."""
     streaming: bool = False
