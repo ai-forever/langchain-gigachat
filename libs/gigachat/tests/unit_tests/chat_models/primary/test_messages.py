@@ -169,7 +169,7 @@ def test_tool_result_can_supply_its_name_without_prior_history() -> None:
     function_result = converted.content[0].function_result
     assert function_result is not None
     assert function_result.name == "weather"
-    assert function_result.result == "not json"
+    assert function_result.result == {"result": "not json"}
 
 
 def test_client_tool_call_id_is_distinct_from_provider_tools_state_id() -> None:
@@ -281,8 +281,8 @@ def test_parallel_same_function_roundtrip_keeps_ids_and_shared_state() -> None:
     ]
     assert [item["tools_state_id"] for item in converted] == ["shared-state"] * 3
     assert [item["content"][0]["function_result"] for item in converted[1:]] == [
-        {"id": "call-1", "name": "lookup", "result": 1},
-        {"id": "call-2", "name": "lookup", "result": 2},
+        {"id": "call-1", "name": "lookup", "result": {"result": 1}},
+        {"id": "call-2", "name": "lookup", "result": {"result": 2}},
     ]
     assert assistant == original
 
@@ -341,3 +341,25 @@ def test_explicit_raw_call_id_never_substitutes_missing_continuation_state() -> 
     )
     with pytest.raises(ValueError, match="missing provider tools_state_id"):
         primary.convert_messages([assistant], cached_uploads={})
+
+
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    [
+        ("plain text", {"result": "plain text"}),
+        ("# Report\n\n- item", {"result": "# Report\n\n- item"}),
+        ("391", {"result": 391}),
+        (391, {"result": 391}),
+        ("[1, 2]", {"result": [1, 2]}),
+        ("null", {"result": None}),
+        ('{"temp": 12}', {"temp": 12}),
+    ],
+)
+def test_tool_result_is_always_a_json_object(content: Any, expected: Any) -> None:
+    # API v2 rejects function_result.result that is not a JSON object (422).
+    message = ToolMessage(content=content, name="get_report", tool_call_id="fc-1")
+    converted = primary.convert_messages([message], cached_uploads={})[0]
+    assert converted.content is not None
+    function_result = converted.content[0].function_result
+    assert function_result is not None
+    assert function_result.result == expected

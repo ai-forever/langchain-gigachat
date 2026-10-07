@@ -352,7 +352,11 @@ def _detach_json_tool_result(
         active_containers.remove(container_id)
 
 
-def _normalize_tool_result(content: Any) -> Any:
+def _normalize_tool_result(content: Any) -> dict[str, Any]:
+    """Return the tool result as a JSON object, the only form API v2 accepts.
+
+    Text, numbers, arrays and null are wrapped as ``{"result": value}``.
+    """
     if isinstance(content, str):
         try:
             content = json.loads(content)
@@ -360,12 +364,15 @@ def _normalize_tool_result(content: Any) -> Any:
             try:
                 content = ast.literal_eval(content)
             except (SyntaxError, ValueError):
-                return content
-    return _detach_json_tool_result(
+                pass
+    result = _detach_json_tool_result(
         content,
         path="$",
         active_containers=set(),
     )
+    if isinstance(result, dict):
+        return result
+    return {"result": result}
 
 
 def _convert_ai_message(
