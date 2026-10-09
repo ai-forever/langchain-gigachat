@@ -1,9 +1,10 @@
 """Tests for _convert_delta_to_message_chunk and _build_stream_chunk."""
 
 import json
-from typing import Any, Dict
+from typing import Any, AsyncIterator, Dict, Iterator
 
 import pytest
+from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import (
     AIMessageChunk,
     ChatMessageChunk,
@@ -230,9 +231,9 @@ def test_build_stream_chunk_with_usage(gigachat_instance: GigaChat) -> None:
     chunk_m, _, _ = gigachat_instance._build_stream_chunk(raw_chunk, first_chunk=False)
     assert isinstance(chunk_m, AIMessageChunk)
     assert chunk_m.usage_metadata is not None
-    assert chunk_m.usage_metadata["input_tokens"] == 10
+    assert chunk_m.usage_metadata["input_tokens"] == 15
     assert chunk_m.usage_metadata["output_tokens"] == 20
-    assert chunk_m.usage_metadata["total_tokens"] == 30
+    assert chunk_m.usage_metadata["total_tokens"] == 35
 
 
 def test_build_stream_chunk_without_content_uses_empty_string(
@@ -254,3 +255,134 @@ def test_build_stream_chunk_without_content_uses_empty_string(
     }
     _, _, content = gigachat_instance._build_stream_chunk(raw_chunk, first_chunk=True)
     assert content == ""
+
+
+class _TokenRecorder(BaseCallbackHandler):
+    def __init__(self) -> None:
+        self.tokens: list[str] = []
+
+    def on_llm_new_token(self, token: str, **kwargs: Any) -> None:
+        self.tokens.append(token)
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize(
+    "ending", ["finish", "eof", "metadata_only", "after_finish", "cleared"]
+)
+async def test_legacy_public_stream_uses_latest_metadata_snapshots(
+    mocker: MockerFixture, asynchronous: bool, ending: str
+) -> None:
+    """Response snapshots must not concatenate during public chunk aggregation."""
+    initial = {
+        "thread_id": "thread-1",
+        "message_id": "message-1",
+        "additional_data": {
+            "sources": [{"index": 0, "url": "https://example.com", "title": "Draft"}],
+            "obsolete": True,
+        },
+        "error_details": {"http_status": 102, "message": "Pending"},
+    }
+    final = {
+        "thread_id": "thread-1",
+        "message_id": "message-1",
+        "additional_data": {
+            "sources": [{"index": 0, "url": "https://example.com", "title": "Final"}]
+        },
+        "error_details": {"http_status": 200, "message": "Complete"},
+    }
+    if ending == "cleared":
+        final.update(additional_data={}, error_details={})
+    usage = {
+        "prompt_tokens": 5,
+        "precached_prompt_tokens": 2,
+        "completion_tokens": 3,
+        "total_tokens": 8,
+    }
+    raw_chunks: list[dict[str, Any]] = [
+        {
+            "choices": [{"delta": {"content": "Hello "}}],
+            "x_headers": {"x-request-id": "request-1"},
+            **initial,
+        },
+        {"choices": [{"delta": {"content": "world"}}], **initial},
+    ]
+    if ending == "eof":
+        raw_chunks[-1].update(final, usage=usage)
+    elif ending in ("metadata_only", "after_finish", "cleared"):
+        if ending == "after_finish":
+            raw_chunks[-1]["choices"][0]["finish_reason"] = "stop"
+        raw_chunks.append({"choices": [], "usage": usage, **final})
+    else:
+        raw_chunks.append(
+            {
+                "choices": [{"delta": {}, "finish_reason": "stop"}],
+                "usage": usage,
+                **final,
+            }
+        )
+    for raw_chunk in raw_chunks:
+        raw_chunk["model"] = "test-model"
+    consumed = 0
+
+    def stream(*args: Any) -> Iterator[dict[str, Any]]:
+        nonlocal consumed
+        for raw_chunk in raw_chunks:
+            consumed += 1
+            yield raw_chunk
+
+    async def astream(*args: Any) -> AsyncIterator[dict[str, Any]]:
+        for raw_chunk in stream():
+            yield raw_chunk
+
+    sdk_client = mocker.patch("gigachat.GigaChat").return_value
+    sdk_client.stream.side_effect = stream
+    sdk_client.astream.side_effect = astream
+    recorder = _TokenRecorder()
+    llm = GigaChat(model="test-model", callbacks=[recorder])
+    if asynchronous:
+        async_iterator = llm.astream("hello")
+        first = await anext(async_iterator)
+        assert consumed == 1, "Text must be yielded before the SDK stream ends"
+        chunks = [first, *[chunk async for chunk in async_iterator]]
+    else:
+        iterator = llm.stream("hello")
+        first = next(iterator)
+        assert consumed == 1, "Text must be yielded before the SDK stream ends"
+        chunks = [first, *iterator]
+
+    assert first.content == "Hello "
+    assert all(
+        not (chunk.response_metadata.keys() & final.keys()) for chunk in chunks[:-1]
+    )
+    assert chunks[-1].response_metadata == final
+    assert chunks[-1].id == "request-1"
+    assert chunks[-1].chunk_position == "last"
+    aggregate = chunks[0]
+    for chunk in chunks[1:]:
+        aggregate += chunk
+    assert aggregate.content == "Hello world"
+    assert aggregate.id == "request-1"
+    assert all(
+        aggregate.response_metadata[key] == value for key, value in final.items()
+    )
+    assert aggregate.response_metadata["x_headers"] == {"x-request-id": "request-1"}
+    assert aggregate.usage_metadata == {
+        "input_tokens": 7,
+        "output_tokens": 3,
+        "total_tokens": 10,
+        "input_token_details": {"cache_read": 2},
+    }
+    assert "".join(recorder.tokens) == "Hello world"
+
+    # LangChain's invoke-with-streaming path must preserve the same snapshots.
+    recorder.tokens.clear()
+    response = (
+        await llm.ainvoke("hello", stream=True)
+        if asynchronous
+        else llm.invoke("hello", stream=True)
+    )
+    assert response.content == aggregate.content
+    assert response.id == aggregate.id
+    assert response.usage_metadata == aggregate.usage_metadata
+    assert response.response_metadata == aggregate.response_metadata
+    assert "".join(recorder.tokens) == "Hello world"

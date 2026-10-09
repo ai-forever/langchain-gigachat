@@ -1,14 +1,147 @@
-# Migration Guide: langchain-gigachat 0.3.x → 0.5.0
+# Migration Guide: langchain-gigachat 0.3.x → 0.5.x
 
-This guide covers all breaking changes in `langchain-gigachat` 0.5.0 and explains how to update your code.
+This guide covers the breaking changes in `langchain-gigachat` 0.5.0 and the
+opt-in primary API v2 preview added in 0.5.2a1.
+
+## Opting into API v2
+
+Legacy remains the default. Enable `/v2/chat/completions` explicitly on the
+model, or only on one bound runnable:
+
+```python
+from langchain_gigachat import GigaChat
+
+legacy = GigaChat()
+primary = GigaChat(use_api_v2=True)
+primary_once = legacy.bind(use_api_v2=True)
+```
+
+An invocation-level `use_api_v2` value overrides the constructor value and is
+consumed by the wrapper; it is never sent in a provider payload.
+
+The main request mappings are:
+
+| Public input | Legacy | API v2 |
+|--------------|--------|--------|
+| sampling options | top-level `Chat` fields | `model_options` |
+| `profanity_check` | forwarded directly | inverted to `disable_filter` |
+| `function_ranker` | `function_ranker` | `ranker_options` |
+| client tools | `functions` / `function_call` | functions tool / `tool_config` |
+| provider built-ins | rejected | `tools` / `tool_config` |
+| `response_format` | legacy field | `model_options.response_format` |
+| `assistant_id` | top-level field with aligned SDK | primary request field |
+| `tools_state_id`, `user_info` | rejected | primary request fields |
+| `reasoning_max_tokens` | top-level field | `model_options.reasoning.max_tokens` |
+| `parallel_tool_calls` | rejected | `model_options.parallel_tool_calls` |
+
+Client tool continuation differs by contract. Legacy uses
+`functions_state_id` and provider `role="function"`; API v2 uses
+`tools_state_id` and provider `role="tool"`. Each `AIMessage.tool_calls` entry
+returned by v2 has an ID that must be copied unchanged to the corresponding `ToolMessage.tool_call_id`.
+For a stored-thread continuation that sends only `ToolMessage` (without the
+preceding `AIMessage`), also set
+`additional_kwargs={"tools_state_id": assistant.additional_kwargs["tools_state_id"]}`
+on the tool result. The call ID and continuation state serve different purposes.
+Stateful tool histories are route-specific and are not translated between
+contracts; plain text history can be used with either route.
+
+API v2 storage accepts a boolean, `gigachat.models.ChatStorage`, or a compatible
+mapping. `assistant_id=...` and `storage={"thread_id": ...}` requests omit an
+instance default model so the provider can resolve stored state; an explicit
+invocation model is still forwarded.
+
+Native JSON Schema output uses
+`with_structured_output(schema, method="json_schema")`. To return an arbitrary
+JSON object without a user-provided schema:
+
+```python
+json_llm = primary.with_structured_output(None, method="json_mode")
+```
+
+The wrapper supplies the minimal schema required by the API:
+`response_format={"type": "json_schema", "schema": {"type": "object"}}`.
+It omits `strict` and parses the response as a dict; arrays and scalar JSON
+values are rejected. Low-level `bind(response_format=...)` requires a schema
+for `type="json_schema"` and returns a normal `AIMessage`; parsing belongs to
+`with_structured_output()`.
+
+## SDK contract alignment
+
+[Runnable examples and installation steps](../../examples/sdk_contract_alignment/README.md)
+show complete flows for all changes below.
+
+The `0.5.2a1` prerelease works with the `0.2.4a1` SDK prerelease.
+Install both from source using the linked setup instructions. SDK `0.2.3`
+remains the minimum for basic API v2 support. Session configuration, v1
+assistant IDs and call IDs, expanded response metadata, and explicit JSON
+null in v2 `additional_fields` require the newer SDK. Unsupported session
+and v1 assistant settings raise an error on older SDK versions.
+
+### Generation controls and additional fields
+
+```python
+llm = GigaChat(
+    use_api_v2=True,
+    max_tokens=512,
+    reasoning_max_tokens=128,
+    parallel_tool_calls=True,
+)
+# Nested values take precedence over shorthand and instance defaults.
+limited = llm.bind(model_options={"max_tokens": 64})
+# Advanced request options remain an explicit escape hatch.
+advanced = llm.bind(additional_fields={"ranker_options": {"enabled": False}})
+```
+
+An explicit nested `None` suppresses the corresponding generation default.
+Reasoning is opt-in; setting a budget does not guarantee that a model will
+produce a final answer. `temperature=0` does not promise deterministic output.
+
+### Functions and metadata
+
+The [parallel tools example](../../examples/sdk_contract_alignment/parallel_tools.py)
+uses `int | str` arguments, requires the first call, then lets the model finish
+with `auto`. The [stored result example](../../examples/sdk_contract_alignment/stored_tool_results.py)
+shows continuation without replaying the full history.
+
+API v2 accepts union (`anyOf`) argument schemas and
+`bind_tools(..., tool_choice="any")` / `"required"` for client functions.
+Parallel calls retain individual provider IDs; return every result with that
+ID, including when several calls invoke the same function. The continuation
+state is stored separately in `tools_state_id`. Single calls without an ID
+retain compatibility with older responses; ambiguous parallel histories are
+rejected. API v1 continues to use one function call and JSON-encoded results.
+
+Response metadata preserves additional data and error details; message content
+preserves inline metadata and token probabilities when the SDK exposes them.
+Streaming preserves the same data without repeating terminal snapshots
+or concatenating repeated identifiers. Additional data and error metadata are
+emitted once at completion, using the latest snapshot.
+
+### Session and token accounting
+
+`GigaChat(session_id="conversation-id")` and
+`GigaChatEmbeddings(session_id="conversation-id")` forward the session to the
+SDK. Existing SDK context-variable overrides keep their precedence. A session
+is not a storage thread and does not itself preserve conversation history.
+
+LangChain usage now counts the entire input: provider input tokens plus cached
+tokens. `input_token_details.cache_read` identifies the cached portion, while
+`total_tokens` is full input plus output. Raw provider usage remains available
+in the callback result `LLMResult.llm_output["token_usage"]`, so billing
+counters are not rewritten. See the [session usage example](../../examples/sdk_contract_alignment/session_usage.py)
+for both forms printed side by side.
+
+Offline conversion and transport tests validate request and response handling.
+Availability of reasoning, provider tools, storage, and response formats depends
+on the server, model, and account.
 
 ## Requirements
 
-| Dependency | Before (0.3.x) | After (0.5.0) |
-|------------|-----------------|---------------|
-| Python | >= 3.9 | **>= 3.10** |
+| Dependency | Before (0.3.x) | Current (0.5.2a1) |
+|------------|-----------------|-------------------|
+| Python | >= 3.9 | **>= 3.10, < 4** |
 | `langchain-core` | >= 0.3, < 1 | **>= 1, < 2** |
-| `gigachat` (SDK) | >= 0.1.41 | **>= 0.2.0, < 0.3** |
+| `gigachat` (SDK) | >= 0.1.41 | **>= 0.2.3, < 0.3** |
 
 > LangChain Core 1.x dropped Python 3.9 support. GigaChat SDK 0.2.0 migrated to Pydantic V2.
 
@@ -39,12 +172,12 @@ These methods were removed in LangChain Core 1.x.
 
 ```python
 # Before
-text = llm.predict("Привет")
-text = await llm.apredict("Привет")
+text = llm.predict("Hello")
+text = await llm.apredict("Hello")
 
 # After
-text = llm.invoke("Привет").content
-text = (await llm.ainvoke("Привет")).content
+text = llm.invoke("Hello").content
+text = (await llm.ainvoke("Hello")).content
 ```
 
 **Why:** LangChain 1.x removed deprecated `predict`/`apredict` methods in favor of `invoke`/`ainvoke`.
@@ -147,7 +280,7 @@ If you previously relied on it, update call sites to stop passing `stop=...`.
 
 ---
 
-### `tool_choice="any"` raises `ValueError`
+### API v1: `tool_choice="any"` raises `ValueError`
 
 Previously, `tool_choice="any"` was silently converted to `"auto"`. Now it raises `ValueError` by default.
 
@@ -166,17 +299,17 @@ llm = GigaChat(allow_any_tool_choice_fallback=True, ...)
 llm.bind_tools(tools, tool_choice="any")  # converts to "auto" with UserWarning
 ```
 
-**Why:** GigaChat API does not support `tool_choice="any"` (forced tool calling). Silent conversion to `"auto"` changed semantics unpredictably — the user expected a forced tool call, but the model could return plain text. An explicit error is safer.
+**Why:** GigaChat API v1 does not support `tool_choice="any"` (forced tool calling). Silent conversion to `"auto"` changed semantics unpredictably — the user expected a forced tool call, but the model could return plain text. An explicit error is safer.
 
 ---
 
-### Multiple `tool_calls` in `AIMessage` raises `ValueError`
+### API v1: multiple `tool_calls` in `AIMessage` raises `ValueError`
 
 Previously, when an `AIMessage` had multiple `tool_calls`, only `tool_calls[0]` was sent to the API and the rest were silently dropped. Now a `ValueError` is raised.
 
 ```python
 # If you encounter this error, restructure to use one tool call per turn.
-# GigaChat API does not support parallel function calls.
+# GigaChat API v1 does not support parallel function calls.
 ```
 
 **Why:** Silently dropping tool calls corrupted conversation history and led to unpredictable behavior in later turns.
@@ -216,7 +349,7 @@ These are additive and require no migration, but are worth knowing about.
 
 ```python
 llm = GigaChat(model="GigaChat-2-Reasoning", reasoning_effort="medium")
-msg = llm.invoke([HumanMessage(content="Реши задачу...")])
+msg = llm.invoke([HumanMessage(content="Solve the problem...")])
 reasoning = msg.additional_kwargs.get("reasoning_content")
 ```
 
@@ -239,7 +372,7 @@ Audio and document uploads alongside images:
 from langchain_core.messages import HumanMessage
 
 msg = HumanMessage(content_blocks=[
-    {"type": "text", "text": "Опиши вложения."},
+    {"type": "text", "text": "Describe the attachments."},
     {"type": "image", "file_id": "img-id"},
     {"type": "audio", "file_id": "audio-id"},
     {"type": "file", "file_id": "doc-id"},
@@ -310,5 +443,5 @@ def get_weather(city: str) -> str:
 
 ```python
 import langchain_gigachat
-print(langchain_gigachat.__version__)  # "0.5.0"
+print(langchain_gigachat.__version__)  # "0.5.2a1"
 ```

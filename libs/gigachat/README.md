@@ -25,6 +25,7 @@ This library is part of [GigaChain](https://github.com/ai-forever/gigachain) and
   - [Async](#async)
   - [Embeddings](#embeddings)
   - [Reasoning Models](#reasoning-models)
+  - [API v2 (`/v2/chat/completions`)](#api-v2-v2chatcompletions)
 - [Tool Calling](#tool-calling)
   - [Legacy `bind_functions()`](#legacy-bind_functions)
 - [Structured Output](#structured-output)
@@ -56,6 +57,10 @@ This library is part of [GigaChain](https://github.com/ai-forever/gigachain) and
 ```bash
 pip install -U langchain-gigachat
 ```
+
+This documentation includes the unreleased `0.5.2a1` prerelease.
+For its examples, install the local sources and SDK `0.2.4a1` as described in
+[example setup](../../examples/sdk_contract_alignment/README.md#setup).
 
 **Requirements:** Python 3.10+
 
@@ -146,7 +151,7 @@ from langchain_gigachat import GigaChatEmbeddings
 
 emb = GigaChatEmbeddings(model="Embeddings")
 
-vector = emb.embed_query("Привет!")
+vector = emb.embed_query("Hello!")
 print(len(vector))
 ```
 
@@ -165,6 +170,142 @@ print(msg.additional_kwargs.get("reasoning_content"))  # model's chain-of-though
 ```
 
 > **Note:** `reasoning_content` is also available during streaming — each `AIMessageChunk` carries it in `additional_kwargs`.
+
+### API v2 (`/v2/chat/completions`)
+
+For a runnable walkthrough, see the [API v2 feature notebook and v1 comparison](../../examples/api_v2_feature_comparison.ipynb)
+with separate runnable recipes, readable answers, and side-by-side
+examples for both routes. API calls run when you execute the corresponding cells.
+
+The primary API v2 contract is opt-in; existing applications keep using the
+legacy contract by default. Enable it on the model or on one bound runnable:
+
+```python
+from langchain_gigachat import GigaChat
+
+llm = GigaChat(model="GigaChat-3-Ultra", use_api_v2=True)
+print(llm.invoke("Hello!").content)
+
+for chunk in llm.stream("Write one sentence about Lake Baikal."):
+    print(chunk.text, end="", flush=True)
+
+primary_once = GigaChat().bind(use_api_v2=True)
+```
+
+`ainvoke()` and `astream()` use the SDK's native async v2 resources.
+
+Client functions continue to use LangChain tools. For a continuation, pass the
+returned tool-call ID to `ToolMessage` unchanged:
+
+```python
+from langchain_core.messages import HumanMessage, ToolMessage
+from langchain_core.tools import tool
+
+
+@tool
+def get_weather(city: str) -> str:
+    """Get current weather for a city."""
+    return f"{city}: sunny, 22C"
+
+
+with_tools = llm.bind_tools([get_weather], tool_choice="get_weather")
+question = HumanMessage("What is the weather in Moscow?")
+assistant = with_tools.invoke([question])
+call = assistant.tool_calls[0]
+result = ToolMessage(
+    content=get_weather.invoke(call["args"]),
+    tool_call_id=call["id"],
+    name=call["name"],
+)
+answer = llm.bind_tools([get_weather], tool_choice="auto").invoke(
+    [question, assistant, result]
+)
+```
+
+Provider-managed tools are also bound through the public API:
+
+```python
+with_search = llm.bind_tools(
+    [{"type": "web_search"}],
+    tool_choice="web_search",
+)
+response = with_search.invoke("Find recent GigaChat news.")
+```
+
+Built-in tools require `use_api_v2=True`. Client tool history is
+route-specific: primary `tools_state_id` values are not translated to legacy
+`functions_state_id` values.
+
+Use native JSON Schema output with a Pydantic model:
+
+```python
+from pydantic import BaseModel
+
+
+class City(BaseModel):
+    name: str
+    population: int
+
+
+structured = llm.with_structured_output(City, method="json_schema")
+city = structured.invoke("Return information about Kazan.")
+```
+
+On API v2, JSON mode can return an arbitrary JSON object without a user-provided
+schema. The wrapper sends
+`{"type": "json_schema", "schema": {"type": "object"}}`, satisfying the API's
+required `schema` field. It leaves `strict` unset and parses the result as a dict:
+
+```python
+json_llm = llm.with_structured_output(None, method="json_mode")
+value = json_llm.invoke("Return a JSON object with a short answer.")
+assert isinstance(value, dict)
+```
+
+Existing file IDs work in standard `image`, `audio`, and `file` content blocks;
+the existing experimental `auto_upload_attachments` path can also supply IDs to
+v2 messages. Stateful requests accept `assistant_id=...` or
+`storage={"thread_id": ...}`. For stored assistant/thread state, an instance
+default model is omitted unless the invocation provides an explicit model.
+
+API v2 supports `tool_choice="any"` / `"required"`, union argument schemas,
+and `parallel_tool_calls=True`. Return one `ToolMessage` per call, preserving
+each call ID.
+
+API v2 accepts only a JSON object as a tool result. Text, markdown, numbers,
+arrays and null are sent as `{"result": <value>}`; objects are sent as is.
+
+Current limitations:
+
+- parallel client function calls require distinct provider call IDs;
+- parallel provider tools without explicit IDs are rejected as ambiguous;
+- model support for native response formats is provider-dependent.
+
+### SDK contract alignment
+
+See the [five runnable examples](../../examples/sdk_contract_alignment/README.md)
+for complete request/response flows and setup with SDK `0.2.4a1`.
+
+The preview supports reasoning budgets, per-call IDs, parallel v2 functions,
+`anyOf` tool schemas on v2, and provider response metadata. Generation controls
+are placed inside `model_options` on v2; explicit nested values take priority.
+Rare service options can be passed with `bind(additional_fields={...})` without
+adding them to the model constructor.
+
+With SDK `0.2.4a1`, use a stable session identifier for related requests:
+
+```python
+llm = GigaChat(use_api_v2=True, session_id="my-conversation", max_tokens=256)
+```
+
+`usage_metadata.input_tokens` includes cached input, and `cache_read` reports
+its cached portion. Provider counters in the callback result
+`LLMResult.llm_output["token_usage"]` retain their original billing semantics
+([example](../../examples/sdk_contract_alignment/session_usage.py)). A session
+makes caching possible; cache hits depend on the server and request contents.
+
+See [SDK alignment and compatibility](MIGRATION.md#sdk-contract-alignment)
+for requirements, request examples, and compatibility details.
 
 ## Tool Calling
 
@@ -200,9 +341,9 @@ llm = GigaChat(function_ranker={"enabled": False})
 llm_with_tools = llm.bind_tools([get_weather], tool_choice="auto")
 ```
 
-> **Note:** `tool_choice="any"` is not supported by the GigaChat API. Use `"auto"`, `"none"`, or a specific tool name. If upstream code passes `"any"`, set `allow_any_tool_choice_fallback=True` to silently convert it to `"auto"`.
+> **Note:** API v2 maps `tool_choice="any"` and `"required"` to `tool_config.mode="any"` for client functions. API v1 supports `"auto"`, `"none"`, and a specific function name; its opt-in `allow_any_tool_choice_fallback=True` falls back to `"auto"` with a warning. Server and model capabilities still determine whether a request is supported.
 
-> **Note:** GigaChat API does not support parallel tool calls in a single assistant message. If `AIMessage` contains more than one `tool_calls` entry, a `ValueError` is raised.
+> **Note:** API v1 accepts one function call per assistant message. With API v2, set `parallel_tool_calls=True` and return a `ToolMessage` for every call, using its original ID. The wrapper preserves the separate `tools_state_id` for continuation.
 
 ### Legacy `bind_functions()`
 
@@ -226,9 +367,9 @@ llm_with_functions = llm.bind_functions(
 
 Use `bind_tools()` for new code. `bind_functions()` is kept as a compatibility layer over the provider's `function_call` transport and supports `None`, `"auto"`, `"none"`, or a specific function name.
 
-Internally, the provider transport is still function-oriented. That is why
-`ToolMessage` results are serialized back as provider `function` messages when
-continuing a conversation.
+On API v1, `ToolMessage` results are serialized as provider `function` messages
+when continuing a conversation. API v2 serializes them as `tool` messages and
+preserves the provider's tool-call ID.
 
 ## Structured Output
 
@@ -267,9 +408,14 @@ llm.with_structured_output(Answer, method="json_schema")
 > GigaChat side and may not be available for every model — fall back to the
 > default `method="function_calling"` if the API rejects the request.
 
-The legacy `method="json_mode"` is still accepted for backward compatibility,
-but it emits a `DeprecationWarning` — prefer `method="json_schema"` for new
-code.
+`strict` defaults to `None` and is omitted from the request; pass it explicitly
+with `method="json_schema"` when needed. Low-level
+`response_format={"type": "json_schema", ...}` also requires a `schema`.
+
+The legacy `method="json_mode"` with a supplied schema is still accepted for
+backward compatibility, but it emits a `DeprecationWarning`; prefer
+`method="json_schema"` for new code. Passing `None` with `method="json_mode"`
+on API v2 uses the JSON object mode shown above and does not emit a warning.
 
 ## Attachments
 
@@ -361,15 +507,24 @@ Most commonly used parameters (all are optional):
 | `max_retries` | `int` | `None` | Retry attempts for transient errors (SDK default: `0`) |
 | `retry_backoff_factor` | `float` | `None` | Exponential backoff multiplier (SDK default: `0.5`) |
 | `profanity_check` | `bool` | `None` | Enable profanity filtering |
+| `use_api_v2` | `bool` | `False` | Use the `/v2/chat/completions` contract |
+| `session_id` | `str` | `None` | Default X-Session-ID; requires the aligned SDK |
+| `reasoning_max_tokens` | `int` | `None` | Reasoning token budget |
+| `parallel_tool_calls` | `bool` | `None` | Allow parallel client functions on API v2 |
 | `streaming` | `bool` | `False` | Stream results by default |
 | `auto_upload_attachments` | `bool` | `False` | Auto-upload base64 content from `image_url` / `audio_url` / `document_url` blocks |
-| `allow_any_tool_choice_fallback` | `bool` | `False` | Silently convert `tool_choice="any"` to `"auto"` |
+| `allow_any_tool_choice_fallback` | `bool` | `False` | Convert v1 `tool_choice="any"` to `"auto"` with a warning |
 
-For the full list of parameters (auth, SSL/mTLS, retry, flags, etc.), see the [GigaChat SDK README](https://github.com/ai-forever/gigachat#constructor-parameters) — the LangChain wrapper accepts the same constructor arguments.
+For the full list of parameters (auth, SSL/mTLS, retry, flags, etc.), see the [GigaChat SDK README](https://github.com/ai-forever/gigachat#constructor-parameters) — the wrapper exposes the shared authentication and connection options.
 
 ### Environment Variables
 
 All parameters can be configured via environment variables with the `GIGACHAT_` prefix (e.g. `GIGACHAT_CREDENTIALS`, `GIGACHAT_MODEL`, `GIGACHAT_BASE_URL`). See the [GigaChat SDK README](https://github.com/ai-forever/gigachat#environment-variables) for the full list.
+
+`GIGACHAT_USE_API_V2=true/false` selects the default chat contract when the model
+is created; `GigaChat(use_api_v2=...)` and invocation settings take priority.
+Tool history is not migrated between v1 and v2: start a new conversation when
+switching after tool calls.
 
 > **Note:** Retries are handled by the underlying `gigachat` SDK. Don't combine them with LangChain `.with_retry()` — the attempts multiply:
 >

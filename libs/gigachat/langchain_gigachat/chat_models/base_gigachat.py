@@ -4,11 +4,18 @@ from typing import Any, Dict, List, Literal, Optional, Union
 
 import gigachat.models as gm
 from gigachat._types import FileTypes
+from langchain_core.utils.utils import from_env
+from pydantic import Field
 
 from langchain_gigachat._client import _GigaChatClientMixin
 
 
 class _BaseGigaChat(_GigaChatClientMixin):
+    use_api_v2: bool = Field(
+        default_factory=from_env("GIGACHAT_USE_API_V2", default="false"),
+        validate_default=True,
+    )
+    """Use API v2. Defaults to GIGACHAT_USE_API_V2, read at model creation."""
     profanity_check: Optional[bool] = None
     """Check for profanity."""
     streaming: bool = False
@@ -32,6 +39,10 @@ class _BaseGigaChat(_GigaChatClientMixin):
     Reasoning effort for reasoning-capable models (e.g. GigaChat-2-Reasoning).
     When set, the API may return reasoning_content in the assistant message.
     """
+    reasoning_max_tokens: Optional[int] = None
+    """Maximum reasoning tokens before the final answer."""
+    parallel_tool_calls: Optional[bool] = None
+    """Allow parallel client function calls on API v2."""
     function_ranker: Optional[Union[Dict[str, Any], gm.FunctionRanker]] = None
     """Function/tool ranking settings. Use ``{"enabled": False}`` to disable."""
 
@@ -49,6 +60,7 @@ class _BaseGigaChat(_GigaChatClientMixin):
     def _identifying_params(self) -> Dict[str, Any]:
         """Get the identifying parameters."""
         return {
+            "use_api_v2": self.use_api_v2,
             "temperature": self.temperature,
             "model": self.model,
             "profanity_check": self.profanity_check,
@@ -57,6 +69,9 @@ class _BaseGigaChat(_GigaChatClientMixin):
             "top_p": self.top_p,
             "repetition_penalty": self.repetition_penalty,
             "reasoning_effort": self.reasoning_effort,
+            "reasoning_max_tokens": self.reasoning_max_tokens,
+            "parallel_tool_calls": self.parallel_tool_calls,
+            "session_id": self.session_id,
             "function_ranker": self.function_ranker,
         }
 

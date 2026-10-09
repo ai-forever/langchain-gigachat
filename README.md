@@ -20,6 +20,10 @@ This library is part of [GigaChain](https://github.com/ai-forever/gigachain) and
 pip install -U langchain-gigachat
 ```
 
+This documentation includes the unreleased `0.5.2a1` prerelease.
+For its examples, install the local sources and SDK `0.2.4a1` as described in
+[example setup](examples/sdk_contract_alignment/README.md#setup).
+
 ```python
 from langchain_gigachat import GigaChat
 
@@ -31,6 +35,10 @@ print(msg.content)
 ## Documentation
 
 Full documentation, usage examples, and configuration reference are in [`libs/gigachat/README.md`](libs/gigachat/README.md).
+
+Runnable [prerelease examples](examples/sdk_contract_alignment/README.md)
+cover parallel tools, reasoning budgets, streaming metadata, sessions, and stored
+thread continuation.
 
 ## Related Projects
 

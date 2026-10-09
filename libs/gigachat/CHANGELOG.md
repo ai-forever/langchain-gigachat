@@ -2,6 +2,79 @@
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.2a1] — Unreleased
+
+Unreleased prerelease with opt-in API v2 support and expanded SDK integration.
+
+### Added
+
+- Opt-in `GigaChat(use_api_v2=True)` routing to `/v2/chat/completions` for
+  sync/async invocation and streaming; legacy remains the default.
+- Primary request, response, message, and stream conversion through the SDK's
+  `chat.create`, `achat.create`, `chat.stream`, and `achat.stream` resources.
+- Client function calls with direct `tools_state_id` / `ToolMessage` roundtrip.
+- Provider built-in tools, assistant/thread state, and existing file-ID input.
+- Five runnable examples for generation controls, parallel union-typed tools,
+  async streaming metadata, session accounting, and stored-thread tool results.
+- A runnable API v1/v2 comparison notebook with separate examples and
+  illustrative responses.
+- Shared `session_id` client setting and reasoning token budgets.
+- `GIGACHAT_USE_API_V2=true/false` selects the default chat contract at model
+  creation; explicit constructor and invocation settings take priority.
+- API v2 parallel client function calls with distinct call IDs, `any`/`required`
+  client tool choice, and union argument schemas.
+- Additional request fields and response error/inline metadata preservation.
+- Native JSON Schema output and
+  `with_structured_output(None, method="json_mode")` with a generic JSON-object
+  schema supplied by the adapter.
+
+### Changed
+
+- Primary sampling, reasoning, filtering, ranking, and response-format options
+  are mapped to their API v2 SDK models.
+- Server tools use provider call IDs when present and stable local IDs otherwise;
+  provider `tools_state_id` is preserved as metadata rather than block identity.
+- Primary stream conversion consumes SDK `PrimaryChatCompletionChunk` models.
+- Primary and legacy tool histories are explicitly route-specific and are not
+  translated between provider contracts.
+- Low-level `bind(response_format=...)` continues to return a normal
+  `AIMessage`; parsing belongs to `with_structured_output()`.
+
+### Fixed
+
+- API v2 tool results that are not JSON objects (text, markdown, numbers,
+  arrays, null) are sent as `{"result": <value>}`; the API answered 422
+  (`INVALID_PARAMS: invalid function result`) or 500 for long markdown.
+- `disable_streaming` is honored when the model has `streaming=True`;
+  `_generate` no longer re-enters streaming on its own.
+
+- Reasoning stream fragments aggregate into consecutive blocks without colliding
+  with text blocks, including when the provider omits `message_id`.
+- LangChain input/total usage now includes cached tokens; raw provider usage
+  is preserved separately.
+- Explicit nested generation options take precedence over shorthand and defaults.
+- Legacy invocation reasoning settings override instance defaults.
+- Primary streaming preserves unnamed terminal SSE events and no longer
+  duplicates identifiers, complete function arguments, or metadata snapshots
+  when LangChain aggregates response chunks.
+- Legacy streaming emits the final `additional_data` and `error_details`
+  snapshots once, so updated metadata is not concatenated during aggregation.
+- Native `json_schema` response formats require an explicit schema; JSON-object
+  mode supplies `{"type": "object"}` without enabling strict validation.
+
+### Dependencies
+
+- Package version is `0.5.2a1` with `langchain-core>=1,<2`.
+- Requires stable `gigachat>=0.2.3,<0.3` for the primary resource API.
+
+### Known limitations
+
+- Parallel calls without distinct provider IDs remain unsupported.
+- Session configuration, expanded v1 metadata, and explicit JSON null in v2
+  additional fields require SDK `0.2.4a1`; SDK `0.2.3` remains supported for
+  existing features.
+- Server/model support for v2 features must be checked separately.
+
 ## [0.5.1] — 2026-05-04
 
 ### Added
