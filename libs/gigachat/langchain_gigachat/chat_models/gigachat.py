@@ -869,8 +869,9 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
     ) -> ChatResult:
         # Kept in the signature for LangChain compatibility, but wrapper-side
         # local stop handling was removed in 0.5.x. See MIGRATION.md.
-        should_stream = stream if stream is not None else self.streaming
-        if should_stream:
+        # LangChain already routes streaming=True to _stream/_astream and keeps
+        # disable_streaming in that decision; only an explicit stream=True here.
+        if stream:
             stream_iter = self._stream(
                 messages, stop=stop, run_manager=run_manager, **kwargs
             )
@@ -901,8 +902,9 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
     ) -> ChatResult:
         # Kept in the signature for LangChain compatibility, but wrapper-side
         # local stop handling was removed in 0.5.x. See MIGRATION.md.
-        should_stream = stream if stream is not None else self.streaming
-        if should_stream:
+        # LangChain already routes streaming=True to _stream/_astream and keeps
+        # disable_streaming in that decision; only an explicit stream=True here.
+        if stream:
             stream_iter = self._astream(
                 messages, stop=stop, run_manager=run_manager, **kwargs
             )
