@@ -1,6 +1,6 @@
 """Edge-case tests for utils/function_calling.py."""
 
-from typing import Any, Dict, Union
+from typing import Any, Dict, Optional, Union
 
 import pytest
 from pydantic import BaseModel, Field
@@ -221,3 +221,58 @@ def test_convert_to_gigachat_function_incorrect_schema() -> None:
 
     with pytest.raises(IncorrectSchemaException, match="do not support"):
         convert_to_gigachat_function(bad_fn)
+
+
+# ---------------------------------------------------------------------------
+# nullable fields — "default": null injected for Optional without default
+# ---------------------------------------------------------------------------
+
+
+def test_optional_field_without_default_gets_null_default() -> None:
+    """Optional field without explicit default=None must get ``"default": null``.
+
+    GigaChat omits Optional fields from tool-call responses instead of
+    returning ``null``.  Without ``"default": null`` in the schema GigaChat has
+    no hint to include the key, and PydanticToolsParser raises
+    ``ValidationError: Field required``.
+    """
+
+    class MyModel(BaseModel):
+        """My model"""
+
+        required_field: str = Field(description="always present")
+        optional_no_default: Optional[str] = Field(description="nullable, no default")
+        optional_with_default: Optional[str] = Field(
+            default=None, description="nullable with explicit default"
+        )
+
+    result = convert_to_gigachat_function(MyModel)
+    props = result["parameters"]["properties"]
+    required = result["parameters"].get("required", [])
+
+    assert "required_field" in required
+    assert "optional_no_default" not in required
+    assert "optional_with_default" not in required
+
+    # Both must have "default": null so GigaChat returns null instead of omitting
+    assert "default" in props["optional_no_default"], (
+        "optional field without default=None must get 'default': null in schema"
+    )
+    assert props["optional_no_default"]["default"] is None
+    assert props["optional_with_default"]["default"] is None
+
+
+def test_required_field_does_not_get_null_default() -> None:
+    """Required (non-nullable) fields must not receive an injected default."""
+
+    class MyModel(BaseModel):
+        """My model"""
+
+        name: str = Field(description="required string")
+
+    result = convert_to_gigachat_function(MyModel)
+    props = result["parameters"]["properties"]
+    required = result["parameters"].get("required", [])
+
+    assert "name" in required
+    assert "default" not in props["name"]
