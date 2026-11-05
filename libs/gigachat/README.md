@@ -58,8 +58,9 @@ This library is part of [GigaChain](https://github.com/ai-forever/gigachain) and
 pip install -U langchain-gigachat
 ```
 
-This documentation includes the unreleased `0.5.2a1` prerelease.
-For its examples, install the local sources and SDK `0.2.4a1` as described in
+Version `0.5.2` requires LangChain Core `>=1.2.5,<2` and stable GigaChat SDK
+`>=0.2.4,<0.3`.
+For runnable examples, see
 [example setup](../../examples/sdk_contract_alignment/README.md#setup).
 
 **Requirements:** Python 3.10+
@@ -284,15 +285,15 @@ Current limitations:
 ### SDK contract alignment
 
 See the [five runnable examples](../../examples/sdk_contract_alignment/README.md)
-for complete request/response flows and setup with SDK `0.2.4a1`.
+for complete request/response flows and setup with SDK `0.2.4`.
 
-The preview supports reasoning budgets, per-call IDs, parallel v2 functions,
+API v2 supports reasoning budgets, per-call IDs, parallel v2 functions,
 `anyOf` tool schemas on v2, and provider response metadata. Generation controls
 are placed inside `model_options` on v2; explicit nested values take priority.
 Rare service options can be passed with `bind(additional_fields={...})` without
 adding them to the model constructor.
 
-With SDK `0.2.4a1`, use a stable session identifier for related requests:
+With SDK `0.2.4`, use a stable session identifier for related requests:
 
 ```python
 llm = GigaChat(use_api_v2=True, session_id="my-conversation", max_tokens=256)

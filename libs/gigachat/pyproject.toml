@@ -1,14 +1,14 @@
 [project]
 name = "langchain-gigachat"
-version = "0.5.2a1"
+version = "0.5.2"
 description = "An integration package connecting GigaChat and LangChain"
 authors = []
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10,<4"
 dependencies = [
-    "langchain-core>=1,<2",
-    "gigachat==0.2.4a1",
+    "langchain-core>=1.2.5,<2",
+    "gigachat>=0.2.4,<0.3",
 ]
 
 [project.urls]

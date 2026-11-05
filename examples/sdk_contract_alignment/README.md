@@ -1,23 +1,22 @@
 # GigaChat feature examples
 
-Five standalone scripts for the `langchain-gigachat 0.5.2a1` prerelease.
+Five standalone scripts for the `langchain-gigachat 0.5.2` release.
 Each covers the full flow: create a model, send a request, and read the response.
 The scripts make live requests only when run; importing them does not send requests.
 
 ## Setup
 
-You need Python 3.10+, the `langchain-gigachat 0.5.2a1` prerelease, and the
-GigaChat SDK `0.2.4a1` prerelease. Install both packages from source.
-From this repository's root, with the SDK source in a sibling directory:
+You need Python 3.10+, the `langchain-gigachat 0.5.2` release, and the
+GigaChat SDK `>=0.2.4,<0.3` (installed automatically).
+From this repository's root:
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-python -m pip install -e ../gigachat -e ./libs/gigachat
+python -m pip install "langchain-gigachat==0.5.2"
 ```
 
-Replace `../gigachat` with the path to your SDK source directory.
-SDK `0.2.3` supports the basic flows, but not every feature in these examples.
+To run against a source checkout instead, use `python -m pip install -e ./libs/gigachat`.
 
 The SDK reads authentication from `GIGACHAT_CREDENTIALS` or
 `GIGACHAT_ACCESS_TOKEN`; its usual scope and TLS settings also apply.
@@ -94,7 +93,7 @@ once with `+`, then reads the final metadata.
 
 ## Example validation
 
-Offline validation uses the `0.2.4a1` SDK prerelease: the adapter and SDK HTTP
+Offline validation uses the `0.2.4` SDK release: the adapter and SDK HTTP
 client run with mocked transport responses. This checks request formats,
 response handling, and script execution. It does not test live requests or
 feature availability for a particular account.

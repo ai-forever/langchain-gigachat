@@ -1,7 +1,7 @@
 # Migration Guide: langchain-gigachat 0.3.x → 0.5.x
 
 This guide covers the breaking changes in `langchain-gigachat` 0.5.0 and the
-opt-in primary API v2 preview added in 0.5.2a1.
+opt-in primary API v2 support released in 0.5.2.
 
 ## Opting into API v2
 
@@ -70,12 +70,10 @@ for `type="json_schema"` and returns a normal `AIMessage`; parsing belongs to
 [Runnable examples and installation steps](../../examples/sdk_contract_alignment/README.md)
 show complete flows for all changes below.
 
-The `0.5.2a1` prerelease works with the `0.2.4a1` SDK prerelease.
-Install both from source using the linked setup instructions. SDK `0.2.3`
-remains the minimum for basic API v2 support. Session configuration, v1
-assistant IDs and call IDs, expanded response metadata, and explicit JSON
-null in v2 `additional_fields` require the newer SDK. Unsupported session
-and v1 assistant settings raise an error on older SDK versions.
+Version `0.5.2` requires stable SDK `>=0.2.4,<0.3`, including session
+configuration, v1 assistant and call IDs, expanded response metadata, and
+explicit JSON null in v2 `additional_fields`. Install the package with
+`pip install "langchain-gigachat==0.5.2"`; the SDK is installed automatically.
 
 ### Generation controls and additional fields
 
@@ -137,11 +135,11 @@ on the server, model, and account.
 
 ## Requirements
 
-| Dependency | Before (0.3.x) | Current (0.5.2a1) |
+| Dependency | Before (0.3.x) | Current (0.5.2) |
 |------------|-----------------|-------------------|
 | Python | >= 3.9 | **>= 3.10, < 4** |
-| `langchain-core` | >= 0.3, < 1 | **>= 1, < 2** |
-| `gigachat` (SDK) | >= 0.1.41 | **>= 0.2.3, < 0.3** |
+| `langchain-core` | >= 0.3, < 1 | **>= 1.2.5, < 2** |
+| `gigachat` (SDK) | >= 0.1.41 | **>= 0.2.4, < 0.3** |
 
 > LangChain Core 1.x dropped Python 3.9 support. GigaChat SDK 0.2.0 migrated to Pydantic V2.
 
@@ -443,5 +441,5 @@ def get_weather(city: str) -> str:
 
 ```python
 import langchain_gigachat
-print(langchain_gigachat.__version__)  # "0.5.2a1"
+print(langchain_gigachat.__version__)  # "0.5.2"
 ```

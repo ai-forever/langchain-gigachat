@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.10, <4"
 
 [[package]]
@@ -259,7 +259,7 @@ name = "exceptiongroup"
 version = "1.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+    { name = "typing-extensions" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/50/79/66800aadf48771f6b62f7eb014e352e5d06856655206165d775e675a02c9/exceptiongroup-1.3.1.tar.gz", hash = "sha256:8b412432c6055b0b7d14c310000ae93352ed6754f70fa8f7c34141f91c4e3219", size = 30371, upload-time = "2025-11-21T23:01:54.787Z" }
 wheels = [
@@ -277,16 +277,16 @@ wheels = [
 
 [[package]]
 name = "gigachat"
-version = "0.2.4a1"
+version = "0.2.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ca/fd/847ccb6c155a8061dec3edfad3d4a72e3f9b74ce376d71bee4033eba2adc/gigachat-0.2.4a1.tar.gz", hash = "sha256:c81889e06c028d2ed295a54295b5443301589764b0de0925ae3f3b3ce1fe8a47", size = 52065, upload-time = "2026-10-09T13:58:38.845Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/2f/c1/368ee776ac970b8d52c0fa9df1085254f4c1a03af9d2b1b6b5f8eb4550d1/gigachat-0.2.4.tar.gz", hash = "sha256:a45c8d542c353dd4a61fceeca1ee0c2ff10219d891335b776a89d3de4f821fad", size = 52062, upload-time = "2026-10-30T12:46:19.207Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a2/15/99ad73e363759a737e775135d61c5f2e82dc11723a6103d25e849738d908/gigachat-0.2.4a1-py3-none-any.whl", hash = "sha256:04363a572e436f14832efdab7c035bad07c270d0dc19219072abac13f54ddcf6", size = 57303, upload-time = "2026-10-09T13:58:37.618Z" },
+    { url = "https://files.pythonhosted.org/packages/92/ab/85a6715edd5255d581f17fbd008c33e84cbb83cf32ce732a71e905492fe6/gigachat-0.2.4-py3-none-any.whl", hash = "sha256:a9299c1438b4a98c2a9c65b3655159cb39c353212ab26be2e075af9cef7751e1", size = 57284, upload-time = "2026-10-30T12:46:17.72Z" },
 ]
 
 [[package]]
@@ -395,7 +395,7 @@ wheels = [
 
 [[package]]
 name = "langchain-gigachat"
-version = "0.5.2a1"
+version = "0.5.2"
 source = { editable = "." }
 dependencies = [
     { name = "gigachat" },
@@ -415,8 +415,8 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "gigachat", specifier = "==0.2.4a1" },
-    { name = "langchain-core", specifier = ">=1,<2" },
+    { name = "gigachat", specifier = ">=0.2.4,<0.3" },
+    { name = "langchain-core", specifier = ">=1.2.5,<2" },
 ]
 
 [package.metadata.requires-dev]

@@ -226,3 +226,12 @@ def _make_coro(return_value):  # type: ignore[no-untyped-def]
         return return_value
 
     return _coro
+
+
+def test_constructor_preserves_explicit_streaming_choice() -> None:
+    assert "streaming" not in GigaChat().model_fields_set
+    assert "temperature" not in GigaChat().model_fields_set
+    for streaming in (True, False):
+        model = GigaChat(streaming=streaming)
+        assert "streaming" in model.model_fields_set
+        assert model.streaming is streaming

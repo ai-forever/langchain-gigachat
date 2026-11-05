@@ -117,15 +117,15 @@ def gigachat_fix_schema(schema: Any, prev_key: str = "") -> Any:
       to provider-side 422 validation errors.
     """
     if isinstance(schema, dict):
+        if prev_key == "properties":
+            # These keys are user field names, not JSON Schema keywords.
+            return {name: gigachat_fix_schema(value) for name, value in schema.items()}
         obj_out: Any = {}
         for k, v in schema.items():
             if k == "title":
-                if isinstance(v, dict) and prev_key == "properties" and "title" in v:
-                    obj_out[k] = gigachat_fix_schema(v, k)
-                else:
-                    continue
+                continue
             elif k == "allOf":
-                if len(v) > 1:
+                if len(v) != 1:
                     raise IncorrectSchemaException()
                 obj = gigachat_fix_schema(v[0], k)
                 outer_description = schema.get("description")
@@ -134,8 +134,9 @@ def gigachat_fix_schema(schema: Any, prev_key: str = "") -> Any:
                     # Outer description takes priority over inner one for ref
                     obj_out["description"] = outer_description
             elif k == "anyOf":
-                if len(v) > 1:
+                if len(v) != 1:
                     raise IncorrectSchemaException()
+                obj_out = {**gigachat_fix_schema(v[0]), **obj_out}
             elif isinstance(v, (list, dict)):
                 obj_out[k] = gigachat_fix_schema(v, k)
             else:
@@ -523,7 +524,7 @@ def convert_to_gigachat_tool(
             "Set use_api_v2=True instead of binding them to the legacy API."
         )
     if isinstance(tool, dict) and tool.get("type") == "function" and "function" in tool:
-        return tool
+        return {**tool, "function": convert_to_gigachat_function(tool["function"])}
     function = convert_to_gigachat_function(tool)
     return {"type": "function", "function": function}
 

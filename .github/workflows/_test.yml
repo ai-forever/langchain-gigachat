@@ -43,7 +43,7 @@ jobs:
 
       - name: Install dependencies
         shell: bash
-        run: uv sync
+        run: uv sync --locked
 
       - name: Run core tests
         shell: bash
@@ -61,3 +61,29 @@ jobs:
           # grep will exit non-zero if the target message isn't found,
           # and `set -e` above will cause the step to fail.
           echo "$STATUS" | grep 'nothing to commit, working tree clean'
+
+  core-compatibility:
+    name: "Core compatibility (${{ matrix.core }})"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - core: minimum
+            python-version: "3.10"
+            requirement: "langchain-core==1.2.5"
+          - core: latest
+            python-version: "3.13"
+            requirement: "langchain-core>=1.2.5,<2"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Install dependencies
+        run: uv sync --locked --python '${{ matrix.python-version }}'
+      - name: Select Core version without changing the lockfile
+        run: uv pip install --python .venv/bin/python --upgrade '${{ matrix.requirement }}'
+      - name: Run compatibility tests
+        run: uv run --no-sync pytest tests/unit_tests
