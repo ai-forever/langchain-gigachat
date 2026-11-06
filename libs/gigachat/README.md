@@ -49,17 +49,21 @@ This library is part of [GigaChain](https://github.com/ai-forever/gigachain) and
 - **Attachments** — images, audio, and documents via the Files API
 - **File operations** — upload, list, retrieve, and delete files
 - **Configurable retry** — exponential backoff via the underlying SDK
-- **Environment-based configuration** — all parameters configurable via `GIGACHAT_` env vars
+- **Environment-based configuration** — SDK settings configurable via `GIGACHAT_` env vars
 - **Fully typed** — Pydantic V2 models with `py.typed` marker
 
 ## Installation
 
 ```bash
-pip install -U langchain-gigachat
+python -m pip install "langchain-gigachat==0.5.3a1"
+# Optional async aiohttp backend:
+python -m pip install "langchain-gigachat[aiohttp]==0.5.3a1"
 ```
 
-Version `0.5.2` requires LangChain Core `>=1.2.5,<2` and stable GigaChat SDK
-`>=0.2.4,<0.3`.
+Alpha `0.5.3a1` targets exactly `gigachat==0.3.0a1`, with LangChain Core
+`>=1.2.5,<2` and HTTPX2 `>=2.14.0,<3`. API v1 remains the default;
+API v2 is opt-in. See [the migration guide](MIGRATION.md#sdk-030a1-alpha-053a1) for constructor request defaults,
+client ownership, and async cleanup limits.
 For runnable examples, see
 [example setup](../../examples/sdk_contract_alignment/README.md#setup).
 
@@ -285,7 +289,7 @@ Current limitations:
 ### SDK contract alignment
 
 See the [five runnable examples](../../examples/sdk_contract_alignment/README.md)
-for complete request/response flows and setup with SDK `0.2.4`.
+for complete request/response flows and setup with SDK `0.3.0a1`.
 
 API v2 supports reasoning budgets, per-call IDs, parallel v2 functions,
 `anyOf` tool schemas on v2, and provider response metadata. Generation controls
@@ -293,7 +297,7 @@ are placed inside `model_options` on v2; explicit nested values take priority.
 Rare service options can be passed with `bind(additional_fields={...})` without
 adding them to the model constructor.
 
-With SDK `0.2.4`, use a stable session identifier for related requests:
+With SDK `0.3.0a1`, use a stable session identifier for related requests:
 
 ```python
 llm = GigaChat(use_api_v2=True, session_id="my-conversation", max_tokens=256)
@@ -483,7 +487,9 @@ All file methods have async variants (`aget_file`, `aget_file_content`, `alist_f
 
 ## Configuration
 
-All parameters can be passed to `GigaChat(...)` / `GigaChatEmbeddings(...)` directly or via environment variables with the `GIGACHAT_` prefix.
+Pass configuration directly to `GigaChat(...)` / `GigaChatEmbeddings(...)`.
+The SDK also reads its supported settings from `GIGACHAT_` environment variables;
+injected clients and `default_request_options` are constructor-only runtime objects.
 
 ### Constructor Parameters
 
@@ -491,6 +497,10 @@ Most commonly used parameters (all are optional):
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
+| `async_backend` | `"httpx2"` / `"aiohttp"` | `None` | Preserve SDK/environment selection; aiohttp requires the extra |
+| `http_client`, `auth_http_client` | `httpx2.Client` | `None` | Borrowed API and OAuth sync clients |
+| `async_http_client`, `auth_async_http_client` | `httpx2.AsyncClient` | `None` | Borrowed API and OAuth async clients |
+| `default_request_options` | `gigachat.RequestOptions` | `None` | Shared API defaults; per-call/bound options unsupported in this alpha |
 | `model` | `str` | `None` | Model name (e.g. `"GigaChat-2-Max"`, `"GigaChat-2-Pro"`) |
 | `temperature` | `float` | `None` | Sampling temperature |
 | `max_tokens` | `int` | `None` | Maximum number of tokens to generate |
@@ -518,9 +528,15 @@ Most commonly used parameters (all are optional):
 
 For the full list of parameters (auth, SSL/mTLS, retry, flags, etc.), see the [GigaChat SDK README](https://github.com/ai-forever/gigachat#constructor-parameters) — the wrapper exposes the shared authentication and connection options.
 
+Use `close()` for owned sync resources and `await aclose()` for both owned sync
+and async resources. Injected clients remain open. Keep async use and cleanup
+in one event loop. Runtime-only options are excluded from dumps and tracing;
+see [migration details](MIGRATION.md#sdk-030a1-alpha-053a1) for defaults, hashed
+cache separation, aiohttp limitations, and the public Core stream cleanup boundary.
+
 ### Environment Variables
 
-All parameters can be configured via environment variables with the `GIGACHAT_` prefix (e.g. `GIGACHAT_CREDENTIALS`, `GIGACHAT_MODEL`, `GIGACHAT_BASE_URL`). See the [GigaChat SDK README](https://github.com/ai-forever/gigachat#environment-variables) for the full list.
+SDK-supported settings can be configured via environment variables with the `GIGACHAT_` prefix (e.g. `GIGACHAT_CREDENTIALS`, `GIGACHAT_MODEL`, `GIGACHAT_BASE_URL`). See the [GigaChat SDK README](https://github.com/ai-forever/gigachat#environment-variables) for the full list.
 
 `GIGACHAT_USE_API_V2=true/false` selects the default chat contract when the model
 is created; `GigaChat(use_api_v2=...)` and invocation settings take priority.

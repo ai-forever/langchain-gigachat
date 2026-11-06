@@ -22,12 +22,11 @@ jobs:
           - "3.11"
           - "3.12"
           - "3.13"
-        experimental: [false]
-        include:
-          - python-version: "3.14"
-            experimental: true
+          - "3.14"
+          - "3.15"
 
-    continue-on-error: ${{ matrix.experimental }}
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
     name: "make test #${{ matrix.python-version }}"
     steps:
       - uses: actions/checkout@v4
@@ -43,11 +42,16 @@ jobs:
 
       - name: Install dependencies
         shell: bash
-        run: uv sync --locked
+        run: uv sync --locked --group dev
+
+      - name: Verify interpreter
+        run: |
+          uv run --no-sync python -c 'import os, sys; print(sys.version); assert f"{sys.version_info.major}.{sys.version_info.minor}" == os.environ["UV_PYTHON"]; assert sys.version_info.releaselevel == "final"'
 
       - name: Run core tests
         shell: bash
         run: |
+          make check_imports
           make test
 
       - name: Ensure the tests did not create any additional files
@@ -63,6 +67,8 @@ jobs:
           echo "$STATUS" | grep 'nothing to commit, working tree clean'
 
   core-compatibility:
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
     name: "Core compatibility (${{ matrix.core }})"
     runs-on: ubuntu-latest
     defaults:
@@ -76,14 +82,51 @@ jobs:
             python-version: "3.10"
             requirement: "langchain-core==1.2.5"
           - core: latest
-            python-version: "3.13"
+            python-version: "3.15"
             requirement: "langchain-core>=1.2.5,<2"
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
       - name: Install dependencies
-        run: uv sync --locked --python '${{ matrix.python-version }}'
+        run: uv sync --locked --group dev --python '${{ matrix.python-version }}'
       - name: Select Core version without changing the lockfile
         run: uv pip install --python .venv/bin/python --upgrade '${{ matrix.requirement }}'
+      - name: Verify interpreter and Core
+        run: |
+          uv run --no-sync python -c 'import os, sys; from importlib.metadata import version; print(sys.version, version("langchain-core")); assert f"{sys.version_info.major}.{sys.version_info.minor}" == os.environ["UV_PYTHON"]; assert sys.version_info.releaselevel == "final"'
       - name: Run compatibility tests
         run: uv run --no-sync pytest tests/unit_tests
+
+  distribution:
+    name: "Installed wheel / base and aiohttp"
+    runs-on: ubuntu-latest
+    env:
+      UV_PYTHON: "3.15"
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv python install 3.15
+      - name: Build sdist then wheel
+        run: uv build
+      - name: Check isolated installations and backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          wheel="$(realpath dist/*.whl)"
+          smoke="$(mktemp -d)"
+          cp scripts/check_distribution.py "$smoke/"
+          cp tests/unit_tests/test_sdk_alpha_backend.py "$smoke/"
+          cd "$smoke"
+          unset PYTHONPATH
+          for backend in base aiohttp; do
+            uv venv --python 3.15 "$backend"
+            requirement="$wheel"
+            if [ "$backend" = aiohttp ]; then requirement="$wheel[aiohttp]"; fi
+            uv pip install --python "$backend/bin/python" "$requirement" pytest pytest-asyncio
+            uv pip check --python "$backend/bin/python"
+            "$backend/bin/python" check_distribution.py "$backend"
+            "$backend/bin/python" -m pytest -q -o asyncio_mode=auto test_sdk_alpha_backend.py
+          done

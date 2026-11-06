@@ -2,6 +2,30 @@
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.3a1] — Unreleased
+
+### Added
+
+- Exact SDK `gigachat==0.3.0a1` support with public HTTPX2 client injection,
+  optional `aiohttp` backend, and shared constructor `default_request_options`.
+- Explicit `close()` / `aclose()` lifecycle with borrowed-client ownership;
+  SDK stream contexts await wrapper-owned cleanup. Public Core async-generator
+  cleanup can still finish after the outer generator closes.
+- Runtime options excluded from serialization/tracing, with hashed cache
+  separation; raw per-call/bound `request_options` are explicitly unsupported.
+
+### Changed
+
+- SDK-facing transport uses HTTPX2 `>=2.14.0,<3`; API v1 stays the default,
+  with opt-in API v2 and existing structured-output/file contracts retained.
+- Embeddings reject SDK error items and base64/string vectors with `ValueError`.
+
+### Fixed
+
+- Public imports with SDK alpha; import checking on Python 3.15.
+- Required Python 3.10–3.15 CI with pinned interpreters, minimum/latest Core,
+  and isolated wheel/base/aiohttp validation.
+
 ## [0.5.2] — 2026-11-05
 
 Stable release of the API v2 integration, with API v1 remaining the default.
