@@ -69,6 +69,7 @@ from langchain_core.output_parsers.format_instructions import (
 )
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 from langchain_core.prompt_values import ChatPromptValue, PromptValue
+from langchain_core.rate_limiters import BaseRateLimiter
 from langchain_core.runnables import (
     Runnable,
     RunnableLambda,
@@ -77,7 +78,8 @@ from langchain_core.runnables import (
 )
 from langchain_core.tools import BaseTool
 from langchain_core.utils.pydantic import is_basemodel_subclass
-from pydantic import BaseModel, PrivateAttr, model_validator
+from pydantic import BaseModel, Field, PrivateAttr, model_validator
+from pydantic.json_schema import SkipJsonSchema
 from typing_extensions import override
 
 from langchain_gigachat.chat_models._contracts import primary
@@ -479,6 +481,14 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
             ``{"enabled": False}`` to disable function ranking for tool calls.
     """
 
+    # Core runtime objects cannot be represented in JSON Schema.
+    custom_get_token_ids: SkipJsonSchema[Optional[Callable[[str], List[int]]]] = Field(
+        default=None, exclude=True
+    )
+    rate_limiter: SkipJsonSchema[Optional[BaseRateLimiter]] = Field(
+        default=None, exclude=True
+    )
+
     auto_upload_attachments: bool = False
     """Auto-upload Base-64 image/audio/document blocks. Not for production usage."""
     allow_any_tool_choice_fallback: bool = False
@@ -858,6 +868,37 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
 
         return (chunk_m, generation_info, content)
 
+    def _get_invocation_params(
+        self, stop: Optional[List[str]] = None, **kwargs: Any
+    ) -> Dict[str, Any]:
+        if "request_options" in kwargs:
+            raise ValueError(
+                "Per-call request_options are not supported; use "
+                "default_request_options on the constructor instead."
+            )
+        return super()._get_invocation_params(stop=stop, **kwargs)
+
+    def _get_llm_string(self, stop: Optional[List[str]] = None, **kwargs: Any) -> str:
+        key = super()._get_llm_string(stop=stop, **kwargs)
+        options = self.default_request_options
+        if options is None:
+            return key
+        canonical = json.dumps(
+            {
+                "headers": options.extra_headers,
+                "query": options.extra_query,
+                "body": options.extra_body,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+        return (
+            key
+            + ":request-options-sha256:"
+            + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        )
+
     @override
     def _generate(
         self,
@@ -883,11 +924,13 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         self._upload_attachments(messages)
         if route == "primary":
             primary_payload = self._build_primary_payload(messages, kwargs)
-            primary_response = self._client.chat.create(primary_payload)
+            primary_response = self._client.chat.create(
+                primary_payload, **self._get_request_kwargs()
+            )
             result = primary.create_chat_result(primary_response)
         else:
             payload = self._build_payload(messages, **kwargs)
-            response = self._client.chat(payload)
+            response = self._client.chat(payload, **self._get_request_kwargs())
             result = self._create_chat_result(response)
         return result
 
@@ -916,11 +959,13 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         await self._aupload_attachments(messages)
         if route == "primary":
             primary_payload = self._build_primary_payload(messages, kwargs)
-            primary_response = await self._client.achat.create(primary_payload)
+            primary_response = await self._client.achat.create(
+                primary_payload, **self._get_request_kwargs()
+            )
             result = primary.create_chat_result(primary_response)
         else:
             payload = self._build_payload(messages, **kwargs)
-            response = await self._client.achat(payload)
+            response = await self._client.achat(payload, **self._get_request_kwargs())
             result = self._create_chat_result(response)
         return result
 
@@ -941,16 +986,19 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         if route == "primary":
             primary_payload = self._build_primary_payload(messages, kwargs)
             state = primary.StreamState()
-            for event in self._client.chat.stream(primary_payload):
-                primary_chunk = primary.convert_stream_event(event, state=state)
-                if primary_chunk is None:
-                    continue
-                if run_manager:
-                    run_manager.on_llm_new_token(
-                        primary_chunk.text,
-                        chunk=primary_chunk,
-                    )
-                yield primary_chunk
+            with self._client.chat.stream(
+                primary_payload, **self._get_request_kwargs()
+            ) as sdk_stream:
+                for event in sdk_stream:
+                    primary_chunk = primary.convert_stream_event(event, state=state)
+                    if primary_chunk is None:
+                        continue
+                    if run_manager:
+                        run_manager.on_llm_new_token(
+                            primary_chunk.text,
+                            chunk=primary_chunk,
+                        )
+                    yield primary_chunk
             return
 
         payload = self._build_payload(messages, **kwargs)
@@ -958,26 +1006,27 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         pending_metadata: Dict[str, Any] = {}
         request_id: Optional[str] = None
 
-        for chunk_d in self._client.stream(payload):
-            chunk = (
-                chunk_d
-                if isinstance(chunk_d, dict)
-                else chunk_d.model_dump(by_alias=True)
-            )
-            chunk_m, generation_info, content = self._build_stream_chunk(
-                chunk,
-                first_chunk,
-                pending_metadata,
-            )
-            first_chunk = False
-            request_id = chunk_m.id or request_id
-            generation_chunk = ChatGenerationChunk(
-                message=chunk_m,
-                generation_info=generation_info,
-            )
-            if run_manager:
-                run_manager.on_llm_new_token(content)
-            yield generation_chunk
+        with self._client.stream(payload, **self._get_request_kwargs()) as sdk_stream:
+            for chunk_d in sdk_stream:
+                chunk = (
+                    chunk_d
+                    if isinstance(chunk_d, dict)
+                    else chunk_d.model_dump(by_alias=True)
+                )
+                chunk_m, generation_info, content = self._build_stream_chunk(
+                    chunk,
+                    first_chunk,
+                    pending_metadata,
+                )
+                first_chunk = False
+                request_id = chunk_m.id or request_id
+                generation_chunk = ChatGenerationChunk(
+                    message=chunk_m,
+                    generation_info=generation_info,
+                )
+                if run_manager:
+                    run_manager.on_llm_new_token(content)
+                yield generation_chunk
 
         if pending_metadata:
             final_chunk = ChatGenerationChunk(
@@ -1007,16 +1056,19 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         if route == "primary":
             primary_payload = self._build_primary_payload(messages, kwargs)
             state = primary.StreamState()
-            async for event in self._client.achat.stream(primary_payload):
-                primary_chunk = primary.convert_stream_event(event, state=state)
-                if primary_chunk is None:
-                    continue
-                if run_manager:
-                    await run_manager.on_llm_new_token(
-                        primary_chunk.text,
-                        chunk=primary_chunk,
-                    )
-                yield primary_chunk
+            async with self._client.achat.stream(
+                primary_payload, **self._get_request_kwargs()
+            ) as sdk_stream:
+                async for event in sdk_stream:
+                    primary_chunk = primary.convert_stream_event(event, state=state)
+                    if primary_chunk is None:
+                        continue
+                    if run_manager:
+                        await run_manager.on_llm_new_token(
+                            primary_chunk.text,
+                            chunk=primary_chunk,
+                        )
+                    yield primary_chunk
             return
 
         payload = self._build_payload(messages, **kwargs)
@@ -1024,26 +1076,29 @@ class GigaChat(_BaseGigaChat, BaseChatModel):
         pending_metadata: Dict[str, Any] = {}
         request_id: Optional[str] = None
 
-        async for chunk_d in self._client.astream(payload):
-            chunk = (
-                chunk_d
-                if isinstance(chunk_d, dict)
-                else chunk_d.model_dump(by_alias=True)
-            )
-            chunk_m, generation_info, content = self._build_stream_chunk(
-                chunk,
-                first_chunk,
-                pending_metadata,
-            )
-            first_chunk = False
-            request_id = chunk_m.id or request_id
-            generation_chunk = ChatGenerationChunk(
-                message=chunk_m,
-                generation_info=generation_info,
-            )
-            if run_manager:
-                await run_manager.on_llm_new_token(content)
-            yield generation_chunk
+        async with self._client.astream(
+            payload, **self._get_request_kwargs()
+        ) as sdk_stream:
+            async for chunk_d in sdk_stream:
+                chunk = (
+                    chunk_d
+                    if isinstance(chunk_d, dict)
+                    else chunk_d.model_dump(by_alias=True)
+                )
+                chunk_m, generation_info, content = self._build_stream_chunk(
+                    chunk,
+                    first_chunk,
+                    pending_metadata,
+                )
+                first_chunk = False
+                request_id = chunk_m.id or request_id
+                generation_chunk = ChatGenerationChunk(
+                    message=chunk_m,
+                    generation_info=generation_info,
+                )
+                if run_manager:
+                    await run_manager.on_llm_new_token(content)
+                yield generation_chunk
 
         if pending_metadata:
             final_chunk = ChatGenerationChunk(

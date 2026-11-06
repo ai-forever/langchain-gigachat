@@ -1,6 +1,6 @@
 [project]
 name = "langchain-gigachat"
-version = "0.5.2"
+version = "0.5.3a1"
 description = "An integration package connecting GigaChat and LangChain"
 authors = []
 readme = "README.md"
@@ -8,8 +8,12 @@ license = "MIT"
 requires-python = ">=3.10,<4"
 dependencies = [
     "langchain-core>=1.2.5,<2",
-    "gigachat>=0.2.4,<0.3",
+    "gigachat==0.3.0a1",
+    "httpx2>=2.14.0,<3",
 ]
+
+[project.optional-dependencies]
+aiohttp = ["gigachat[aiohttp]==0.3.0a1"]
 
 [project.urls]
 Repository = "https://github.com/ai-forever/langchain-gigachat"

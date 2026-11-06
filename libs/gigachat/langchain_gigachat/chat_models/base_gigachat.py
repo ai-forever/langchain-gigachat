@@ -1,13 +1,20 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import IO, Any, Dict, List, Literal, Mapping, Optional, Tuple, Union
 
 import gigachat.models as gm
-from gigachat._types import FileTypes
 from langchain_core.utils.utils import from_env
 from pydantic import Field
 
 from langchain_gigachat._client import _GigaChatClientMixin
+
+FileContent = Union[IO[bytes], bytes, str]
+FileTypes = Union[
+    FileContent,
+    Tuple[Optional[str], FileContent],
+    Tuple[Optional[str], FileContent, Optional[str]],
+    Tuple[Optional[str], FileContent, Optional[str], Mapping[str, str]],
+]
 
 
 class _BaseGigaChat(_GigaChatClientMixin):
@@ -79,29 +86,31 @@ class _BaseGigaChat(_GigaChatClientMixin):
         self, input_: List[str], model: Optional[str] = None
     ) -> List[gm.TokensCount]:
         """Get tokens of string list."""
-        return self._client.tokens_count(input_, model)
+        return self._client.tokens_count(input_, model, **self._get_request_kwargs())
 
     async def atokens_count(
         self, input_: List[str], model: Optional[str] = None
     ) -> List[gm.TokensCount]:
         """Get tokens of strings list (async)."""
-        return await self._client.atokens_count(input_, model)
+        return await self._client.atokens_count(
+            input_, model, **self._get_request_kwargs()
+        )
 
     def get_models(self) -> gm.Models:
         """Get available models of Gigachat."""
-        return self._client.get_models()
+        return self._client.get_models(**self._get_request_kwargs())
 
     async def aget_models(self) -> gm.Models:
         """Get available models of Gigachat (async)."""
-        return await self._client.aget_models()
+        return await self._client.aget_models(**self._get_request_kwargs())
 
     def get_model(self, model: str) -> gm.Model:
         """Get info about model."""
-        return self._client.get_model(model)
+        return self._client.get_model(model, **self._get_request_kwargs())
 
     async def aget_model(self, model: str) -> gm.Model:
         """Get info about model (async)."""
-        return await self._client.aget_model(model)
+        return await self._client.aget_model(model, **self._get_request_kwargs())
 
     def get_num_tokens(self, text: str) -> int:
         """Count approximate number of tokens."""
@@ -113,41 +122,43 @@ class _BaseGigaChat(_GigaChatClientMixin):
     def upload_file(
         self, file: FileTypes, purpose: Literal["general", "assistant"] = "general"
     ) -> gm.UploadedFile:
-        return self._client.upload_file(file, purpose)
+        return self._client.upload_file(file, purpose, **self._get_request_kwargs())
 
     async def aupload_file(
         self, file: FileTypes, purpose: Literal["general", "assistant"] = "general"
     ) -> gm.UploadedFile:
-        return await self._client.aupload_file(file, purpose)
+        return await self._client.aupload_file(
+            file, purpose, **self._get_request_kwargs()
+        )
 
     def get_file(self, file_id: str) -> gm.UploadedFile:
         """Return file metadata by ID (SDK get_file)."""
-        return self._client.get_file(file_id)
+        return self._client.get_file(file_id, **self._get_request_kwargs())
 
     async def aget_file(self, file_id: str) -> gm.UploadedFile:
         """Return file metadata by ID (async, SDK aget_file)."""
-        return await self._client.aget_file(file_id)
+        return await self._client.aget_file(file_id, **self._get_request_kwargs())
 
     def get_file_content(self, file_id: str) -> gm.Image:
         """Download file content (base64) by ID. Uses SDK get_image."""
-        return self._client.get_image(file_id)
+        return self._client.get_image(file_id, **self._get_request_kwargs())
 
     async def aget_file_content(self, file_id: str) -> gm.Image:
         """Download file content (base64) by ID (async, SDK aget_image)."""
-        return await self._client.aget_image(file_id)
+        return await self._client.aget_image(file_id, **self._get_request_kwargs())
 
     def list_files(self) -> gm.UploadedFiles:
         """Return list of uploaded files (SDK get_files, GET /files)."""
-        return self._client.get_files()
+        return self._client.get_files(**self._get_request_kwargs())
 
     async def alist_files(self) -> gm.UploadedFiles:
         """Return list of uploaded files (async, SDK aget_files)."""
-        return await self._client.aget_files()
+        return await self._client.aget_files(**self._get_request_kwargs())
 
     def delete_file(self, file_id: str) -> gm.DeletedFile:
         """Delete a file by ID (SDK delete_file, DELETE /files/{{id}})."""
-        return self._client.delete_file(file_id)
+        return self._client.delete_file(file_id, **self._get_request_kwargs())
 
     async def adelete_file(self, file_id: str) -> gm.DeletedFile:
         """Delete a file by ID (async, SDK adelete_file)."""
-        return await self._client.adelete_file(file_id)
+        return await self._client.adelete_file(file_id, **self._get_request_kwargs())
