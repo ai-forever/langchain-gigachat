@@ -3,6 +3,7 @@ import hashlib
 from typing import Any, AsyncGenerator, Iterable, List, Tuple, cast
 from unittest.mock import MagicMock, patch
 
+import gigachat
 import pytest
 from gigachat.models import (
     ChatCompletion,
@@ -94,7 +95,9 @@ def patch_gigachat(
 ) -> None:
     mock = mocker.Mock()
     mock.chat.return_value = chat_completion
-    mock.stream.return_value = chat_completion_stream
+    mock.stream.side_effect = lambda *args, **kwargs: gigachat.Stream.from_iterator(
+        iter(chat_completion_stream)
+    )
 
     mocker.patch("gigachat.GigaChat", return_value=mock)
 
@@ -121,7 +124,11 @@ def patch_gigachat_astream(
             yield chunk
 
     mock = mocker.Mock()
-    mock.astream.return_value = return_value_async_generator(chat_completion_stream)
+    mock.astream.side_effect = (
+        lambda *args, **kwargs: gigachat.AsyncStream.from_iterator(
+            return_value_async_generator(chat_completion_stream)
+        )
+    )
 
     mocker.patch("gigachat.GigaChat", return_value=mock)
 
@@ -133,7 +140,12 @@ def patch_gigachat_upload_file(
     chat_completion_stream: List[ChatCompletionChunk],
 ) -> MagicMock:
     mocker.patch("gigachat.GigaChat.chat", return_value=chat_completion)
-    mocker.patch("gigachat.GigaChat.stream", return_value=chat_completion_stream)
+    mocker.patch(
+        "gigachat.GigaChat.stream",
+        side_effect=lambda *args, **kwargs: gigachat.Stream.from_iterator(
+            iter(chat_completion_stream)
+        ),
+    )
     return mocker.patch(
         "gigachat.GigaChat.upload_file",
         return_value=UploadedFile(
@@ -158,7 +170,9 @@ def patch_gigachat_aupload_file(
 
     mocker.patch(
         "gigachat.GigaChat.astream",
-        return_value=return_value_async_generator(chat_completion_stream),
+        side_effect=lambda *args, **kwargs: gigachat.AsyncStream.from_iterator(
+            return_value_async_generator(chat_completion_stream)
+        ),
     )
     async_mock = mocker.AsyncMock()
     async_mock.return_value = UploadedFile(

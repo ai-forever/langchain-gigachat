@@ -116,3 +116,28 @@ def test_model_none_not_forwarded(patch_gigachat_embeddings: MagicMock) -> None:
     emb.embed_documents(["hello"])
     call_kwargs = patch_gigachat_embeddings.embeddings.call_args[1]
     assert "model" not in call_kwargs
+
+
+@pytest.mark.parametrize("invalid", ["AAAA", None])
+@pytest.mark.parametrize("asynchronous", [False, True])
+async def test_invalid_embedding_batch_is_rejected(
+    invalid: object, asynchronous: bool, mocker: MockerFixture
+) -> None:
+    from types import SimpleNamespace
+
+    first = SimpleNamespace(embedding=[0.1, 0.2], index=0)
+    second = (
+        SimpleNamespace(embedding=invalid, index=1)
+        if invalid is not None
+        else SimpleNamespace(index=1, error="invalid input")
+    )
+    response = SimpleNamespace(data=[first, second])
+    sdk = mocker.patch("gigachat.GigaChat").return_value
+    sdk.embeddings.return_value = response
+    sdk.aembeddings = mocker.AsyncMock(return_value=response)
+    emb = GigaChatEmbeddings()
+    with pytest.raises(ValueError, match="(?i)(index|input).?1|1.*(index|input)"):
+        if asynchronous:
+            await emb.aembed_documents(["a", "b"])
+        else:
+            emb.embed_documents(["a", "b"])
