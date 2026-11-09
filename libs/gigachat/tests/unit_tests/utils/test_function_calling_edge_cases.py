@@ -221,3 +221,78 @@ def test_convert_to_gigachat_function_incorrect_schema() -> None:
 
     with pytest.raises(IncorrectSchemaException, match="do not support"):
         convert_to_gigachat_function(bad_fn)
+
+
+@pytest.mark.parametrize("name", ["title", "properties", "anyOf", "allOf", "type"])
+def test_schema_keyword_field_names_are_preserved(name: str) -> None:
+    schema: dict[str, Any] = {
+        "type": "object",
+        "properties": {name: {"title": "Label", "type": "string"}},
+        "required": [name],
+    }
+    result = gigachat_fix_schema(schema)
+    assert result["properties"] == {name: {"type": "string"}}
+    assert result["required"] == [name]
+    assert schema["properties"][name]["title"] == "Label"
+
+
+def test_nested_title_field_in_array_is_preserved() -> None:
+    schema = {
+        "type": "array",
+        "items": {
+            "type": "object",
+            "properties": {"title": {"type": "string"}},
+            "required": ["title"],
+        },
+    }
+    assert gigachat_fix_schema(schema) == schema
+
+
+def test_single_anyof_retains_type_and_constraints() -> None:
+    schema = {
+        "anyOf": [{"type": "array", "items": {"type": "string"}, "minItems": 2}],
+        "description": "All names",
+    }
+    assert gigachat_fix_schema(schema) == {
+        "type": "array",
+        "items": {"type": "string"},
+        "minItems": 2,
+        "description": "All names",
+    }
+
+
+@pytest.mark.parametrize("keyword", ["anyOf", "allOf"])
+def test_empty_combinator_raises_schema_error(keyword: str) -> None:
+    with pytest.raises(IncorrectSchemaException):
+        gigachat_fix_schema({keyword: []})
+
+
+def test_preformatted_tool_normalizes_without_mutating_input() -> None:
+    from copy import deepcopy
+
+    from langchain_gigachat.utils.function_calling import convert_to_gigachat_tool
+
+    tool = {
+        "type": "function",
+        "function": {
+            "name": "update",
+            "description": "Update metadata",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"},
+                    "metadata": {"type": "object", "additionalProperties": True},
+                },
+            },
+        },
+    }
+    original = deepcopy(tool)
+    result = convert_to_gigachat_tool(tool)
+    props = result["function"]["parameters"]["properties"]
+    assert props["title"] == {"type": "string"}
+    assert props["metadata"] == {
+        "type": "object",
+        "additionalProperties": True,
+        "properties": {},
+    }
+    assert tool == original

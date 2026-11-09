@@ -4,7 +4,7 @@ import json
 from typing import Any
 
 import gigachat.models as gm
-import httpx
+import httpx2 as httpx
 import pytest
 from gigachat.context import session_id_cvar
 from gigachat.settings import Settings
@@ -56,25 +56,17 @@ async def test_session_header_reaches_sdk_sync_and_async(
         else _response()
     )
 
-    def send(
-        client: httpx.Client, request: httpx.Request, **kwargs: Any
-    ) -> httpx.Response:
+    def send(request: httpx.Request) -> httpx.Response:
         seen.append(request)
         return httpx.Response(200, json=body, request=request)
 
-    async def asend(
-        client: httpx.AsyncClient, request: httpx.Request, **kwargs: Any
-    ) -> httpx.Response:
-        seen.append(request)
-        return httpx.Response(200, json=body, request=request)
-
-    monkeypatch.setattr(httpx.Client, "send", send)
-    monkeypatch.setattr(httpx.AsyncClient, "send", asend)
     llm = GigaChat(
         model="test-model",
         access_token="test-token",
         session_id="client-session",
         use_api_v2=primary,
+        http_client=httpx.Client(transport=httpx.MockTransport(send)),
+        async_http_client=httpx.AsyncClient(transport=httpx.MockTransport(send)),
     )
     token = session_id_cvar.set(context_id)
     try:
@@ -248,9 +240,7 @@ async def test_legacy_metadata_snapshots_survive_sdk_http_stream(
     body += "data: [DONE]\n\n"
     seen: list[httpx.Request] = []
 
-    def send(
-        client: httpx.Client | httpx.AsyncClient, request: httpx.Request, **kwargs: Any
-    ) -> httpx.Response:
+    def send(request: httpx.Request) -> httpx.Response:
         seen.append(request)
         return httpx.Response(
             200,
@@ -259,19 +249,22 @@ async def test_legacy_metadata_snapshots_survive_sdk_http_stream(
             request=request,
         )
 
-    async def asend(
-        client: httpx.AsyncClient, request: httpx.Request, **kwargs: Any
-    ) -> httpx.Response:
-        return send(client, request, **kwargs)
+    from gigachat import RequestOptions
 
-    monkeypatch.setattr(httpx.Client, "send", send)
-    monkeypatch.setattr(httpx.AsyncClient, "send", asend)
-    llm = GigaChat(model="test-model", access_token="test-token")
+    llm = GigaChat(
+        model="test-model",
+        access_token="test-token",
+        default_request_options=RequestOptions(extra_headers={"X-Option": "value"}),
+        http_client=httpx.Client(transport=httpx.MockTransport(send)),
+        async_http_client=httpx.AsyncClient(transport=httpx.MockTransport(send)),
+    )
     chunks = (
         [chunk async for chunk in llm.astream("hello")]
         if asynchronous
         else list(llm.stream("hello"))
     )
+    assert seen[0].headers["X-Option"] == "value"
+    assert json.loads(seen[0].content)["stream"] is True
     aggregate = chunks[0]
     for chunk in chunks[1:]:
         aggregate += chunk
@@ -289,3 +282,80 @@ async def test_legacy_metadata_snapshots_survive_sdk_http_stream(
     }
     assert len(seen) == 1
     assert seen[0].url.path == "/v1/chat/completions"
+
+
+@pytest.mark.parametrize("primary", [False, True])
+async def test_constructor_defaults_reach_chat_wire(primary: bool) -> None:
+    from gigachat import RequestOptions
+
+    requests: list[httpx.Request] = []
+    options = RequestOptions(
+        extra_headers={"X-Test-Option": "visible"},
+        extra_query=[("tag", "one"), ("tag", "two")],
+        extra_body={"temperature": 0.25},
+        timeout=11,
+        max_retries=0,
+    )
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        body = (
+            {"messages": [{"role": "assistant", "content": "ok"}]}
+            if primary
+            else _response()
+        )
+        return httpx.Response(200, json=body, request=request)
+
+    sync = httpx.Client(transport=httpx.MockTransport(respond))
+    async_client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+    model = GigaChat(
+        model="test-model",
+        access_token="token",
+        use_api_v2=primary,
+        default_request_options=options,
+        http_client=sync,
+        async_http_client=async_client,
+    )
+    assert model.invoke("hello").content == "ok"
+    assert (await model.ainvoke("hello")).content == "ok"
+    assert model.bind(temperature=0.5).invoke("hello").content == "ok"
+    assert len(requests) == 3
+    for request in requests:
+        assert request.headers["X-Test-Option"] == "visible"
+        assert request.url.params.get_list("tag") == ["one", "two"]
+        assert json.loads(request.content)["temperature"] == 0.25
+        assert request.extensions["timeout"]["read"] == 11
+    await model.aclose()
+    assert not sync.is_closed
+    assert not async_client.is_closed
+    sync.close()
+    await async_client.aclose()
+
+
+def test_runtime_options_are_excluded_from_diagnostics() -> None:
+    from gigachat import RequestOptions
+    from langchain_core.load import dumps
+
+    secret = "synthetic-secret-not-for-tracing"
+    options = RequestOptions(extra_headers={"X-Secret": secret})
+    client = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(500)))
+    model = GigaChat(default_request_options=options, http_client=client)
+    assert model.default_request_options is options
+    assert model.http_client is client
+    assert secret not in repr(model)
+    assert secret not in repr(model.model_dump())
+    assert secret not in dumps(model)
+    assert "default_request_options" not in model.model_json_schema()["properties"]
+    assert "http_client" not in model.model_json_schema()["properties"]
+    client.close()
+
+
+@pytest.mark.parametrize("model_class", [GigaChat, GigaChatEmbeddings])
+async def test_unused_close_does_not_construct_owner(
+    model_class: Any, mocker: Any
+) -> None:
+    constructor = mocker.patch("gigachat.GigaChat")
+    model = model_class()
+    model.close()
+    await model.aclose()
+    constructor.assert_not_called()

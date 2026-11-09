@@ -17,11 +17,16 @@ This library is part of [GigaChain](https://github.com/ai-forever/gigachain) and
 ## Quick Start
 
 ```bash
-pip install -U langchain-gigachat
+python -m pip install "langchain-gigachat==0.5.3a1"
+# Optional async aiohttp backend:
+python -m pip install "langchain-gigachat[aiohttp]==0.5.3a1"
 ```
 
-This documentation includes the unreleased `0.5.2a1` prerelease.
-For its examples, install the local sources and SDK `0.2.4a1` as described in
+Alpha `0.5.3a1` targets exactly `gigachat==0.3.0a1`, with LangChain Core
+`>=1.2.5,<2` and HTTPX2 `>=2.14.0,<3`. API v1 remains the default;
+API v2 is opt-in. See [the migration guide](libs/gigachat/MIGRATION.md#sdk-030a1-alpha-053a1) for constructor request defaults,
+client ownership, and async cleanup limits.
+For runnable examples, see
 [example setup](examples/sdk_contract_alignment/README.md#setup).
 
 ```python
@@ -36,7 +41,7 @@ print(msg.content)
 
 Full documentation, usage examples, and configuration reference are in [`libs/gigachat/README.md`](libs/gigachat/README.md).
 
-Runnable [prerelease examples](examples/sdk_contract_alignment/README.md)
+Runnable [examples](examples/sdk_contract_alignment/README.md)
 cover parallel tools, reasoning budgets, streaming metadata, sessions, and stored
 thread continuation.
 

@@ -1,7 +1,90 @@
 # Migration Guide: langchain-gigachat 0.3.x → 0.5.x
 
 This guide covers the breaking changes in `langchain-gigachat` 0.5.0 and the
-opt-in primary API v2 preview added in 0.5.2a1.
+opt-in primary API v2 support released in 0.5.2.
+
+## SDK 0.3.0a1 alpha (0.5.3a1)
+
+This alpha requires exactly `gigachat==0.3.0a1`; Python 3.10+ and
+`langchain-core>=1.2.5,<2` remain supported. Install with:
+
+```bash
+python -m pip install "langchain-gigachat==0.5.3a1"
+python -m pip install "langchain-gigachat[aiohttp]==0.5.3a1"
+```
+
+Both `GigaChat` and `GigaChatEmbeddings` accept constructor defaults imported
+from the public SDK:
+
+```python
+from gigachat import RequestOptions
+from langchain_gigachat import GigaChat
+
+model = GigaChat(
+    credentials="your-authorization-key",
+    model="GigaChat",
+    default_request_options=RequestOptions(
+        extra_headers={"X-Request-ID": "example-request"},
+    ),
+)
+try:
+    reply = model.invoke("Hello")
+finally:
+    model.close()
+```
+
+Defaults apply to chat, embeddings, and file/model helpers through the SDK's
+separate `request_options` argument. `RequestOptions(timeout=None)` explicitly
+disables the request timeout; omitting the option inherits SDK/client settings.
+Per-call `invoke(..., request_options=...)` and
+`.bind(request_options=...)` are unsupported in this alpha and rejected when
+the model is invoked. The wrapper cannot sanitize raw options stored in an
+external Runnable before invocation.
+Ordinary bindings continue to use constructor defaults. Raw options and injected
+clients are runtime-only: they are excluded from model dumps, representation,
+JSON Schema, and LangChain serialization/tracing. Defaults contribute a hashed
+cache fingerprint, so different body or authorization defaults do not share a
+cache entry; raw values are not included in the key. Re-supply runtime defaults
+and clients when restoring an application from LangChain serialization. The
+fingerprint covers only explicit wrapper header/query/body defaults, preserving
+query order and repetitions; transport-only timeout/retry settings do not change
+it. Headers configured on injected clients and SDK ContextVars remain outside
+this fingerprint and require application-level cache partitioning when relevant.
+
+The SDK now uses HTTPX2. Public injection fields `http_client`,
+`auth_http_client`, `async_http_client`, and `auth_async_http_client` accept
+`httpx2.Client` / `httpx2.AsyncClient` for API and OAuth separately. The wrapper
+keeps one cached SDK owner per model and reuses its connection pools, including
+for bound runnables. Injected clients are borrowed, preserve identity, and remain open
+when the wrapper closes; their external owner must close them.
+
+`close()` closes the owned sync resources; `await aclose()` closes both owned
+sync and async resources. Closing an unused model does not create a client.
+A closed owner is retained and is not silently replaced. Use an async model
+and its borrowed clients within one event loop; await `aclose()` before that
+loop ends. Avoid reusing them across separate `asyncio.run()` calls.
+
+`async_backend=None` lets the SDK/environment choose (normally HTTPX2).
+To select aiohttp explicitly, install the extra and pass
+`async_backend="aiohttp"`. aiohttp does not support HTTP/2, SOCKS, or a separate
+finite write timeout. Use phased timeouts with `write=None`, and custom limits
+with `max_keepalive_connections=None`. Unsupported combinations retain the
+SDK's explicit errors rather than being silently rewritten.
+
+Streams use SDK context managers to await wrapper-owned cleanup on completion,
+errors, and explicit generator closure. A bare `break` with a retained generator
+reference does not close it: close the generator explicitly. On both minimum
+and latest tested LangChain Core, the outer public `astream().aclose()` may
+finish before inner SDK cleanup completes because Core forwards through a bare
+`async for`. This remaining Core boundary is not an awaited-cleanup guarantee.
+Closing the generator returned by the private wrapper `_astream(...)` with
+`await generator.aclose()` does await SDK cleanup.
+
+Embeddings still return numeric vectors in SDK response order. SDK error items and
+base64/string vectors raise a clear `ValueError` instead of returning partial
+results or strings. Existing file-content helpers continue to return the SDK
+image/base64 contract, and structured output retains LangChain
+`raw`/`parsed`/`parsing_error` results with `include_raw=True`.
 
 ## Opting into API v2
 
@@ -70,12 +153,10 @@ for `type="json_schema"` and returns a normal `AIMessage`; parsing belongs to
 [Runnable examples and installation steps](../../examples/sdk_contract_alignment/README.md)
 show complete flows for all changes below.
 
-The `0.5.2a1` prerelease works with the `0.2.4a1` SDK prerelease.
-Install both from source using the linked setup instructions. SDK `0.2.3`
-remains the minimum for basic API v2 support. Session configuration, v1
-assistant IDs and call IDs, expanded response metadata, and explicit JSON
-null in v2 `additional_fields` require the newer SDK. Unsupported session
-and v1 assistant settings raise an error on older SDK versions.
+Version `0.5.2` requires stable SDK `>=0.2.4,<0.3`, including session
+configuration, v1 assistant and call IDs, expanded response metadata, and
+explicit JSON null in v2 `additional_fields`. Install the package with
+`pip install "langchain-gigachat==0.5.2"`; the SDK is installed automatically.
 
 ### Generation controls and additional fields
 
@@ -137,11 +218,11 @@ on the server, model, and account.
 
 ## Requirements
 
-| Dependency | Before (0.3.x) | Current (0.5.2a1) |
+| Dependency | Before (0.3.x) | Current (0.5.2) |
 |------------|-----------------|-------------------|
 | Python | >= 3.9 | **>= 3.10, < 4** |
-| `langchain-core` | >= 0.3, < 1 | **>= 1, < 2** |
-| `gigachat` (SDK) | >= 0.1.41 | **>= 0.2.3, < 0.3** |
+| `langchain-core` | >= 0.3, < 1 | **>= 1.2.5, < 2** |
+| `gigachat` (SDK) | >= 0.1.41 | **>= 0.2.4, < 0.3** |
 
 > LangChain Core 1.x dropped Python 3.9 support. GigaChat SDK 0.2.0 migrated to Pydantic V2.
 
@@ -443,5 +524,5 @@ def get_weather(city: str) -> str:
 
 ```python
 import langchain_gigachat
-print(langchain_gigachat.__version__)  # "0.5.2a1"
+print(langchain_gigachat.__version__)  # "0.5.2"
 ```

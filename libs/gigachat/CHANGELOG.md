@@ -2,12 +2,41 @@
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [0.5.2a1] — Unreleased
-
-Unreleased prerelease with opt-in API v2 support and expanded SDK integration.
+## [0.5.3a1] — Unreleased
 
 ### Added
 
+- Exact SDK `gigachat==0.3.0a1` support with public HTTPX2 client injection,
+  optional `aiohttp` backend, and shared constructor `default_request_options`.
+- Explicit `close()` / `aclose()` lifecycle with borrowed-client ownership;
+  SDK stream contexts await wrapper-owned cleanup. Public Core async-generator
+  cleanup can still finish after the outer generator closes.
+- Runtime options excluded from serialization/tracing, with hashed cache
+  separation; raw per-call/bound `request_options` are explicitly unsupported.
+
+### Changed
+
+- SDK-facing transport uses HTTPX2 `>=2.14.0,<3`; API v1 stays the default,
+  with opt-in API v2 and existing structured-output/file contracts retained.
+- Embeddings reject SDK error items and base64/string vectors with `ValueError`.
+
+### Fixed
+
+- Public imports with SDK alpha; import checking on Python 3.15.
+- Required Python 3.10–3.15 CI with pinned interpreters, minimum/latest Core,
+  and isolated wheel/base/aiohttp validation.
+
+## [0.5.2] — 2026-11-05
+
+Stable release of the API v2 integration, with API v1 remaining the default.
+Requires stable GigaChat SDK 0.2.4 or later within the 0.2 series.
+
+### Added
+
+- Restored prompt-based `method="format_instructions"`, including full raw
+  JSON Schema instructions (#74/#45). This is an alternative for list
+  extraction affected by model-side function-call truncation (#73), not a
+  guarantee that function calling returns every requested item.
 - Opt-in `GigaChat(use_api_v2=True)` routing to `/v2/chat/completions` for
   sync/async invocation and streaming; legacy remains the default.
 - Primary request, response, message, and stream conversion through the SDK's
@@ -42,6 +71,16 @@ Unreleased prerelease with opt-in API v2 support and expanded SDK integration.
 
 ### Fixed
 
+- Preserve tool fields named `title`, `properties`, `anyOf`, `allOf`, and other
+  schema keywords, including nested array objects (#64).
+- Normalize preformatted function tools just like other v1 tool schemas,
+  including required empty `properties` on free-form object fields (#55/#59).
+- Preserve type and constraints in single-variant `anyOf`; report empty
+  combinators as schema errors. Multi-variant v1 unions still raise rather
+  than silently changing argument types. API v2 preserves union schemas.
+- Streaming works without an explicit `streaming=True` on newer LangChain Core
+  versions; constructor validation preserves unset fields (#77).
+
 - API v2 tool results that are not JSON objects (text, markdown, numbers,
   arrays, null) are sent as `{"result": <value>}`; the API answered 422
   (`INVALID_PARAMS: invalid function result`) or 500 for long markdown.
@@ -64,15 +103,14 @@ Unreleased prerelease with opt-in API v2 support and expanded SDK integration.
 
 ### Dependencies
 
-- Package version is `0.5.2a1` with `langchain-core>=1,<2`.
-- Requires stable `gigachat>=0.2.3,<0.3` for the primary resource API.
+- Package version is `0.5.2` with `langchain-core>=1.2.5,<2`.
+  Core 1.0.0 lacks the `@tool(extras=...)` API used by this integration.
+- CI checks both the minimum supported and latest stable LangChain Core 1.x.
+- Replace the `gigachat==0.2.4a1` prerelease pin with `gigachat>=0.2.4,<0.3`.
 
 ### Known limitations
 
 - Parallel calls without distinct provider IDs remain unsupported.
-- Session configuration, expanded v1 metadata, and explicit JSON null in v2
-  additional fields require SDK `0.2.4a1`; SDK `0.2.3` remains supported for
-  existing features.
 - Server/model support for v2 features must be checked separately.
 
 ## [0.5.1] — 2026-05-04

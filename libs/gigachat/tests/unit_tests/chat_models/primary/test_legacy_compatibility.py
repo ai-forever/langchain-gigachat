@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator, Iterator
 from typing import Any
 from unittest.mock import MagicMock
 
+import gigachat
 import gigachat.models as gm
 import pytest
 from langchain_core.messages import AIMessage, AIMessageChunk
@@ -67,7 +68,9 @@ def test_legacy_remains_default_for_invoke_and_stream(
     sdk_client: MagicMock,
 ) -> None:
     sdk_client.chat.return_value = _legacy_response()
-    sdk_client.stream.side_effect = lambda payload: _legacy_stream()
+    sdk_client.stream.side_effect = lambda payload: gigachat.Stream.from_iterator(
+        _legacy_stream()
+    )
 
     response = GigaChat(model=MODEL).invoke("Hello")
     chunks = list(GigaChat(model=MODEL).stream("Hello"))
@@ -85,7 +88,9 @@ def test_legacy_remains_default_for_invoke_and_stream(
 async def test_legacy_async_stream_remains_default(
     sdk_client: MagicMock,
 ) -> None:
-    sdk_client.astream.side_effect = lambda payload: _async_stream()
+    sdk_client.astream.side_effect = lambda payload: gigachat.AsyncStream.from_iterator(
+        _async_stream()
+    )
 
     chunks = [chunk async for chunk in GigaChat(model=MODEL).astream("Hello")]
 

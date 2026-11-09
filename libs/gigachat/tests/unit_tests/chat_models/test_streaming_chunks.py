@@ -1,8 +1,9 @@
 """Tests for _convert_delta_to_message_chunk and _build_stream_chunk."""
 
 import json
-from typing import Any, AsyncIterator, Dict, Iterator
+from typing import Any, AsyncIterator, Dict, Iterator, cast
 
+import gigachat
 import pytest
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import (
@@ -335,8 +336,12 @@ async def test_legacy_public_stream_uses_latest_metadata_snapshots(
             yield raw_chunk
 
     sdk_client = mocker.patch("gigachat.GigaChat").return_value
-    sdk_client.stream.side_effect = stream
-    sdk_client.astream.side_effect = astream
+    sdk_client.stream.side_effect = lambda *args: gigachat.Stream.from_iterator(
+        cast(Any, stream(*args))
+    )
+    sdk_client.astream.side_effect = lambda *args: gigachat.AsyncStream.from_iterator(
+        cast(Any, astream(*args))
+    )
     recorder = _TokenRecorder()
     llm = GigaChat(model="test-model", callbacks=[recorder])
     if asynchronous:

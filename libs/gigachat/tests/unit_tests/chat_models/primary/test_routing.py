@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator, Iterator
 from typing import Any, Optional
 from unittest.mock import AsyncMock, MagicMock
 
+import gigachat
 import gigachat.models as gm
 import pytest
 from langchain_core.messages import AIMessage, AIMessageChunk
@@ -190,8 +191,12 @@ def test_sync_streaming_routing_matrix(
     expected_route: str,
     expected_text: str,
 ) -> None:
-    sdk_client.stream.side_effect = lambda payload: _legacy_stream()
-    sdk_client.chat.stream.side_effect = lambda payload: _primary_stream()
+    sdk_client.stream.side_effect = lambda payload: gigachat.Stream.from_iterator(
+        _legacy_stream()
+    )
+    sdk_client.chat.stream.side_effect = lambda payload: gigachat.Stream.from_iterator(
+        _primary_stream()
+    )
     llm = GigaChat(model=MODEL, use_api_v2=use_api_v2, streaming=True)
 
     chunks = list(llm.stream("Hello"))
@@ -209,7 +214,9 @@ def test_sync_streaming_routing_matrix(
 def test_primary_streaming_invoke_keeps_scalar_metadata_once(
     sdk_client: MagicMock,
 ) -> None:
-    sdk_client.chat.stream.side_effect = lambda payload: _primary_stream()
+    sdk_client.chat.stream.side_effect = lambda payload: gigachat.Stream.from_iterator(
+        _primary_stream()
+    )
     llm = GigaChat(model=MODEL, use_api_v2=True, streaming=True)
 
     result = llm.invoke("Hello")
@@ -233,9 +240,13 @@ async def test_async_streaming_routing_matrix(
     expected_route: str,
     expected_text: str,
 ) -> None:
-    sdk_client.astream.side_effect = lambda payload: _async_items(_legacy_stream())
-    sdk_client.achat.stream.side_effect = lambda payload: _async_items(
-        _primary_stream()
+    sdk_client.astream.side_effect = lambda payload: gigachat.AsyncStream.from_iterator(
+        _async_items(_legacy_stream())
+    )
+    sdk_client.achat.stream.side_effect = (
+        lambda payload: gigachat.AsyncStream.from_iterator(
+            _async_items(_primary_stream())
+        )
     )
     llm = GigaChat(model=MODEL, use_api_v2=use_api_v2, streaming=True)
 
@@ -458,7 +469,9 @@ async def test_async_disable_streaming_for_tools_wins_over_streaming_flag(
 
 
 def test_streaming_flag_still_streams_without_tools(sdk_client: MagicMock) -> None:
-    sdk_client.chat.stream.side_effect = lambda payload: _primary_stream()
+    sdk_client.chat.stream.side_effect = lambda payload: gigachat.Stream.from_iterator(
+        _primary_stream()
+    )
     llm = GigaChat(
         model=MODEL,
         use_api_v2=True,
@@ -470,3 +483,52 @@ def test_streaming_flag_still_streams_without_tools(sdk_client: MagicMock) -> No
 
     sdk_client.chat.stream.assert_called_once()
     sdk_client.chat.create.assert_not_called()
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+async def test_primary_stream_defaults_reach_wire(asynchronous: bool) -> None:
+    import json
+
+    import httpx2 as httpx
+    from gigachat import RequestOptions
+
+    requests: list[httpx.Request] = []
+    events = [event.model_dump(exclude_none=True) for event in _primary_stream()]
+    body = (
+        "".join(f"data: {json.dumps(event)}\n\n" for event in events)
+        + "data: [DONE]\n\n"
+    )
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200, text=body, headers={"content-type": "text/event-stream"}
+        )
+
+    sync = httpx.Client(transport=httpx.MockTransport(respond))
+    async_client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+    llm = GigaChat(
+        model=MODEL,
+        access_token="token",
+        use_api_v2=True,
+        http_client=sync,
+        async_http_client=async_client,
+        default_request_options=RequestOptions(
+            extra_headers={"X-Option": "value"},
+            extra_query=[("tag", "a"), ("tag", "b")],
+            extra_body={"temperature": 0.25},
+        ),
+    )
+    chunks = (
+        [chunk async for chunk in llm.astream("Hello")]
+        if asynchronous
+        else list(llm.stream("Hello"))
+    )
+    assert chunks
+    assert requests[0].headers["X-Option"] == "value"
+    assert requests[0].url.params.get_list("tag") == ["a", "b"]
+    payload = json.loads(requests[0].content)
+    assert payload["temperature"] == 0.25
+    assert payload["stream"] is True
+    sync.close()
+    await async_client.aclose()

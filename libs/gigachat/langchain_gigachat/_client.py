@@ -4,12 +4,18 @@ from __future__ import annotations
 
 import ssl
 from functools import cached_property
-from typing import Any, Dict, Optional, Tuple
+from threading import RLock
+from typing import Any, Dict, Literal, Optional, Tuple
 
 import gigachat
+import httpx2
+from gigachat import RequestOptions
 from gigachat.settings import Settings
 from langchain_core.load.serializable import Serializable
-from pydantic import ConfigDict
+from pydantic import ConfigDict, Field, InstanceOf
+from pydantic.json_schema import SkipJsonSchema
+
+_CLIENT_INIT_LOCK = RLock()
 
 
 class _GigaChatClientMixin(Serializable):
@@ -51,7 +57,8 @@ class _GigaChatClientMixin(Serializable):
     verify_ssl_certs: Optional[bool] = None
     """Check certificates for all requests."""
 
-    ssl_context: Optional[ssl.SSLContext] = None
+    # SSL contexts are runtime objects and have no JSON Schema representation.
+    ssl_context: SkipJsonSchema[Optional[ssl.SSLContext]] = None
     """SSL context."""
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -86,6 +93,23 @@ class _GigaChatClientMixin(Serializable):
     SDK default: ``(429, 500, 502, 503, 504)``.
     """
 
+    async_backend: Optional[Literal["httpx2", "aiohttp"]] = None
+    http_client: SkipJsonSchema[Optional[InstanceOf[httpx2.Client]]] = Field(
+        default=None, exclude=True, repr=False
+    )
+    auth_http_client: SkipJsonSchema[Optional[InstanceOf[httpx2.Client]]] = Field(
+        default=None, exclude=True, repr=False
+    )
+    async_http_client: SkipJsonSchema[Optional[InstanceOf[httpx2.AsyncClient]]] = Field(
+        default=None, exclude=True, repr=False
+    )
+    auth_async_http_client: SkipJsonSchema[Optional[InstanceOf[httpx2.AsyncClient]]] = (
+        Field(default=None, exclude=True, repr=False)
+    )
+    default_request_options: SkipJsonSchema[Optional[InstanceOf[RequestOptions]]] = (
+        Field(default=None, exclude=True, repr=False)
+    )
+
     @property
     def lc_secrets(self) -> Dict[str, str]:
         return {
@@ -112,6 +136,11 @@ class _GigaChatClientMixin(Serializable):
             )
         return {
             **({"session_id": self.session_id} if self.session_id is not None else {}),
+            "async_backend": self.async_backend,
+            "http_client": self.http_client,
+            "auth_http_client": self.auth_http_client,
+            "async_http_client": self.async_http_client,
+            "auth_async_http_client": self.auth_async_http_client,
             "base_url": self.base_url,
             "auth_url": self.auth_url,
             "credentials": self.credentials,
@@ -136,4 +165,27 @@ class _GigaChatClientMixin(Serializable):
     @cached_property
     def _client(self) -> gigachat.GigaChat:
         """Return GigaChat API client."""
-        return gigachat.GigaChat(**self._get_client_init_kwargs())
+        with _CLIENT_INIT_LOCK:
+            client: Optional[gigachat.GigaChat] = self.__dict__.get("_client")
+            if client is None:
+                client = gigachat.GigaChat(**self._get_client_init_kwargs())
+                # cached_property writes after the getter returns, outside our lock.
+                self.__dict__["_client"] = client
+            return client
+
+    def _get_request_kwargs(self) -> Dict[str, Any]:
+        if self.default_request_options is None:
+            return {}
+        return {"request_options": self.default_request_options}
+
+    def close(self) -> None:
+        """Close the existing SDK owner's synchronous resources."""
+        client = self.__dict__.get("_client")
+        if client is not None:
+            client.close()
+
+    async def aclose(self) -> None:
+        """Close the existing SDK owner's synchronous and asynchronous resources."""
+        client = self.__dict__.get("_client")
+        if client is not None:
+            await client.aclose()

@@ -7,6 +7,33 @@ from langchain_core.embeddings import Embeddings
 from langchain_gigachat._client import _GigaChatClientMixin
 
 
+def _extract_vectors(data: Any) -> List[List[float]]:
+    vectors = []
+    for position, item in enumerate(data):
+        index = getattr(item, "index", position)
+        if getattr(item, "object_", None) == "error":
+            raise ValueError(
+                f"Invalid or failed embedding at input index {index}; "
+                "numeric vectors are required"
+            )
+        embedding = getattr(item, "embedding", None)
+        if isinstance(embedding, str):
+            raise ValueError(
+                f"Embedding at input index {index} is base64; "
+                "numeric vectors are required"
+            )
+        if not isinstance(embedding, list) or any(
+            not isinstance(value, (int, float)) or isinstance(value, bool)
+            for value in embedding
+        ):
+            raise ValueError(
+                f"Invalid or failed embedding at input index {index}; "
+                "numeric vectors are required"
+            )
+        vectors.append(embedding)
+    return vectors
+
+
 class GigaChatEmbeddings(_GigaChatClientMixin, Embeddings):
     """GigaChat Embeddings models."""
 
@@ -24,6 +51,7 @@ class GigaChatEmbeddings(_GigaChatClientMixin, Embeddings):
         kwargs: Dict[str, Any] = {}
         if self.model is not None:
             kwargs["model"] = self.model
+        kwargs.update(self._get_request_kwargs())
         return kwargs
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
@@ -38,7 +66,7 @@ class GigaChatEmbeddings(_GigaChatClientMixin, Embeddings):
         if not texts:
             return []
         response = self._client.embeddings(texts=texts, **self._get_embed_kwargs())
-        return [item.embedding for item in response.data]
+        return _extract_vectors(response.data)
 
     async def aembed_documents(self, texts: List[str]) -> List[List[float]]:
         """Embed documents using a GigaChat embeddings model.
@@ -54,7 +82,7 @@ class GigaChatEmbeddings(_GigaChatClientMixin, Embeddings):
         response = await self._client.aembeddings(
             texts=texts, **self._get_embed_kwargs()
         )
-        return [item.embedding for item in response.data]
+        return _extract_vectors(response.data)
 
     def embed_query(self, text: str) -> List[float]:
         """Embed a query using a GigaChat embeddings model.

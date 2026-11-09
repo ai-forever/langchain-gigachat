@@ -6,6 +6,7 @@ from collections.abc import Iterator
 from typing import Any
 from unittest.mock import MagicMock
 
+import gigachat
 import gigachat.models as gm
 import pytest
 from langchain_core.exceptions import OutputParserException
@@ -368,7 +369,9 @@ def test_response_format_does_not_parse_client_tool_calls(
 def test_direct_stream_keeps_raw_output_without_model_side_parsing(
     sdk_client: MagicMock,
 ) -> None:
-    sdk_client.chat.stream.side_effect = lambda payload: _json_stream()
+    sdk_client.chat.stream.side_effect = lambda payload: gigachat.Stream.from_iterator(
+        _json_stream()
+    )
 
     chunks = list(
         GigaChat(model=MODEL, use_api_v2=True)

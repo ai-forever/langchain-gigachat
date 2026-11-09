@@ -1,13 +1,20 @@
 import sys
 import traceback
-from importlib.machinery import SourceFileLoader
+from importlib import import_module
+from pathlib import Path
 
 if __name__ == "__main__":
+    source_root = Path(__file__).resolve().parents[1]
+    sys.path.insert(0, str(source_root))
     files = sys.argv[1:]
     has_failure = False
     for file in files:
         try:
-            SourceFileLoader("x", file).load_module()
+            module_path = Path(file).resolve().relative_to(source_root).with_suffix("")
+            parts = list(module_path.parts)
+            if parts[-1] == "__init__":
+                parts.pop()
+            import_module(".".join(parts))
         except Exception:
             has_failure = True
             print(file)  # noqa: T201
