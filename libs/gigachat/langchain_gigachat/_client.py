@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ssl
 from functools import cached_property
+from threading import RLock
 from typing import Any, Dict, Literal, Optional, Tuple
 
 import gigachat
@@ -13,6 +14,8 @@ from gigachat.settings import Settings
 from langchain_core.load.serializable import Serializable
 from pydantic import ConfigDict, Field, InstanceOf
 from pydantic.json_schema import SkipJsonSchema
+
+_CLIENT_INIT_LOCK = RLock()
 
 
 class _GigaChatClientMixin(Serializable):
@@ -162,7 +165,13 @@ class _GigaChatClientMixin(Serializable):
     @cached_property
     def _client(self) -> gigachat.GigaChat:
         """Return GigaChat API client."""
-        return gigachat.GigaChat(**self._get_client_init_kwargs())
+        with _CLIENT_INIT_LOCK:
+            client: Optional[gigachat.GigaChat] = self.__dict__.get("_client")
+            if client is None:
+                client = gigachat.GigaChat(**self._get_client_init_kwargs())
+                # cached_property writes after the getter returns, outside our lock.
+                self.__dict__["_client"] = client
+            return client
 
     def _get_request_kwargs(self) -> Dict[str, Any]:
         if self.default_request_options is None:

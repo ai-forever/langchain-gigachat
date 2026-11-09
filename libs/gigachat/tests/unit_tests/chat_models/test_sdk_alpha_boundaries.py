@@ -1,6 +1,10 @@
 """Request option isolation and wrapper-owned stream cleanup."""
 
 import asyncio
+import pickle
+from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
+from threading import Barrier
 from typing import Any
 
 import httpx2 as httpx
@@ -10,7 +14,8 @@ from gigachat.context import session_id_cvar
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import HumanMessage
 
-from langchain_gigachat import GigaChat
+from langchain_gigachat import GigaChat, GigaChatEmbeddings
+from langchain_gigachat._client import _GigaChatClientMixin
 
 
 def test_cache_fingerprint_is_canonical_and_secret_free() -> None:
@@ -489,3 +494,127 @@ async def test_stream_callbacks_exclude_constructor_options() -> None:
     await model.aclose()
     sync.close()
     await client.aclose()
+
+
+@pytest.mark.parametrize("model_class", [GigaChat, GigaChatEmbeddings])
+def test_concurrent_cold_client_getter_creates_one_owner(
+    model_class: Any, mocker: Any
+) -> None:
+    model = model_class()
+    start = Barrier(8)
+    constructor = mocker.patch(
+        "gigachat.GigaChat", side_effect=lambda **kw: mocker.Mock()
+    )
+    # Exercise the getter directly so Python 3.10's cached_property lock cannot
+    # hide missing synchronization in the getter on newer interpreters.
+    getter = _GigaChatClientMixin.__dict__["_client"].func
+
+    def get_owner() -> Any:
+        start.wait(timeout=5)
+        return getter(model)
+
+    try:
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            futures = [pool.submit(get_owner) for _ in range(8)]
+            owners = [future.result(timeout=5) for future in futures]
+        assert constructor.call_count == 1
+        assert all(owner is owners[0] for owner in owners)
+        assert model._client is owners[0]
+    finally:
+        model.close()
+
+
+def test_cold_public_batch_creates_one_owner(mocker: Any) -> None:
+    import gigachat
+
+    start = Barrier(8)
+
+    class SynchronizedStart(BaseCallbackHandler):
+        def on_chat_model_start(self, *args: Any, **kwargs: Any) -> None:
+            start.wait(timeout=5)
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "ok"},
+                        "index": 0,
+                        "finish_reason": "stop",
+                    }
+                ],
+                "created": 1,
+                "model": "test",
+                "object": "chat.completion",
+                "usage": {
+                    "prompt_tokens": 1,
+                    "completion_tokens": 1,
+                    "total_tokens": 2,
+                },
+            },
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(respond))
+    constructor = mocker.patch("gigachat.GigaChat", wraps=gigachat.GigaChat)
+    model = GigaChat(
+        access_token="token",
+        model="test",
+        http_client=client,
+        callbacks=[SynchronizedStart()],
+    )
+    try:
+        assert "_client" not in model.__dict__
+        results = model.batch(["hello"] * 8, config={"max_concurrency": 8})
+        assert [result.content for result in results] == ["ok"] * 8
+        assert constructor.call_count == 1
+    finally:
+        model.close()
+        client.close()
+
+
+@pytest.mark.parametrize("model_class", [GigaChat, GigaChatEmbeddings])
+def test_models_have_distinct_sdk_owners(model_class: Any) -> None:
+    models = [model_class(), model_class()]
+    try:
+        assert models[0]._client is not models[1]._client
+    finally:
+        for model in models:
+            model.close()
+
+
+@pytest.mark.parametrize("model_class", [GigaChat, GigaChatEmbeddings])
+@pytest.mark.parametrize("copy_method", ["deepcopy", "model_copy", "pickle"])
+def test_cold_models_remain_copyable(model_class: Any, copy_method: str) -> None:
+    model = model_class(model="test", access_token="token")
+    if copy_method == "deepcopy":
+        copied = deepcopy(model)
+    elif copy_method == "model_copy":
+        copied = model.model_copy(deep=True)
+    else:
+        copied = pickle.loads(pickle.dumps(model))
+    assert type(copied) is model_class
+    assert copied is not model
+    assert copied.model_dump() == model.model_dump()
+    assert "_client" not in model.__dict__
+    assert "_client" not in copied.__dict__
+
+
+@pytest.mark.parametrize("model_class", [GigaChat, GigaChatEmbeddings])
+def test_failed_client_constructor_can_retry(model_class: Any, mocker: Any) -> None:
+    model = model_class()
+    owner = mocker.Mock()
+    constructor = mocker.patch(
+        "gigachat.GigaChat", side_effect=[ValueError("first attempt"), owner]
+    )
+    try:
+        with pytest.raises(ValueError, match="first attempt"):
+            _ = model._client
+        assert "_client" not in model.__dict__
+        # A different thread must be able to acquire the initialization lock.
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            assert pool.submit(lambda: model._client).result(timeout=5) is owner
+        assert model._client is owner
+        assert constructor.call_count == 2
+    finally:
+        model.close()
