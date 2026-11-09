@@ -9,6 +9,16 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def block_external_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in (
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
     resolve = socket.getaddrinfo
     connect = socket.socket.connect
 

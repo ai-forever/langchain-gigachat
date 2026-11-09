@@ -119,6 +119,7 @@ jobs:
           smoke="$(mktemp -d)"
           cp scripts/check_distribution.py "$smoke/"
           cp tests/unit_tests/test_sdk_alpha_backend.py "$smoke/"
+          cp tests/unit_tests/conftest.py "$smoke/"
           cd "$smoke"
           unset PYTHONPATH
           for backend in base aiohttp; do
