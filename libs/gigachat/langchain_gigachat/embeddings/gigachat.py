@@ -11,6 +11,11 @@ def _extract_vectors(data: Any) -> List[List[float]]:
     vectors = []
     for position, item in enumerate(data):
         index = getattr(item, "index", position)
+        if getattr(item, "object_", None) == "error":
+            raise ValueError(
+                f"Invalid or failed embedding at input index {index}; "
+                "numeric vectors are required"
+            )
         embedding = getattr(item, "embedding", None)
         if isinstance(embedding, str):
             raise ValueError(

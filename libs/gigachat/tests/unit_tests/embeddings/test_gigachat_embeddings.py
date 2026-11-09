@@ -1,6 +1,7 @@
 from unittest.mock import MagicMock
 
 import pytest
+from gigachat.models import EmbeddingError, Embeddings
 from pytest_mock import MockerFixture
 
 from langchain_gigachat.embeddings.gigachat import GigaChatEmbeddings
@@ -137,6 +138,42 @@ async def test_invalid_embedding_batch_is_rejected(
     sdk.aembeddings = mocker.AsyncMock(return_value=response)
     emb = GigaChatEmbeddings()
     with pytest.raises(ValueError, match="(?i)(index|input).?1|1.*(index|input)"):
+        if asynchronous:
+            await emb.aembed_documents(["a", "b"])
+        else:
+            emb.embed_documents(["a", "b"])
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+async def test_error_item_with_numeric_embedding_is_rejected(
+    asynchronous: bool, mocker: MockerFixture
+) -> None:
+    response = Embeddings.model_validate(
+        {
+            "object": "list",
+            "data": [
+                {
+                    "object": "embedding",
+                    "index": 0,
+                    "embedding": [0.1, 0.2],
+                    "usage": {"prompt_tokens": 1},
+                },
+                {
+                    "object": "error",
+                    "index": 1,
+                    "error": {"message": "rejected"},
+                    "embedding": [0.3, 0.4],
+                },
+            ],
+        }
+    )
+    assert isinstance(response.data[1], EmbeddingError)
+    assert getattr(response.data[1], "embedding") == [0.3, 0.4]
+    sdk = mocker.patch("gigachat.GigaChat").return_value
+    sdk.embeddings.return_value = response
+    sdk.aembeddings = mocker.AsyncMock(return_value=response)
+    emb = GigaChatEmbeddings()
+    with pytest.raises(ValueError, match="input index 1"):
         if asynchronous:
             await emb.aembed_documents(["a", "b"])
         else:
